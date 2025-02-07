@@ -13,17 +13,8 @@ import PyPDF2
 import pdfplumber
 import datetime
 from database import *
+from assistance import *
 import psycopg2
-
-TG_BOT_TOKEN = os.environ.get("TG_BOT_TOKEN")
-PROXY_API_KEY = os.environ.get("PROXY_API_KEY")
-YANDEX_KEY_ID = os.environ.get("YANDEX_KEY_ID")
-YANDEX_KEY_SECRET = os.environ.get("YANDEX_KEY_SECRET")
-YANDEX_BUCKET = os.environ.get("YANDEX_BUCKET")
-YOUR_ADMIN_ID = os.environ.get("YOUR_ADMIN_ID")
-YOUR_PROVIDER_TOKEN = os.environ.get("YOUR_PROVIDER_TOKEN")
-
-
 # Функция для подключения к базе данных PostgreSQL
 connect_to_db()
 insert_initial_data(connect_to_db())
@@ -38,11 +29,12 @@ SUBSCRIPTION_PLANS = {
 
 logger = telebot.logger
 telebot.logger.setLevel(logging.INFO)
-pay_token = "live_I1XQU2cDLDo9p_QN4nu5LLn1xC0yfZTUByVckEsRjJg"
-
-bot = telebot.TeleBot("7738522562:AAHMDy0fMzWgRIjMgGbPA9-OiKtvnINILOg", threaded=False)
-client = openai.Client(api_key="sk-IdmJMXNU1gZPbd1Isu38a1IqFVW3jZQ0", base_url="https://api.proxyapi.ru/openai/v1")
-
+pay_token = os.getenv('PAY_TOKEN')
+bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
+client = openai.Client(
+    api_key=os.getenv('OPENAI_API_KEY'), 
+    base_url=os.getenv('OPENAI_BASE_URL')
+)
 
 def create_price_menu() -> types.InlineKeyboardMarkup:
     markup = types.InlineKeyboardMarkup(
@@ -71,23 +63,8 @@ def create_price_menu() -> types.InlineKeyboardMarkup:
     )
     return markup
 
-
-def get_s3_client():
-    session = boto3.session.Session(
-        aws_access_key_id=YANDEX_KEY_ID, aws_secret_access_key=YANDEX_KEY_SECRET
-    )
-    return session.client(
-        service_name="s3", endpoint_url="https://storage.yandexcloud.net"
-    )
-
-
-CONFIG_FILE = 'assistants_config.json'
-
-
 # Загрузить конфигурацию ассистентов
 load_assistants_config()
-
-
 
 # Функции для управления подписками
 def load_chat_ids():
@@ -104,7 +81,6 @@ def save_chat_id(chat_id):
 
 
 current_assistant = None  # Переменная для хранения текущего ассистента
-
 
 # Функция для инициализации обработчиков ассистентов
 def setup_assistant_handlers():
@@ -207,7 +183,7 @@ def cancel_subscription(message):
     # Отправляем сообщение и убираем клавиатуру
     bot.send_message(message.chat.id, "Вы отменили выбор тарифного плана.", reply_markup=types.ReplyKeyboardRemove())
 
-
+@bot.message_handler(func=lambda message: message.text == "Купить подписку")
 @bot.message_handler(commands=['pay'])
 def send_subscription_options(message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -299,11 +275,12 @@ def send_welcome(message):
 
     # Создаем клавиатуру с кнопками
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-
+    
     # Добавляем кнопку профиля первой
     profile_btn = types.KeyboardButton("Мой профиль")
     keyboard.add(profile_btn)
-
+    sub_btn = types.KeyboardButton("Купить подписку")
+    keyboard.add(sub_btn)
     # Создаем клавиатуру с кнопками для ассистентов
     config = load_assistants_config()
     assistants = config.get("assistants", {})
@@ -518,23 +495,13 @@ def process_text_message(text, chat_id) -> str:
     if not update_user_tokens(chat_id, input_tokens, 0):
         return "У вас закончился дневной лимит токенов. Попробуйте завтра или приобретите подписку."
 
-    global current_assistant
     config = load_assistants_config()
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
     input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
 
-    # # Чтение текущей истории чата
-    # s3client = get_s3_client()
-    history = []
-    # try:
-    #     history_object_response = s3client.get_object(
-    #         Bucket=YANDEX_BUCKET, Key=f"{chat_id}.json"
-    #     )
-    #     history = json.loads(history_object_response["Body"].read())
-    # except:
-    #     pass
-
+    # Получаем историю из базы данных
+    history = get_chat_history(chat_id)
     history.append({"role": "user", "content": input_text})
 
     try:
@@ -551,17 +518,12 @@ def process_text_message(text, chat_id) -> str:
 
         # Обновляем общую сумму расходов
         user_data = load_user_data(chat_id)
-        user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001  # Примерная стоимость за токен
+        user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001
         save_user_data(user_data)
 
-        history.append({"role": "assistant", "content": ai_response})
-
-        # # Сохраняем текущую историю чата
-        # s3client.put_object(
-        #     Bucket=YANDEX_BUCKET,
-        #     Key=f"{chat_id}.json",
-        #     Body=json.dumps(history),
-        # )
+        # Сохраняем сообщения в базу данных
+        store_message_in_db(chat_id, "user", input_text)
+        store_message_in_db(chat_id, "assistant", ai_response)
 
         return ai_response
 

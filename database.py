@@ -1,20 +1,25 @@
 # Функция для подключения к базе данных PostgreSQL
 import psycopg2
+import os
+from dotenv import load_dotenv
+
 
 def connect_to_db():
     try:
-        # Указываем параметры подключения
+        load_dotenv()  # Загружаем переменные из .env файла
+        
         connection = psycopg2.connect(
-            dbname="StudyClickBot",
-            user="postgres",
-            password="05050505",
-            host="localhost",  # или IP-адрес вашего сервера
-            port="5432"        # стандартный порт PostgreSQL
+            dbname=os.getenv('DB_NAME'),
+            user=os.getenv('DB_USER'),
+            password=os.getenv('DB_PASSWORD'),
+            host=os.getenv('DB_HOST'),
+            port=os.getenv('DB_PORT')
         )
-        print("Подключение к базе данных успешно")
+
         return connection
     except Exception as e:
         print(f"Ошибка подключения к базе данных: {e}")
+
 
 
 # Функция для загрузки конфигурации ассистентов из базы данных
@@ -180,16 +185,43 @@ def save_user_data(user_data: dict):
         print(f"Ошибка при сохранении данных пользователя: {e}")
         return False
     
+        ###############################################
+        #ИСТОРИЯ
+        ###############################################
+def store_message_in_db(chat_id, role, content):
+    """Сохраняет сообщение в базу данных"""
+    conn = connect_to_db()
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO chat_history (chat_id, role, content, timestamp) 
+        VALUES (%s, %s, %s, NOW())
+    """, (chat_id, role, content))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+def get_chat_history(chat_id, limit=10):
+    """Получает историю чата из базы данных"""
+    conn = connect_to_db()
+    cur = conn.cursor()
+    cur.execute("""
+        SELECT role, content FROM chat_history 
+        WHERE chat_id = %s 
+        ORDER BY timestamp DESC 
+        LIMIT %s
+    """, (chat_id, limit))
+    history = [{"role": role, "content": content} for role, content in cur.fetchall()]
+    cur.close()
+    conn.close()
+    return list(reversed(history))  # Возвращаем в хронологическом порядке
+
+def clear_chat_history(chat_id):
+    """Очищает историю чата в базе данных"""
+    conn = connect_to_db()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM chat_history WHERE chat_id = %s", (chat_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
 
 
-def insert_initial_data(connection):
-    insert_data_sql = """
-    INSERT INTO assistants (assistant_key, name, prompt) VALUES
-        ('cybersecurity', 'Консультант по кибербезопасности', 'Вы — эксперт в области кибербезопасности'),
-        ('financial_literacy', 'Консультант по финансовой грамотности', 'Вы — эксперт по финансовой грамотности'),
-        ('business_creation', 'Консультант по созданию бизнеса', 'Вы — эксперт по созданию и развитию бизнеса')
-    ON CONFLICT (assistant_key) DO NOTHING;  -- Игнорировать, если запись уже существует
-    """
-    with connection.cursor() as cursor:
-        cursor.execute(insert_data_sql)
-        connection.commit()
