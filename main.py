@@ -196,29 +196,6 @@ def send_subscription_options(message):
     bot.send_message(message.chat.id, "Выберите тарифный план:", reply_markup=create_price_menu())
 
 
-def setup_subscription_handlers():
-    for plan_name, plan_info in SUBSCRIPTION_PLANS.items():
-        price_label = f"{plan_info['price']} ₽"
-        plan_button_text = f"{plan_name.capitalize()} - {price_label}"
-
-        @bot.message_handler(func=lambda message, text=plan_button_text: message.text == text)
-        def handle_subscription(message, plan=plan_name):
-            price = SUBSCRIPTION_PLANS[plan]['price'] * 100
-            user_id = message.from_user.id
-
-            bot.send_invoice(
-                chat_id=message.chat.id,
-                title=f"Подписка на {plan.capitalize()}",
-                description=f"Оплата подписки на тарифный план {plan.capitalize()}.",
-                provider_token=YOUR_PROVIDER_TOKEN,
-                currency='RUB',
-                prices=[types.LabeledPrice(label=plan.capitalize(), amount=price)],
-                start_parameter=f'{plan}_subscription',
-                invoice_payload=f'Оплатил пользователь {user_id}'
-            )
-
-
-setup_subscription_handlers()
 
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
@@ -347,20 +324,27 @@ def typing(chat_id):
 
 
 def send_broadcast(message_content, photo=None):
-    with open("/function/storage/users/users.json", "r") as file:
-        users = json.load(file)
-
+    conn = connect_to_db()
+    cur = conn.cursor()
+    
+    # Получаем всех пользователей из базы данных
+    cur.execute("SELECT user_id FROM users")
+    users = cur.fetchall()
+    
     for user in users:
         try:
             if photo:
                 # Отправляем изображение с подписью
-                bot.send_photo(user['user_id'], photo, caption=message_content)
+                bot.send_photo(user[0], photo, caption=message_content)
             else:
                 # Отправляем только текст
-                bot.send_message(user['user_id'], message_content)
+                bot.send_message(user[0], message_content)
         except Exception as e:
-            print(f"Не удалось отправить сообщение пользователю {user['user_id']}: {e}")
+            print(f"Не удалось отправить сообщение пользователю {user[0]}: {e}")
             continue
+            
+    cur.close()
+    conn.close()
 
 
 @bot.message_handler(commands=["broadcast"])
@@ -395,11 +379,6 @@ def handle_broadcast_photo(message):
         send_broadcast(caption, photo=photo)
         bot.reply_to(message, "Рассылка с изображением успешно завершена!")
 
-
-@bot.message_handler(commands=["new"])
-def clear_history(message):
-    clear_history_for_chat(message.chat.id)
-    bot.reply_to(message, "История чата очищена!")
 
 
 @bot.message_handler(func=lambda message: True, content_types=["text"])
@@ -531,16 +510,6 @@ def process_text_message(text, chat_id) -> str:
         return f"Произошла ошибка: {str(e)}"
 
 
-def clear_history_for_chat(chat_id):
-    try:
-        s3client = get_s3_client()
-        s3client.put_object(
-            Bucket=YANDEX_BUCKET,
-            Key=f"{chat_id}.json",
-            Body=json.dumps([]),
-        )
-    except:
-        pass
 
 
 @bot.message_handler(func=lambda msg: msg.voice.mime_type == "audio/ogg", content_types=["voice"])
