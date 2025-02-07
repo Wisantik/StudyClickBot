@@ -1,0 +1,7 @@
+openai==1.55.3
+pyTelegramBotAPI==4.14.0
+boto3==1.33.7
+python-docx
+PyPDF2
+pdfplumber
+bytesbufio
