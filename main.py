@@ -4,7 +4,8 @@ import os
 import openai
 import json
 import boto3
-
+from typing import Final
+from telebot.types import BotCommand
 import time
 import io
 from telebot import types
@@ -35,6 +36,65 @@ client = openai.Client(
     api_key=os.getenv('OPENAI_API_KEY'), 
     base_url=os.getenv('OPENAI_BASE_URL')
 )
+
+
+
+def setup_bot_commands():
+    """Настройка команд бота с учетом ограничений Telegram API"""
+    commands = [
+        telebot.types.BotCommand("start", "Начать работу с ботом"),
+        telebot.types.BotCommand("new", "Очистить историю чата"),
+        telebot.types.BotCommand("profile", "Посмотреть профиль"),
+        telebot.types.BotCommand("pay", "Купить подписку"),
+        # Команды для ассистентов (названия должны быть только в нижнем регистре и без пробелов)
+        telebot.types.BotCommand("cyber", "Кибербезопасность"),
+        telebot.types.BotCommand("tax", "Налоговый консультант"),
+        telebot.types.BotCommand("finance", "Финансовая грамотность"),
+        telebot.types.BotCommand("crypto", "Криптовалюты"),
+        telebot.types.BotCommand("business", "Создание бизнеса"),
+        telebot.types.BotCommand("economics", "Экономика"),
+        telebot.types.BotCommand("stocks", "Фондовый рынок"),
+        telebot.types.BotCommand("loans", "Кредиты и займы"),
+        telebot.types.BotCommand("insurance", "Страхование"),
+        telebot.types.BotCommand("realestate", "Инвестиции в недвижимость")
+    ]
+    
+    try:
+        bot.set_my_commands(commands)
+        print("Команды бота успешно настроены")
+    except Exception as e:
+        print(f"Ошибка при настройке команд бота: {e}")
+
+def get_full_assistant_key(command: str) -> str:
+    """Получение полного ключа ассистента по команде"""
+    command_to_key = {
+        'cyber': 'cybersecurity',
+        'tax': 'Tax Payment Consultant',
+        'benefits': 'Consultant on benefits for large families',
+        'finance': 'Financial Literacy Assistant',
+        'crypto': 'investment_cryptocurrency_con',
+        'business': 'business creation consultant',
+        'economics': 'Economics consultant',
+        'stocks': 'Stock Market Trading Consultant',
+        'loans': 'Loan and Loan Consultant',
+        'insurance': 'insurance consultant',
+        'realestate': 'real_estate_investment_con'
+    }
+    return command_to_key.get(command)
+
+@bot.message_handler(commands=['cyber', 'tax', 'finance', 'crypto', 'business', 
+                             'economics', 'stocks', 'loans', 'insurance', 'realestate'])
+def select_assistant(message):
+    """Обработчик команд выбора ассистента"""
+    command = message.text[1:]  # Убираем /
+    full_key = get_full_assistant_key(command)
+    
+    if full_key:
+        set_user_assistant(message.from_user.id, full_key)
+        config = load_assistants_config()
+        bot.reply_to(message, f"Выбран ассистент: {config['assistants'][full_key]['name']}")
+    else:
+        bot.reply_to(message, "Ассистент не найден")
 
 def create_price_menu() -> types.InlineKeyboardMarkup:
     markup = types.InlineKeyboardMarkup(
@@ -475,6 +535,7 @@ def process_text_message(text, chat_id) -> str:
         return "У вас закончился дневной лимит токенов. Попробуйте завтра или приобретите подписку."
 
     config = load_assistants_config()
+    current_assistant = get_user_assistant(chat_id)
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
     input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
@@ -565,7 +626,7 @@ def handler(event, context):
 
 if __name__ == "__main__":
     print("Bot starte1")
-    
+    setup_bot_commands()
     bot.polling()
     conn = connect_to_db()
     # Не забудьте закрыть соединение после использования
