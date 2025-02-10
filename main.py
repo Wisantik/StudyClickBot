@@ -20,13 +20,17 @@ import psycopg2
 connect_to_db()
 insert_initial_data(connect_to_db())
 
-SUBSCRIPTION_PLANS = {
-    "free": {"price": 0, "tokens": 20000},  # Бесплатный план
-    "basic": {"price": 149, "tokens": 300000},  # Базовый план
-    "advanced": {"price": 499, "tokens": 600000},  # Расширенный план
-    "premium": {"price": 899, "tokens": 1000000},  # Премиум план
-    "unlimited": {"price": 1599, "tokens": 5000000},  # Неограниченный план
+TOKEN_PLANS = {
+    "free": {"tokens": 30000},
+    "basic": {"price": 149, "tokens": 200000},  # Изменено на 200,000 токенов
+    "advanced": {"price": 349, "tokens": 500000},  # Изменено на 500,000 токенов
+    "premium": {"price": 649, "tokens": 1200000},  # Изменено на 1,200,000 токенов
+    "unlimited": {"price": 1499, "tokens": 3000000},  # Изменено на 3,000,000 токенов
 }
+
+MIN_TOKENS_THRESHOLD = 5000  # Порог для обновления токенов
+FREE_DAILY_TOKENS = 30000    # Количество бесплатных токенов
+
 
 logger = telebot.logger
 telebot.logger.setLevel(logging.INFO)
@@ -167,7 +171,20 @@ def profile_button_handler(message):
 def get_pay(message) -> None:
     bot.send_message(
         message.chat.id,
-        "Выберите тарифный план:",
+        """🎉 Бесплатно - 30 000 в день на каждого пользователя ✨
+💼 Базовый: 149 руб. (200 000 токенов)
+📝 Всё необходимое для простых задач.
+
+🚀 Расширенный: 349 руб. (500 000 токенов)
+🌈 Для тех, кто ценит больше возможностей.
+
+🌟 Премиум-тариф: 649 руб. (1 200 000 токенов)
+💪 Все функции для эффективной работы.
+
+🔓 Неограниченный: 1499 руб. (3 000 000 токенов)
+🌍 Абсолютная свобода.
+
+🎁 За приглашенного друга — 100 000 токенов в подарок! 🎊""",
         reply_markup=create_price_menu()
     )
 
@@ -193,12 +210,118 @@ def buy_rate(callback) -> None:
 def process_pre_checkout_query(pre_checkout_query) -> None:
     bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
-
-
 @bot.message_handler(content_types=['successful_payment'])
 def successful_pay(message):
-    # Отправляем сообщение только если это успешный платеж
-    bot.send_message(message.chat.id, 'Оплата прошла успешно! Ваша подписка активирована.')
+    amount = message.successful_payment.total_amount / 100
+    
+    selected_plan = None
+    for plan_name, plan_info in TOKEN_PLANS.items():
+        if plan_info.get('price', 0) == amount:
+            selected_plan = plan_name
+            break
+    
+    if selected_plan:
+        conn = connect_to_db()
+        cur = conn.cursor()
+        
+        cur.execute("""
+            UPDATE users 
+            SET subscription_plan = %s,
+                daily_tokens = daily_tokens + %s
+            WHERE user_id = %s
+        """, (selected_plan, TOKEN_PLANS[selected_plan]['tokens'], message.from_user.id))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+        bot.send_message(
+            message.chat.id, 
+            f'Оплата прошла успешно!\nНачислено токенов: {TOKEN_PLANS[selected_plan]["tokens"]}'
+        )
+
+def check_and_update_tokens(user_id):
+    conn = connect_to_db()
+    cur = conn.cursor()
+    
+    # Получаем данные пользователя
+    cur.execute(""" 
+        SELECT daily_tokens, subscription_plan, last_token_update, last_warning_time 
+        FROM users WHERE user_id = %s 
+    """, (user_id,))
+    user_data = cur.fetchone()
+    
+    if not user_data:
+        return
+        
+    tokens, current_plan, last_update, last_warning_time = user_data
+    current_date = datetime.datetime.now().date()
+    
+    # Если last_update уже является объектом date, то просто используем его
+    if isinstance(last_update, str):
+        last_update_date = datetime.datetime.strptime(last_update, '%Y-%m-%d').date()
+    else:
+        last_update_date = last_update  # Предполагаем, что last_update уже date
+
+    # Проверяем условия для обновления токенов
+    if tokens <= MIN_TOKENS_THRESHOLD:
+        if current_plan != 'free':
+            # Переводим на бесплатный план
+            cur.execute(""" 
+                UPDATE users 
+                SET subscription_plan = 'free' 
+                WHERE user_id = %s 
+            """, (user_id,))
+            
+        # Проверяем, прошел ли день с последнего обновления
+        if current_date > last_update_date:
+            cur.execute(""" 
+                UPDATE users 
+                SET daily_tokens = %s, 
+                    last_token_update = %s 
+                WHERE user_id = %s 
+            """, (FREE_DAILY_TOKENS, current_date, user_id))
+    
+    # Проверяем, осталось ли меньше 15,000 токенов
+    if tokens < 15000:
+        # Проверяем, прошло ли 24 часа с последнего уведомления
+        if last_warning_time is None or (datetime.datetime.now() - last_warning_time).total_seconds() > 86400:
+            bot.send_message(
+                user_id,
+                """Ваши токены на исходе! ⏳
+Осталось меньше 15 000 токенов, и скоро вам может не хватить для дальнейшего использования. В таком случае вы будете автоматически переведены на бесплатный тариф с ограниченными возможностями.
+Чтобы избежать этого, пополните баланс и продолжайте пользоваться всеми функциями без ограничений! 🌟
+[Pay — Пополнить баланс]"""
+            )
+            # Обновляем время последнего уведомления
+            cur.execute("""
+                UPDATE users 
+                SET last_warning_time = %s 
+                WHERE user_id = %s
+            """, (datetime.datetime.now(), user_id))
+    
+    # Проверяем, осталось ли меньше 3,000 токенов
+    if tokens < 3000:
+        if current_plan != 'free':
+            # Переводим на бесплатный план
+            cur.execute(""" 
+                UPDATE users 
+                SET subscription_plan = 'free', 
+                    daily_tokens = 0 
+                WHERE user_id = %s 
+            """, (user_id,))
+            bot.send_message(
+                user_id,
+                """Подписка завершена! 🚫
+Вы не потеряли токены, но для продолжения доступа выберите новый тариф.
+Новый тариф откроет вам ещё больше возможностей и токенов.
+[Pay — Выбрать новый тариф]"""
+            )
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+
 
 
 
@@ -214,7 +337,7 @@ def show_profile(message):
     profile_text = f"""
 ID: {user_id}
 
-Ваш текущий тариф: Free
+Ваш текущий тариф: {user_data['subscription_plan'].capitalize()}
 
 Оставшаяся квота:
 GPT-4o mini: {user_data['daily_tokens']} символов
@@ -248,7 +371,7 @@ def cancel_subscription(message):
 def send_subscription_options(message):
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
 
-    for plan_name, plan_info in SUBSCRIPTION_PLANS.items():
+    for plan_name, plan_info in TOKEN_PLANS.items():
         price_label = f"{plan_info['price']} ₽"
         keyboard.add(types.KeyboardButton(text=f"{plan_name.capitalize()} - {price_label}"))
 
@@ -282,76 +405,50 @@ def send_welcome(message):
     if referrer_id:
         if user_data:
             bot.reply_to(message, "Вы уже зарегистрированы. Нельзя использовать реферальную ссылку.")
-            return  # Если пользователь уже существует, прерываем выполнение
+            return
 
         try:
-            referrer_id = int(referrer_id)  # Преобразуем строку в целое число
+            referrer_id = int(referrer_id)
             referrer_data = load_user_data(referrer_id)
 
             if referrer_data:
-                # Увеличиваем количество приглашенных пользователей у реферера
                 referrer_data['invited_users'] = referrer_data.get('invited_users', 0) + 1
-                # Повышаем квоту символов реферера
-                referrer_data['daily_tokens'] += 100000  # Например, добавляем 100000 символов
+                referrer_data['daily_tokens'] += 100000
                 save_user_data(referrer_data)
 
         except ValueError:
             print("Invalid referrer ID format")
 
-    # # Создаем нового пользователя, если он еще не зарегистрирован
-    # if user_data is None:  # Если пользователь не найден
-    #     user_data = create_default_user(user_id)
-
-    #     # Обновляем referrer_id для нового пользователя
-    #     if referrer_id:
-    #         user_data['referrer_id'] = referrer_id  # Устанавливаем referrer_id
-    #     save_user_data(user_data)
-
-    config = load_assistants_config()
-    assistants = config.get("assistants", {})
-
-    # Создаем клавиатуру с кнопками
+    # Создаем клавиатуру только с кнопками профиля и подписки
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     
-    # Добавляем кнопку профиля первой
     profile_btn = types.KeyboardButton("Мой профиль")
     keyboard.add(profile_btn)
     sub_btn = types.KeyboardButton("Купить подписку")
     keyboard.add(sub_btn)
-    # Создаем клавиатуру с кнопками для ассистентов
-    config = load_assistants_config()
-    assistants = config.get("assistants", {})
 
-    for assistant_id, assistant_info in assistants.items():
-        button = types.KeyboardButton(assistant_info['name'])  # Имя ассистента
-        keyboard.add(button)
-
-    # Отправляем приветственное сообщение с клавиатурой
     bot.send_message(message.chat.id, """Привет! Я — Финни
 
 🏆 Я единственный бот в Telegram с полноценной персонализированной поддержкой в мире финансов. 
 
 🎯 Моя цель — помочь тебе стать финансово грамотным, независимо от твоего возраста или уровня знаний.
 
-Вот как мы можем начать:
+Выберите интересующего вас ассистента из меню команд:
 
-Выбор направления обучения: Я помогу тебе выбрать тему, которая интересует или нуждается в улучшении. Выбирайте один из вариантов:
-
-📊 Финансовая грамотность
-💰Инвестиции в криптовалюту 
-📈 Инвестирование на фондовом рынке
-🏡 Инвестирование в недвижимость
-💡 Создание бизнеса
-💸 Кредиты и займы
-🔐 Кибербезопасность
-🏦 Страхование
-💰 Экономика и финансы
+📊 /finance - Финансовая грамотность
+💰 /crypto - Инвестиции в криптовалюту 
+📈 /stocks - Инвестирование на фондовом рынке
+🏡 /realestate - Инвестирование в недвижимость
+💡 /business - Создание бизнеса
+💸 /loans - Кредиты и займы
+🔐 /cyber - Кибербезопасность
+🏦 /insurance - Страхование
+💰 /economics - Экономика и финансы
 
 📚 Персонализированное обучение: Я адаптирую материал в зависимости от твоего уровня знаний. Если ты новичок, не переживай — я объясню все доступно и шаг за шагом.
 🔍 Как я работаю? После каждого ответа я предложу тебе 3 возможных опции для дальнейшего изучения. Это поможет двигаться по пути финансовой грамотности, не запутываясь в сложных терминах.
 🤝 Твоя помощь в обучении: Если нужно, можете задать дополнительные вопросы, мои контакты в шапке профиля""",
                      reply_markup=keyboard)
-
 
 @bot.message_handler(commands=['referral'])
 def send_referral_link(message):
@@ -463,18 +560,33 @@ def handle_document(message):
     try:
         if file_extension == 'txt':
             content = downloaded_file.decode('utf-8')
+            # Считаем токены из текстового файла
+            input_tokens = len(content)
+            if not update_user_tokens(message.chat.id, input_tokens, 0):
+                bot.reply_to(message, "У вас закончился дневной лимит токенов. Попробуйте завтра или приобретите подписку.")
+                return
             bot.reply_to(message, process_text_message(content, message.chat.id))
 
         elif file_extension == 'pdf':
             # Использование BytesIO для PDF
             with io.BytesIO(downloaded_file) as pdf_file:
                 content = read_pdf(pdf_file)
+                # Считаем токены из PDF
+                input_tokens = len(content)
+                if not update_user_tokens(message.chat.id, input_tokens, 0):
+                    bot.reply_to(message, "У вас закончился дневной лимит токенов. Попробуйте завтра или приобретите подписку.")
+                    return
                 bot.reply_to(message, process_text_message(content, message.chat.id))
 
         elif file_extension == 'docx':
             # Используем BytesIO для DOCX
             with io.BytesIO(downloaded_file) as docx_file:
                 content = read_docx(docx_file)
+                # Считаем токены из DOCX
+                input_tokens = len(content)
+                if not update_user_tokens(message.chat.id, input_tokens, 0):
+                    bot.reply_to(message, "У вас закончился дневной лимит токенов. Попробуйте завтра или приобретите подписку.")
+                    return
                 bot.reply_to(message, process_text_message(content, message.chat.id))
 
         else:
@@ -482,6 +594,7 @@ def handle_document(message):
 
     except Exception as e:
         bot.reply_to(message, f"Произошла ошибка при чтении файла: {e}")
+
 
 
 def read_pdf(file):
@@ -505,23 +618,19 @@ def read_docx(file):
 
 
 def update_user_tokens(user_id, input_tokens, output_tokens):
-    user_data = load_user_data(user_id)  # Загружаем данные пользователя
-
-    # Проверяем нужно ли обновить дневной лимит
-    last_reset = datetime.datetime.strptime(user_data['last_reset'], '%Y-%m-%d').date()
-    if datetime.datetime.now().date() > last_reset:
-        user_data['daily_tokens'] = 20000  # Обновляем дневной лимит
-        user_data['last_reset'] = str(datetime.datetime.now().date())
-
-    # Вычитаем токены
-    new_tokens = user_data['daily_tokens'] - (input_tokens + output_tokens)
+    check_and_update_tokens(user_id)  # Проверяем и обновляем токены если нужно
+    
+    user_data = load_user_data(user_id)
+    total_tokens_used = input_tokens + output_tokens
+    new_tokens = user_data['daily_tokens'] - total_tokens_used
+    
     if new_tokens < 0:
         return False
-
+        
     user_data['daily_tokens'] = new_tokens
-    user_data['input_tokens'] += input_tokens  # Увеличиваем входные токены
-    user_data['output_tokens'] += output_tokens  # Увеличиваем выходные токены
-    save_user_data(user_data)  # Сохраняем обновленные данные пользователя
+    user_data['input_tokens'] += input_tokens
+    user_data['output_tokens'] += output_tokens
+    save_user_data(user_data)
     return True
 
 
@@ -596,6 +705,12 @@ def voice(message):
 
         if not recognized_text:
             bot.reply_to(message, "Предупреждение: распознанный текст неразборчив. Пожалуйста, попробуйте снова.")
+            return
+
+        # Считаем токены из распознанного текста
+        input_tokens = len(recognized_text)
+        if not update_user_tokens(message.chat.id, input_tokens, 0):
+            bot.reply_to(message, "У вас закончился дневной лимит токенов. Попробуйте завтра или приобретите подписку.")
             return
 
         # Обрабатываем текстовое сообщение с учётом текущего ассистента
