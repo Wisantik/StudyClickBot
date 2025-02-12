@@ -105,22 +105,22 @@ def create_price_menu() -> types.InlineKeyboardMarkup:
         keyboard=[
             [
                 types.InlineKeyboardButton(
-                    text="Базовый - 149p",
-                    callback_data="buy_rate_149"
+                    text=f"Базовый - {TOKEN_PLANS['basic']['price']}₽",
+                    callback_data=f"buy_rate_{TOKEN_PLANS['basic']['price']}"
                 ),
                 types.InlineKeyboardButton(
-                    text="Расширенный - 499p",
-                    callback_data="buy_rate_499"
+                    text=f"Расширенный - {TOKEN_PLANS['advanced']['price']}₽",
+                    callback_data=f"buy_rate_{TOKEN_PLANS['advanced']['price']}"
                 )
             ],
             [
                 types.InlineKeyboardButton(
-                    text="Премиум - 899p",
-                    callback_data="buy_rate_899"
+                    text=f"Премиум - {TOKEN_PLANS['premium']['price']}₽",
+                    callback_data=f"buy_rate_{TOKEN_PLANS['premium']['price']}"
                 ),
                 types.InlineKeyboardButton(
-                    text="Неограниченный - 1599p",
-                    callback_data="buy_rate_1599"
+                    text=f"Неограниченный - {TOKEN_PLANS['unlimited']['price']}₽",
+                    callback_data=f"buy_rate_{TOKEN_PLANS['unlimited']['price']}"
                 )
             ],
         ]
@@ -240,6 +240,25 @@ def successful_pay(message):
             f'Оплата прошла успешно!\nНачислено токенов: {TOKEN_PLANS[selected_plan]["tokens"]}'
         )
 
+@bot.message_handler(commands=['new'])
+def clear_chat_history(message):
+    chat_id = message.chat.id
+    
+    # Clear chat history from database
+    conn = connect_to_db()
+    cur = conn.cursor()
+    
+    cur.execute("""
+        DELETE FROM chat_history 
+        WHERE chat_id = %s
+    """, (chat_id,))
+    
+    conn.commit()
+    cur.close()
+    conn.close()
+    
+    bot.reply_to(message, "История чата очищена! Можете начать новый диалог.")
+
 def check_and_update_tokens(user_id):
     conn = connect_to_db()
     cur = conn.cursor()
@@ -282,16 +301,16 @@ def check_and_update_tokens(user_id):
                 WHERE user_id = %s 
             """, (FREE_DAILY_TOKENS, current_date, user_id))
     
-    # Проверяем, осталось ли меньше 15,000 токенов
-    if tokens < 15000:
+    # Inside check_and_update_tokens function
+    if tokens < 15000 and current_plan != 'free':  # Added check for non-free plan
         # Проверяем, прошло ли 24 часа с последнего уведомления
         if last_warning_time is None or (datetime.datetime.now() - last_warning_time).total_seconds() > 86400:
             bot.send_message(
                 user_id,
                 """Ваши токены на исходе! ⏳
-Осталось меньше 15 000 токенов, и скоро вам может не хватить для дальнейшего использования. В таком случае вы будете автоматически переведены на бесплатный тариф с ограниченными возможностями.
-Чтобы избежать этого, пополните баланс и продолжайте пользоваться всеми функциями без ограничений! 🌟
-[Pay — Пополнить баланс]"""
+    Осталось меньше 15 000 токенов, и скоро вам может не хватить для дальнейшего использования. В таком случае вы будете автоматически переведены на бесплатный тариф с ограниченными возможностями.
+    Чтобы избежать этого, пополните баланс и продолжайте пользоваться всеми функциями без ограничений! 🌟
+    [Pay — Пополнить баланс]"""
             )
             # Обновляем время последнего уведомления
             cur.execute("""
