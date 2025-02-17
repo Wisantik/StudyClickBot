@@ -44,8 +44,12 @@ def insert_initial_data(connection):
     ON CONFLICT (assistant_key) DO NOTHING;  -- Игнорировать, если запись уже существует
     """
     with connection.cursor() as cursor:
-        cursor.execute(insert_data_sql)
-        connection.commit()
+        try:
+            cursor.execute(insert_data_sql)
+            connection.commit()
+            print("Начальные данные вставлены.")
+        except Exception as e:
+            print(f"Ошибка при вставке начальных данных: {e}")
 
 
 
@@ -144,7 +148,7 @@ def check_and_create_columns(connection):
         );
         """
         
-        # SQL для создания таблицы chat_history
+        # SQL для создания остальных таблиц...
         create_chat_history_table = """
         CREATE TABLE IF NOT EXISTS public.chat_history (
             id SERIAL PRIMARY KEY,
@@ -155,7 +159,6 @@ def check_and_create_columns(connection):
         );
         """
         
-        # SQL для создания таблицы users
         create_users_table = """
         CREATE TABLE IF NOT EXISTS public.users (
             user_id BIGINT PRIMARY KEY,
@@ -175,13 +178,15 @@ def check_and_create_columns(connection):
         );
         """
 
-        # Выполнение создания таблиц
-        cursor.execute(create_assistants_table)
-        cursor.execute(create_chat_history_table)
-        cursor.execute(create_users_table)
-
-        # Не забудьте сделать commit, если это нужно
-        connection.commit()
+        # Выполнение SQL для создания таблиц
+        try:
+            cursor.execute(create_assistants_table)
+            cursor.execute(create_chat_history_table)
+            cursor.execute(create_users_table)
+            connection.commit()
+            print("Таблицы созданы или уже существуют.")
+        except Exception as e:
+            print(f"Ошибка при создании таблиц: {e}")
 
 
 

@@ -763,14 +763,14 @@ def handler(event, context):
 
 if __name__ == "__main__":
     print("Bot started")
-    check_and_create_columns(connect_to_db())
-    setup_bot_commands()
-    bot.polling()
+    
     conn = connect_to_db()
-    # Не забудьте закрыть соединение после использования
-    if conn:
-        conn.close()
-
-
-
-print("Bot started2")      
+    
+    try:
+        check_and_create_columns(conn)      # Создание таблиц
+        insert_initial_data(conn)           # Вставка начальных данных
+        setup_bot_commands()                 # Настройка команд бота
+        bot.polling()                        # Запускаем бота для опроса
+    finally:
+        if conn:
+            conn.close()
