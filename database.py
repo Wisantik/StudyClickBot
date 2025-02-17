@@ -133,47 +133,65 @@ def get_user_assistant(user_id: int) -> str:
 
 def check_and_create_columns():
     """Проверяет и создает недостающие колонки в таблице users."""
+
     try:
         connection = connect_to_db()
         cursor = connection.cursor()
 
         # Проверяем наличие колонки referral_count
         cursor.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
+            SELECT column_name
+            FROM information_schema.columns
             WHERE table_name='users' AND column_name='referral_count';
         """)
-        
+
         if not cursor.fetchone():
             cursor.execute("""
-                ALTER TABLE public.users 
+                ALTER TABLE public.users
                 ADD COLUMN referral_count INTEGER DEFAULT 0;
             """)
             print("Added column 'referral_count' to users table.")
 
-        # Проверяем наличие других необходимых колонок, если нужно
-        # Например, last_reset и другие
+        # Проверяем наличие колонки last_reset
         cursor.execute("""
-            SELECT column_name 
-            FROM information_schema.columns 
+            SELECT column_name
+            FROM information_schema.columns
             WHERE table_name='users' AND column_name='last_reset';
         """)
-        
+
         if not cursor.fetchone():
             cursor.execute("""
-                ALTER TABLE public.users 
+                ALTER TABLE public.users
                 ADD COLUMN last_reset DATE NOT NULL DEFAULT CURRENT_DATE;
             """)
             print("Added column 'last_reset' to users table.")
 
+        # Проверяем наличие колонки assistant_key
+        cursor.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name='users' AND column_name='assistant_key';
+        """)
+
+        if not cursor.fetchone():
+            cursor.execute("""
+                ALTER TABLE public.users
+                ADD COLUMN assistant_key VARCHAR(50);  -- Задайте нужный тип данных
+            """)
+            print("Added column 'assistant_key' to users table.")
+
+        # Вставляем начальные данные, если нужно
         insert_initial_data(connection)
 
         connection.commit()
-        cursor.close()
-        connection.close()
 
     except Exception as e:
         print(f"Ошибка при проверке и создании колонок: {e}")
+
+    finally:
+        cursor.close()
+        connection.close()
+
 
 # Функция для загрузки конфигурации ассистентов из базы данных
 def load_assistants_config():

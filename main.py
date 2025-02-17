@@ -21,7 +21,7 @@ print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, 
 
 connect_to_db()
 
-insert_initial_data(connect_to_db())
+# insert_initial_data(connect_to_db())
 
 TOKEN_PLANS = {
     "free": {"tokens": 30000},
