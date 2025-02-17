@@ -131,68 +131,57 @@ def get_user_assistant(user_id: int) -> str:
         print(f"[INFO] Соединение с базой данных закрыто.")
 
 
-def check_and_create_columns():
-    """Проверяет и создает недостающие колонки в таблице users."""
-    try:
-        connection = connect_to_db()
-        cursor = connection.cursor()
+def check_and_create_columns(connection):
+    with connection.cursor() as cursor:
+        # SQL для создания таблицы assistants
+        create_assistants_table = """
+        CREATE TABLE IF NOT EXISTS public.assistants (
+            id SERIAL PRIMARY KEY,
+            assistant_key VARCHAR(100) NOT NULL UNIQUE,
+            name VARCHAR(200) NOT NULL,
+            prompt TEXT NOT NULL,
+            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        """
+        
+        # SQL для создания таблицы chat_history
+        create_chat_history_table = """
+        CREATE TABLE IF NOT EXISTS public.chat_history (
+            id SERIAL PRIMARY KEY,
+            chat_id BIGINT NOT NULL,
+            role VARCHAR(50) NOT NULL CHECK (role IN ('user', 'assistant')),
+            content TEXT NOT NULL,
+            "timestamp" TIMESTAMP WITHOUT TIME ZONE NOT NULL
+        );
+        """
+        
+        # SQL для создания таблицы users
+        create_users_table = """
+        CREATE TABLE IF NOT EXISTS public.users (
+            user_id BIGINT PRIMARY KEY,
+            daily_tokens INTEGER NOT NULL,
+            last_reset DATE NOT NULL,
+            total_spent NUMERIC(10, 4) DEFAULT 0,
+            referral_count INTEGER DEFAULT 0,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            invited_users INTEGER DEFAULT 0,
+            referrer_id BIGINT,
+            subscription_plan VARCHAR(50) DEFAULT 'free',
+            created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            current_assistant VARCHAR(255),
+            last_token_update DATE DEFAULT CURRENT_DATE,
+            last_warning_time TIMESTAMP WITHOUT TIME ZONE
+        );
+        """
 
-        # Проверяем наличие колонки referral_count
-        cursor.execute("""
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name='users' AND column_name='referral_count';
-        """)
+        # Выполнение создания таблиц
+        cursor.execute(create_assistants_table)
+        cursor.execute(create_chat_history_table)
+        cursor.execute(create_users_table)
 
-        if not cursor.fetchone():
-            cursor.execute("""
-                ALTER TABLE public.users
-                ADD COLUMN referral_count INTEGER DEFAULT 0;
-            """)
-            print("Добавлена колонка 'referral_count' в таблицу users.")
-
-        # Проверяем наличие колонки last_reset
-        cursor.execute("""
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name='users' AND column_name='last_reset';
-        """)
-
-        if not cursor.fetchone():
-            cursor.execute("""
-                ALTER TABLE public.users
-                ADD COLUMN last_reset DATE NOT NULL DEFAULT CURRENT_DATE;
-            """)
-            print("Добавлена колонка 'last_reset' в таблицу users.")
-
-        # Проверяем наличие колонки current_assistant
-        cursor.execute("""
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name='users' AND column_name='current_assistant';
-        """)
-
-        if not cursor.fetchone():
-            cursor.execute("""
-                ALTER TABLE public.users
-                ADD COLUMN current_assistant VARCHAR(255);
-            """)
-            print("Добавлена колонка 'current_assistant' в таблицу users.")
-
-        # Поскольку у вас есть другие таблицы, можно также проверить и их
-        # Например, для таблицы assistants можно было бы добавить подобные проверки
-
-        # Вставляем начальные данные, если нужно
-        insert_initial_data(connection)
-
+        # Не забудьте сделать commit, если это нужно
         connection.commit()
-
-    except Exception as e:
-        print(f"Ошибка при проверке и создании колонок: {e}")
-
-    finally:
-        cursor.close()
-        connection.close()
 
 
 
