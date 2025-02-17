@@ -775,11 +775,19 @@ if __name__ == "__main__":
     conn = connect_to_db()
     
     try:
-        check_and_create_columns(conn)      # Создание таблиц
-        insert_initial_data(conn) 
-        check_assistants_in_database(conn)            # Вставка начальных данных
-        setup_bot_commands()                 # Настройка команд бота
-        bot.polling()                        # Запускаем бота для опроса
+        check_and_create_columns(conn)  # Создаем таблицы
+        # Проверяем, есть ли данные в таблице
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM assistants;")
+            count = cursor.fetchone()[0]
+        
+        if count == 0:
+            print("Таблица 'assistants' пуста. Вставляем начальные данные.")
+            insert_initial_data(conn)  # Вставляем начальные данные
+
+        check_assistants_in_database(conn)  # Проверяем вставленные ассистенты
+        setup_bot_commands()  # Настраиваем команды бота
+        bot.polling()  # Запускаем бота для опроса
     finally:
         if conn:
             conn.close()
