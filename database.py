@@ -133,7 +133,6 @@ def get_user_assistant(user_id: int) -> str:
 
 def check_and_create_columns():
     """Проверяет и создает недостающие колонки в таблице users."""
-
     try:
         connection = connect_to_db()
         cursor = connection.cursor()
@@ -150,7 +149,7 @@ def check_and_create_columns():
                 ALTER TABLE public.users
                 ADD COLUMN referral_count INTEGER DEFAULT 0;
             """)
-            print("Added column 'referral_count' to users table.")
+            print("Добавлена колонка 'referral_count' в таблицу users.")
 
         # Проверяем наличие колонки last_reset
         cursor.execute("""
@@ -164,21 +163,24 @@ def check_and_create_columns():
                 ALTER TABLE public.users
                 ADD COLUMN last_reset DATE NOT NULL DEFAULT CURRENT_DATE;
             """)
-            print("Added column 'last_reset' to users table.")
+            print("Добавлена колонка 'last_reset' в таблицу users.")
 
-        # Проверяем наличие колонки assistant_key
+        # Проверяем наличие колонки current_assistant
         cursor.execute("""
             SELECT column_name
             FROM information_schema.columns
-            WHERE table_name='users' AND column_name='assistant_key';
+            WHERE table_name='users' AND column_name='current_assistant';
         """)
 
         if not cursor.fetchone():
             cursor.execute("""
                 ALTER TABLE public.users
-                ADD COLUMN assistant_key VARCHAR(50);  -- Задайте нужный тип данных
+                ADD COLUMN current_assistant VARCHAR(255);
             """)
-            print("Added column 'assistant_key' to users table.")
+            print("Добавлена колонка 'current_assistant' в таблицу users.")
+
+        # Поскольку у вас есть другие таблицы, можно также проверить и их
+        # Например, для таблицы assistants можно было бы добавить подобные проверки
 
         # Вставляем начальные данные, если нужно
         insert_initial_data(connection)
@@ -191,6 +193,7 @@ def check_and_create_columns():
     finally:
         cursor.close()
         connection.close()
+
 
 
 # Функция для загрузки конфигурации ассистентов из базы данных
