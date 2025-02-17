@@ -3,21 +3,24 @@ import telebot
 import os
 import openai
 import json
-import boto3
+# import boto3
 from typing import Final
 from telebot.types import BotCommand
 import time
 import io
 from telebot import types
 import docx
-import PyPDF2
+# import PyPDF2
 import pdfplumber
 import datetime
 from database import *
 from assistance import *
-import psycopg2
+# import psycopg2
 # Функция для подключения к базе данных PostgreSQL
+print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')} password: {os.getenv('DB_PASSWORD')} ")
+
 connect_to_db()
+
 insert_initial_data(connect_to_db())
 
 TOKEN_PLANS = {
@@ -197,7 +200,7 @@ def buy_rate(callback) -> None:
         title=f"Подписка за {price}",
         description="Описание тарифа",
         invoice_payload="month_subscription",
-        provider_token="381764678:TEST:106386",
+        provider_token=pay_token,
         currency="RUB",
         start_parameter="test_bot",
         prices=[
@@ -759,7 +762,8 @@ def handler(event, context):
 
 
 if __name__ == "__main__":
-    print("Bot starte1")
+    print("Bot started")
+    check_and_create_columns()
     setup_bot_commands()
     bot.polling()
     conn = connect_to_db()
