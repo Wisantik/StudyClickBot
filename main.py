@@ -773,7 +773,8 @@ if __name__ == "__main__":
     
     try:
         check_and_create_columns(conn)      # Создание таблиц
-        insert_initial_data(conn)           # Вставка начальных данных
+        insert_initial_data(conn) 
+        check_assistants_in_database(conn)            # Вставка начальных данных
         setup_bot_commands()                 # Настройка команд бота
         bot.polling()                        # Запускаем бота для опроса
     finally:

@@ -67,6 +67,16 @@ r = redis.Redis(
 # Настройка Connection для Redis
 # r = redis.Redis(host='localhost', port=6379, db=0)
 
+
+def check_assistants_in_database(connection):
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT assistant_key, name FROM assistants;")
+        assistants = cursor.fetchall()
+        print("Ассистенты в базе данных:")
+        for assistant in assistants:
+            print(f"Ключ: {assistant[0]}, Имя: {assistant[1]}")
+
+
 def set_user_assistant(user_id: int, assistant_key: str):
     """Сохраняет выбранного ассистента для конкретного пользователя в Redis и базе данных."""
     print(f"[INFO] Устанавливаем ассистента для пользователя {user_id}: {assistant_key}")
