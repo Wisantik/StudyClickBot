@@ -96,17 +96,20 @@ def select_assistant(message):
     command = message.text[1:]  # Убираем /
     full_key = get_full_assistant_key(command)
 
-    if full_key:
-        set_user_assistant(message.from_user.id, full_key)
-        config = load_assistants_config()
+    print(f"[DEBUG] Полный ключ ассистента: {full_key}")  # Отладочное сообщение
 
-        # Проверка наличия асистента в конфигурации
+    if full_key:
+        config = load_assistants_config()  # Убедитесь, что конфигурация загружается корректно
+        print(f"[DEBUG] Конфигурация ассистентов: {config}")  # Проверяем содержимое конфигурации
+
         if full_key in config['assistants']:
+            set_user_assistant(message.from_user.id, full_key)
             bot.reply_to(message, f"Выбран ассистент: {config['assistants'][full_key]['name']}")
         else:
             bot.reply_to(message, "Ассистент не найден в конфигурации.")
     else:
         bot.reply_to(message, "Ассистент не найден")
+
 
 def create_price_menu() -> types.InlineKeyboardMarkup:
     markup = types.InlineKeyboardMarkup(
