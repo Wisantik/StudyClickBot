@@ -199,35 +199,36 @@ def check_and_create_columns(connection):
 
 
 
-# Функция для загрузки конфигурации ассистентов из базы данных
 def load_assistants_config():
-    """Загружает конфигурацию ассистентов из базы данных или Redis."""
     cache_key = 'assistants_config'
-
-    # Попробуем получить конфигурацию из Redis
     cached_config = r.get(cache_key)
 
     if cached_config:
         print("Конфигурация ассистентов получена из Redis.")
-        return json.loads(cached_config)  # Возвращаем данные, преобразованные из JSON
+        return json.loads(cached_config)
 
     try:
         connection = connect_to_db()
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT assistant_key, name, prompt FROM assistants")
-            assistants_data = cursor.fetchall()
+        cursor = connection.cursor()
+        cursor.execute("SELECT assistant_key, name, prompt FROM assistants")
+        assistants_data = cursor.fetchall()
 
-            assistants_config = {"assistants": {}}
-            for assistant_key, name, prompt in assistants_data:
-                assistants_config["assistants"][assistant_key] = {
-                    "name": name,
-                    "prompt": prompt
-                }
+        if not assistants_data:
+            print("Нет ассистентов в базе данных.")
+            return {"assistants": {}}
 
-            r.set(cache_key, json.dumps(assistants_config))
-            print("Конфигурация ассистентов сохранена в Redis.")
-            return assistants_config
+        assistants_config = {"assistants": {}}
+        for assistant_key, name, prompt in assistants_data:
+            assistants_config["assistants"][assistant_key] = {
+                "name": name,
+                "prompt": prompt
+            }
+        print(f"Загруженные данные ассистентов: {assistants_config}")
 
+        r.set(cache_key, json.dumps(assistants_config))
+        print("Кэшированные данные в Redis.")
+        
+        return assistants_config
     except Exception as e:
         print(f"Ошибка при загрузке ассистентов: {e}")
         return {"assistants": {}}
