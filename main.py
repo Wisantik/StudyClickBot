@@ -776,16 +776,22 @@ if __name__ == "__main__":
     
     try:
         check_and_create_columns(conn)  # Создаем таблицы
-        # Проверяем, есть ли данные в таблице
         with conn.cursor() as cursor:
             cursor.execute("SELECT COUNT(*) FROM assistants;")
             count = cursor.fetchone()[0]
         
         if count == 0:
             print("Таблица 'assistants' пуста. Вставляем начальные данные.")
-            insert_initial_data(conn)  # Вставляем начальные данные
+            insert_initial_data(conn)
 
-        check_assistants_in_database(conn)  # Проверяем вставленные ассистенты
+        assistants_config = load_assistants_config()  # Загружаем конфигурацию
+        print(f"Загруженные ассистенты: {assistants_config}")
+
+        # Здесь можно дополнительно проверить кэш в Redis
+        cached_config = r.get('assistants_config')
+        if cached_config:
+            print("Конфигурация ассистентов из Redis:", json.loads(cached_config))
+
         setup_bot_commands()  # Настраиваем команды бота
         bot.polling()  # Запускаем бота для опроса
     finally:
