@@ -95,11 +95,16 @@ def select_assistant(message):
     """Обработчик команд выбора ассистента"""
     command = message.text[1:]  # Убираем /
     full_key = get_full_assistant_key(command)
-    
+
     if full_key:
         set_user_assistant(message.from_user.id, full_key)
         config = load_assistants_config()
-        bot.reply_to(message, f"Выбран ассистент: {config['assistants'][full_key]['name']}")
+
+        # Проверка наличия асистента в конфигурации
+        if full_key in config['assistants']:
+            bot.reply_to(message, f"Выбран ассистент: {config['assistants'][full_key]['name']}")
+        else:
+            bot.reply_to(message, "Ассистент не найден в конфигурации.")
     else:
         bot.reply_to(message, "Ассистент не найден")
 

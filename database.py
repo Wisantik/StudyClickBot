@@ -70,30 +70,29 @@ r = redis.Redis(
 def set_user_assistant(user_id: int, assistant_key: str):
     """Сохраняет выбранного ассистента для конкретного пользователя в Redis и базе данных."""
     print(f"[INFO] Устанавливаем ассистента для пользователя {user_id}: {assistant_key}")
-    
+
     # Сохраняем ассистента в Redis
     r.set(user_id, assistant_key)
     print(f"[INFO] Ассистент для пользователя {user_id} успешно сохранен в Redis.")
-    
+
     # Заносим изменения в базу данных
     conn = connect_to_db()
     if conn is None:
         print("[ERROR] Не удалось подключиться к базе данных.")
         return
 
-    cur = conn.cursor()
     try:
-        cur.execute("""
-            UPDATE users
-            SET current_assistant = %s
-            WHERE user_id = %s
-        """, (assistant_key, user_id))
-        conn.commit()
-        print(f"[INFO] Ассистент для пользователя {user_id} успешно обновлен в базе данных.")
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE users
+                SET current_assistant = %s
+                WHERE user_id = %s
+            """, (assistant_key, user_id))
+            conn.commit()
+            print(f"[INFO] Ассистент для пользователя {user_id} успешно обновлен в базе данных.")
     except Exception as e:
         print(f"[ERROR] Ошибка при обновлении ассистента в базе данных: {e}")
     finally:
-        cur.close()
         conn.close()
         print(f"[INFO] Соединение с базой данных закрыто.")
 
@@ -194,39 +193,30 @@ def check_and_create_columns(connection):
 def load_assistants_config():
     """Загружает конфигурацию ассистентов из базы данных или Redis."""
     cache_key = 'assistants_config'
-    
+
     # Попробуем получить конфигурацию из Redis
     cached_config = r.get(cache_key)
-    
+
     if cached_config:
         print("Конфигурация ассистентов получена из Redis.")
         return json.loads(cached_config)  # Возвращаем данные, преобразованные из JSON
 
     try:
-        # Получаем соединение с базой данных
         connection = connect_to_db()
-        cursor = connection.cursor()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT assistant_key, name, prompt FROM assistants")
+            assistants_data = cursor.fetchall()
 
-        # Выполняем запрос для получения всех ассистентов
-        cursor.execute("SELECT assistant_key, name, prompt FROM assistants")
-        assistants_data = cursor.fetchall()
+            assistants_config = {"assistants": {}}
+            for assistant_key, name, prompt in assistants_data:
+                assistants_config["assistants"][assistant_key] = {
+                    "name": name,
+                    "prompt": prompt
+                }
 
-        # Формируем словарь в том же формате, что и раньше
-        assistants_config = {"assistants": {}}
-        for assistant_key, name, prompt in assistants_data:
-            assistants_config["assistants"][assistant_key] = {
-                "name": name,
-                "prompt": prompt
-            }
-
-        # Кэшируем конфигурацию в Redis
-        r.set(cache_key, json.dumps(assistants_config))
-        print("Конфигурация ассистентов сохранена в Redis.")
-
-        cursor.close()
-        connection.close()
-
-        return assistants_config
+            r.set(cache_key, json.dumps(assistants_config))
+            print("Конфигурация ассистентов сохранена в Redis.")
+            return assistants_config
 
     except Exception as e:
         print(f"Ошибка при загрузке ассистентов: {e}")
