@@ -763,7 +763,7 @@ def handler(event, context):
 
 if __name__ == "__main__":
     print("Bot started")
-    check_and_create_columns()
+    check_and_create_columns(connect_to_db())
     setup_bot_commands()
     bot.polling()
     conn = connect_to_db()
