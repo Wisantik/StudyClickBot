@@ -421,7 +421,7 @@ def successful_pay(message):
     bot.send_message(message.chat.id, 'Оплата прошла успешно! Ваша подписка активирована.')
 
 
-@bot.message_handler(commands=["start", "help"])
+@bot.message_handler(commands=["start", "help"]) #ANCHOR - start
 def send_welcome(message):
     # Получаем реферальный ID, если он есть
     referrer_id = message.text.split()[1] if len(message.text.split()) > 1 else None
@@ -665,7 +665,7 @@ def update_user_tokens(user_id, input_tokens, output_tokens):
 
 
 def generate_referral_link(user_id):
-    return f"https://t.me/filling33_bot?start={user_id}"
+    return f"https://t.me/fiinny_bot?start={user_id}"
 
 def process_text_message(text, chat_id) -> str:
     input_tokens = len(text)
