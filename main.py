@@ -785,7 +785,7 @@ if __name__ == "__main__":
             insert_initial_data(conn)
 
         assistants_config = load_assistants_config()  # Загружаем конфигурацию
-        print(f"Загруженные ассистенты: {assistants_config}")
+        # print(f"Загруженные ассистенты: {assistants_config}")
 
         # Здесь можно дополнительно проверить кэш в Redis
         cached_config = r.get('assistants_config')
