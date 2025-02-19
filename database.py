@@ -223,7 +223,7 @@ def load_assistants_config():
                 "name": name,
                 "prompt": prompt
             }
-        print(f"Загруженные данные ассистентов: {assistants_config}")
+        # print(f"Загруженные данные ассистентов: {assistants_config}")
 
         r.set(cache_key, json.dumps(assistants_config))
         print("Кэшированные данные в Redis.")
