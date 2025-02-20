@@ -3,25 +3,23 @@ import telebot
 import os
 import openai
 import json
-# import boto3
+
 from typing import Final
 from telebot.types import BotCommand
 import time
 import io
 from telebot import types
 import docx
-# import PyPDF2
+
 import pdfplumber
 import datetime
 from database import *
 from assistance import *
-# import psycopg2
-# Функция для подключения к базе данных PostgreSQL
+
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')} password: {os.getenv('DB_PASSWORD')} ")
 
 connect_to_db()
 
-# insert_initial_data(connect_to_db())
 
 TOKEN_PLANS = {
     "free": {"tokens": 30000},
@@ -421,8 +419,15 @@ def successful_pay(message):
     bot.send_message(message.chat.id, 'Оплата прошла успешно! Ваша подписка активирована.')
 
 
-@bot.message_handler(commands=["start", "help"]) #ANCHOR - start
+@bot.message_handler(commands=["start", "help"])  # ANCHOR - start
 def send_welcome(message):
+    profile_btn = types.KeyboardButton("Мой профиль")
+    keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    keyboard.add(profile_btn)
+
+    sub_btn = types.KeyboardButton("Купить подписку")
+    keyboard.add(sub_btn)
+
     # Получаем реферальный ID, если он есть
     referrer_id = message.text.split()[1] if len(message.text.split()) > 1 else None
     user_id = message.from_user.id
@@ -432,41 +437,43 @@ def send_welcome(message):
     # Проверяем, существует ли пользователь
     user_data = load_user_data(user_id)
 
-    if referrer_id:
-        if user_data:
+    if user_data:
+        if referrer_id:
             bot.reply_to(message, "Вы уже зарегистрированы. Нельзя использовать реферальную ссылку.")
-            return
+        else:
+            # Если пользователь уже есть, просто отправляем приветственное сообщение
+            bot.send_message(message.chat.id, "Добро пожаловать обратно!")
+    else:
+        # Если пользователя не найдено, и есть реферальный ID, то создаем нового пользователя
+        if referrer_id:
+            try:
+                referrer_id = int(referrer_id)
+                referrer_data = load_user_data(referrer_id)
 
-        try:
-            referrer_id = int(referrer_id)
-            referrer_data = load_user_data(referrer_id)
+                if referrer_data:
+                    referrer_data['invited_users'] = referrer_data.get('invited_users', 0) + 1
+                    referrer_data['daily_tokens'] += 100000
+                    save_user_data(referrer_data)
 
-            if referrer_data:
-                referrer_data['invited_users'] = referrer_data.get('invited_users', 0) + 1
-                referrer_data['daily_tokens'] += 100000
-                save_user_data(referrer_data)
+            except ValueError:
+                print("Invalid referrer ID format")
 
-        except ValueError:
-            print("Invalid referrer ID format")
+        # Создаем нового пользователя без реферала
+        user_data = create_default_user(user_id, referrer_id)
 
-    # Создаем клавиатуру только с кнопками профиля и подписки
-    keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    
-    profile_btn = types.KeyboardButton("Мой профиль")
-    keyboard.add(profile_btn)
-    sub_btn = types.KeyboardButton("Купить подписку")
-    keyboard.add(sub_btn)
-
+        # Отправляем приветственное сообщение
+        bot.send_message(message.chat.id, "Вы успешно зарегистрированы!")
+        
+    # Создаем и отправляем клавиатуру с опциями
     bot.send_message(message.chat.id, """Привет! Я — Финни
-
-🏆 Я единственный бот в Telegram с полноценной персонализированной поддержкой в мире финансов. 
-
+🏆 Я единственный бот в Telegram с полноценной персонализированной поддержкой в мире финансов.
+                     
 🎯 Моя цель — помочь тебе стать финансово грамотным, независимо от твоего возраста или уровня знаний.
-
+                     
 Выберите интересующего вас ассистента из меню команд:
-
+                     
 📊 /finance - Финансовая грамотность
-💰 /crypto - Инвестиции в криптовалюту 
+💰 /crypto - Инвестиции в криптовалюту
 📈 /stocks - Инвестирование на фондовом рынке
 🏡 /realestate - Инвестирование в недвижимость
 💡 /business - Создание бизнеса
@@ -474,11 +481,10 @@ def send_welcome(message):
 🔐 /cyber - Кибербезопасность
 🏦 /insurance - Страхование
 💰 /economics - Экономика и финансы
-
+                     
 📚 Персонализированное обучение: Я адаптирую материал в зависимости от твоего уровня знаний. Если ты новичок, не переживай — я объясню все доступно и шаг за шагом.
 🔍 Как я работаю? После каждого ответа я предложу тебе 3 возможных опции для дальнейшего изучения. Это поможет двигаться по пути финансовой грамотности, не запутываясь в сложных терминах.
-🤝 Твоя помощь в обучении: Если нужно, можете задать дополнительные вопросы, мои контакты в шапке профиля""",
-                     reply_markup=keyboard)
+🤝 Твоя помощь в обучении: Если нужно, можете задать дополнительные вопросы, мои контакты в шапке профиля""", reply_markup=keyboard)
 
 @bot.message_handler(commands=['referral'])
 def send_referral_link(message):
@@ -789,9 +795,6 @@ if __name__ == "__main__":
 
         # Здесь можно дополнительно проверить кэш в Redis
         cached_config = r.get('assistants_config')
-        if cached_config:
-            print("Конфигурация ассистентов из Redis:", json.loads(cached_config))
-
         setup_bot_commands()  # Настраиваем команды бота
         bot.polling()  # Запускаем бота для опроса
     finally:

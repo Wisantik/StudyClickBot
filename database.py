@@ -235,12 +235,12 @@ def load_assistants_config():
         ###############################################
         #ЮЗЕРЫ
         ###############################################
-def create_default_user(user_id: int):
+def create_default_user(user_id: int, referrer_id: int = None):
     """Создание нового пользователя в базе данных с настройками по умолчанию"""
     try:
         connection = connect_to_db()
         cursor = connection.cursor()
-        
+
         cursor.execute("""
             INSERT INTO users (
                 user_id, daily_tokens, last_reset, total_spent,
@@ -248,20 +248,20 @@ def create_default_user(user_id: int):
                 invited_users, referrer_id, subscription_plan
             ) VALUES (
                 %s, 30000, CURRENT_DATE, 0.0,
-                0, 0, 0, 0, NULL, 'free'
+                0, 0, 0, 0, %s, 'free'
             )
-            RETURNING daily_tokens, last_reset, total_spent, 
+            RETURNING daily_tokens, last_reset, total_spent,
                       referral_count, input_tokens, output_tokens,
                       invited_users, referrer_id, subscription_plan
-        """, (user_id,))
-        
+        """, (user_id, referrer_id))
+
         # Получаем созданные данные
         user = cursor.fetchone()
-        
+
         connection.commit()
         cursor.close()
         connection.close()
-        
+
         # Возвращаем в нужном формате
         return {
             "user_id": user_id,
@@ -275,7 +275,6 @@ def create_default_user(user_id: int):
             "referrer_id": user[7],
             "subscription_plan": user[8]
         }
-        
     except Exception as e:
         print(f"Ошибка при создании пользователя: {e}")
         return None
@@ -286,7 +285,7 @@ def load_user_data(user_id: int):
     try:
         connection = connect_to_db()
         cursor = connection.cursor()
-
+        
         cursor.execute("""
             SELECT daily_tokens, last_reset, total_spent,
                    referral_count, input_tokens, output_tokens,
@@ -294,7 +293,7 @@ def load_user_data(user_id: int):
             FROM users
             WHERE user_id = %s
         """, (user_id,))
-
+        
         user = cursor.fetchone()
 
         if user:
@@ -311,10 +310,8 @@ def load_user_data(user_id: int):
                 "referrer_id": user[7],
                 "subscription_plan": user[8]
             }
-        else:
-            # Если пользователь не найден, создаем нового
-            user_data = create_default_user(user_id)
-            return user_data  # Возвращаем данные нового пользователя
+
+        return None  # Возврат None, если пользователь не найден
 
     except Exception as e:
         print(f"Ошибка при загрузке данных пользователя: {e}")
