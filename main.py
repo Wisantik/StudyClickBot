@@ -3,25 +3,28 @@ import telebot
 import os
 import openai
 import json
-# import boto3
+
 from typing import Final
 from telebot.types import BotCommand
 import time
 import io
 from telebot import types
 import docx
-# import PyPDF2
+
 import pdfplumber
 import datetime
 from database import *
 from assistance import *
-# import psycopg2
-# Функция для подключения к базе данных PostgreSQL
+
+
+
+
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')} password: {os.getenv('DB_PASSWORD')} ")
 
 connect_to_db()
 
-# insert_initial_data(connect_to_db())
+
+
 
 TOKEN_PLANS = {
     "free": {"tokens": 30000},
@@ -39,12 +42,44 @@ logger = telebot.logger
 telebot.logger.setLevel(logging.INFO)
 pay_token = os.getenv('PAY_TOKEN')
 bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
-client = openai.Client(
-    api_key=os.getenv('OPENAI_API_KEY'), 
-    base_url=os.getenv('OPENAI_BASE_URL')
-)
+openai.api_key = os.getenv('OPENAI_API_KEY')
 
 
+class ExceptionHandler:
+    """Класс обработчика исключений для бота"""
+    def handle(self, exception):
+        """Метод для обработки исключений"""
+        if isinstance(exception, telebot.apihelper.ApiTelegramException):
+            if exception.error_code == 403:
+                # Пытаемся извлечь ID пользователя из текста ошибки
+                try:
+                    # Обычно ошибка содержит ID чата в формате "chat_id=123456789"
+                    error_text = str(exception)
+                    import re
+                    match = re.search(r'chat_id=(\d+)', error_text)
+                    if match:
+                        user_id = match.group(1)
+                        # Получаем информацию о пользователе из базы данных
+                        conn = connect_to_db()
+                        cur = conn.cursor()
+                        cur.execute("SELECT username FROM users WHERE user_id = %s", (user_id,))
+                        result = cur.fetchone()
+                        username = result[0] if result else "Неизвестный пользователь"
+                        cur.close()
+                        conn.close()
+                        
+                        print(f"Пользователь заблокировал бота. ID: {user_id}, Username: {username}")
+                    else:
+                        print(f"Пользователь заблокировал бота. Не удалось определить ID. Ошибка: {error_text}")
+                except Exception as e:
+                    print(f"Ошибка при определении пользователя, заблокировавшего бота: {e}")
+                    print(f"Исходная ошибка: {exception}")
+                
+                return True  # Сообщаем, что исключение обработано
+        return False  # Для других исключений стандартная обработка
+
+# Устанавливаем обработчик исключений
+bot.exception_handler = ExceptionHandler()
 
 def setup_bot_commands():
     """Настройка команд бота с учетом ограничений Telegram API"""
@@ -53,54 +88,83 @@ def setup_bot_commands():
         telebot.types.BotCommand("new", "Очистить историю чата"),
         telebot.types.BotCommand("profile", "Посмотреть профиль"),
         telebot.types.BotCommand("pay", "Купить подписку"),
-        # Команды для ассистентов (названия должны быть только в нижнем регистре и без пробелов)
-        telebot.types.BotCommand("cyber", "Кибербезопасность"),
-        telebot.types.BotCommand("tax", "Налоговый консультант"),
-        telebot.types.BotCommand("finance", "Финансовая грамотность"),
-        telebot.types.BotCommand("crypto", "Криптовалюты"),
-        telebot.types.BotCommand("business", "Создание бизнеса"),
-        telebot.types.BotCommand("economics", "Экономика"),
-        telebot.types.BotCommand("stocks", "Фондовый рынок"),
-        telebot.types.BotCommand("loans", "Кредиты и займы"),
-        telebot.types.BotCommand("insurance", "Страхование"),
-        telebot.types.BotCommand("realestate", "Инвестиции в недвижимость")
+
+        # Сокращенные команды для ассистентов
+        telebot.types.BotCommand("cybersecurity", "Консультант по кибербезопасности"),
+        telebot.types.BotCommand("dig_marketing", "Консультант по маркетингу"),
+        telebot.types.BotCommand("brand_mgmt", "Консультант по бренд-менеджменту"),
+        telebot.types.BotCommand("biz_create", "Консультант по открытию бизнеса"),
+        telebot.types.BotCommand("comm_skills", "Консультант по навыкам общения"),
+        telebot.types.BotCommand("stk_trading", "Консультант по фондовому рынку"),
+        telebot.types.BotCommand("crypto", "Консультант по криптовалютам"),
+        telebot.types.BotCommand("real_estate", "Консультант по недвижимости"),
+        telebot.types.BotCommand("startups", "Консультант по стартапам"),
+        telebot.types.BotCommand("passive_inv", "Консультант по пассивным инвестициям"),
+        telebot.types.BotCommand("esg", "Консультант по ESG-инвестициям"),
+        telebot.types.BotCommand("forex", "Консультант по валютным рынкам"),
+        telebot.types.BotCommand("finance", "Консультант по международным финансам"),
+        telebot.types.BotCommand("fintech", "Консультант по финтеху"),
+        telebot.types.BotCommand("pensions", "Консультант по пенсиям"),
+        telebot.types.BotCommand("insurance", "Консультант по страхованию"),
+        telebot.types.BotCommand("tax_credit", "Консультант по налогам и кредитам"),
+        telebot.types.BotCommand("personal_fin", "Консультант по личным финансам"),
+        telebot.types.BotCommand("income_edu", "Консультант по доходам и образованию"),
+        telebot.types.BotCommand("prod_mgmt", "Консультант по продакт-менеджменту"),
     ]
-    
+
     try:
         bot.set_my_commands(commands)
         print("Команды бота успешно настроены")
     except Exception as e:
         print(f"Ошибка при настройке команд бота: {e}")
 
+# Обновление функции для получения полного ключа ассистента
 def get_full_assistant_key(command: str) -> str:
     """Получение полного ключа ассистента по команде"""
+    
     command_to_key = {
-        'cyber': 'cybersecurity',
-        'tax': 'Tax Payment Consultant',
-        'benefits': 'Consultant on benefits for large families',
-        'finance': 'Financial Literacy Assistant',
-        'crypto': 'investment_cryptocurrency_con',
-        'business': 'business creation consultant',
-        'economics': 'Economics consultant',
-        'stocks': 'Stock Market Trading Consultant',
-        'loans': 'Loan and Loan Consultant',
-        'insurance': 'insurance consultant',
-        'realestate': 'real_estate_investment_con'
+        'cybersecurity': 'cybersecurity',
+        'dig_marketing': 'Digital Marketing Consultant',
+        'brand_mgmt': 'Brand Management Consultant',
+        'biz_create': 'Business Creation Consultant',
+        'comm_skills': 'Communication Skills Consultant',
+        'stk_trading': 'Stock Market Trading Consultant',
+        'crypto': 'Cryptocurrency Consultant',
+        'real_estate': 'Real Estate Investment Consultant',
+        'startups': 'Startup Investment Consultant',
+        'passive_inv': 'Passive Investment Consultant',
+        'esg': 'ESG Investment Consultant',
+        'forex': 'Forex Market Consultant',
+        'finance': 'Digital Finance Consultant',
+        'fintech': 'Fintech Consultant',
+        'pensions': 'Pension Consultant',
+        'insurance': 'Insurance Consultant',
+        'tax_credit': 'Tax and Credit Consultant',
+        'personal_fin': 'Personal Finance Consultant',
+        'income_edu': 'Income and Finance Education Consultant',
+        'prod_mgmt': 'Product_management_con',  
     }
+
     return command_to_key.get(command)
 
-@bot.message_handler(commands=['cyber', 'tax', 'finance', 'crypto', 'business', 
-                             'economics', 'stocks', 'loans', 'insurance', 'realestate'])
-def select_assistant(message):
-    """Обработчик команд выбора ассистента"""
-    command = message.text[1:]  # Убираем /
+@bot.message_handler(commands=[
+    'cybersecurity', 'dig_marketing', 'brand_mgmt',
+    'biz_create', 'comm_skills', 'stk_trading',
+    'crypto', 'real_estate', 'startups',
+    'passive_inv', 'esg', 'forex',
+    'finance', 'fintech', 'pensions',
+    'insurance', 'tax_credit', 'personal_fin',
+    'income_edu', 'prod_mgmt'
+])
+def handle_assistant_commands(message):
+    command = message.text[1:]  # Убираем '/'
     full_key = get_full_assistant_key(command)
 
     print(f"[DEBUG] Полный ключ ассистента: {full_key}")  # Отладочное сообщение
 
     if full_key:
         config = load_assistants_config()  # Убедитесь, что конфигурация загружается корректно
-        print(f"[DEBUG] Конфигурация ассистентов: {config}")  # Проверяем содержимое конфигурации
+        # print(f"[DEBUG] Конфигурация ассистентов: {config}")  # Проверяем содержимое конфигурации
 
         if full_key in config['assistants']:
             set_user_assistant(message.from_user.id, full_key)
@@ -154,6 +218,119 @@ def save_chat_id(chat_id):
     with open("//function/storage/subscribers/subscribers.txt", "a") as file:
         file.write(str(chat_id) + "\n")
 
+
+# Функция для создания главного меню
+def create_main_menu():
+    keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    profile_btn = types.KeyboardButton("Мой профиль")
+    experts_btn = types.KeyboardButton("Эксперты")
+    sub_btn = types.KeyboardButton("Купить подписку")
+    keyboard.add(profile_btn, experts_btn)
+    keyboard.add(sub_btn)
+    return keyboard
+
+# Функция для создания меню экспертов
+def create_experts_menu():
+    conn = connect_to_db()
+    experts = get_all_experts(conn)
+    conn.close()
+    
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    
+    for expert in experts:
+        expert_id, name, specialization, *_ = expert
+        keyboard.add(types.InlineKeyboardButton(
+            text=f"{name} - {specialization}",
+            callback_data=f"expert_{expert_id}"
+        ))
+    
+    return keyboard
+
+
+@bot.message_handler(func=lambda message: message.text == "Эксперты")
+def experts_button_handler(message):
+    bot.send_message(
+        message.chat.id,
+        "Выберите эксперта, с которым хотите связаться:",
+        reply_markup=create_experts_menu()
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("expert_"))
+def expert_callback_handler(call):
+    expert_id = int(call.data.split("_")[1])
+    
+    conn = connect_to_db()
+    expert = get_expert_by_id(conn, expert_id)
+    conn.close()
+    
+    if not expert:
+        bot.answer_callback_query(call.id, "Эксперт не найден")
+        return
+    
+    expert_id, name, specialization, description, photo_url, telegram_username, contact_info, is_available = expert
+    
+    # Создаем клавиатуру для связи с экспертом
+    keyboard = types.InlineKeyboardMarkup()
+    
+    if telegram_username:
+        keyboard.add(types.InlineKeyboardButton(
+            text="Написать эксперту",
+            url=f"https://t.me/{telegram_username.replace('@', '')}"
+        ))
+    
+    # Формируем сообщение с информацией об эксперте
+    message_text = f"*{name}*\n_{specialization}_\n\n{description}\n\n"
+    
+    if contact_info:
+        message_text += f"*Контактная информация:*\n{contact_info}"
+    
+    # Если есть фото, отправляем его с описанием
+    if photo_url:
+        try:
+            bot.send_photo(
+                call.message.chat.id,
+                photo=photo_url,
+                caption=message_text,
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            print(f"Ошибка при отправке фото эксперта: {e}")
+            # Если не удалось отправить фото, отправляем только текст
+            bot.send_message(
+                call.message.chat.id,
+                message_text,
+                parse_mode="Markdown",
+                reply_markup=keyboard
+            )
+    else:
+        # Если фото нет, отправляем только текст
+        bot.send_message(
+            call.message.chat.id,
+            message_text,
+            parse_mode="Markdown",
+            reply_markup=keyboard
+        )
+    
+    bot.answer_callback_query(call.id)
+
+# Обработчик для кнопки "Назад"
+@bot.message_handler(func=lambda message: message.text == "Назад")
+def back_button_handler(message):
+    bot.send_message(
+        message.chat.id,
+        "Вы вернулись в главное меню",
+        reply_markup=create_main_menu()
+    )
+
+
+def check_experts_in_database(connection):
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT expert_id, name, specialization FROM experts;")
+        experts = cursor.fetchall()
+        print("Эксперты в базе данных:")
+        for expert in experts:
+            print(f"ID: {expert[0]}, Имя: {expert[1]}, Специализация: {expert[2]}")
 
 current_assistant = None  # Переменная для хранения текущего ассистента
 
@@ -316,19 +493,27 @@ def check_and_update_tokens(user_id):
     if tokens < 15000 and current_plan != 'free':  # Added check for non-free plan
         # Проверяем, прошло ли 24 часа с последнего уведомления
         if last_warning_time is None or (datetime.datetime.now() - last_warning_time).total_seconds() > 86400:
-            bot.send_message(
-                user_id,
-                """Ваши токены на исходе! ⏳
+            try:
+                bot.send_message(
+                    user_id,
+                    """Ваши токены на исходе! ⏳
     Осталось меньше 15 000 токенов, и скоро вам может не хватить для дальнейшего использования. В таком случае вы будете автоматически переведены на бесплатный тариф с ограниченными возможностями.
     Чтобы избежать этого, пополните баланс и продолжайте пользоваться всеми функциями без ограничений! 🌟
     [Pay — Пополнить баланс]"""
-            )
-            # Обновляем время последнего уведомления
-            cur.execute("""
-                UPDATE users 
-                SET last_warning_time = %s 
-                WHERE user_id = %s
-            """, (datetime.datetime.now(), user_id))
+                )
+                # Обновляем время последнего уведомления
+                cur.execute("""
+                    UPDATE users 
+                    SET last_warning_time = %s 
+                    WHERE user_id = %s
+                """, (datetime.datetime.now(), user_id))
+            except telebot.apihelper.ApiTelegramException as e:
+                if e.error_code == 403:
+                    print(f"Пользователь {user_id} заблокировал бота. Пропускаем отправку уведомления.")
+                else:
+                    print(f"Ошибка API при отправке уведомления пользователю {user_id}: {e}")
+            except Exception as e:
+                print(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
     
     # Проверяем, осталось ли меньше 3,000 токенов
     if tokens < 3000:
@@ -340,13 +525,21 @@ def check_and_update_tokens(user_id):
                     daily_tokens = 0 
                 WHERE user_id = %s 
             """, (user_id,))
-            bot.send_message(
-                user_id,
-                """Подписка завершена! 🚫
+            try:
+                bot.send_message(
+                    user_id,
+                    """Подписка завершена! 🚫
 Вы не потеряли токены, но для продолжения доступа выберите новый тариф.
 Новый тариф откроет вам ещё больше возможностей и токенов.
 [Pay — Выбрать новый тариф]"""
-            )
+                )
+            except telebot.apihelper.ApiTelegramException as e:
+                if e.error_code == 403:
+                    print(f"Пользователь {user_id} заблокировал бота. Пропускаем отправку уведомления.")
+                else:
+                    print(f"Ошибка API при отправке уведомления пользователю {user_id}: {e}")
+            except Exception as e:
+                print(f"Не удалось отправить уведомление пользователю {user_id}: {e}")
     
     conn.commit()
     cur.close()
@@ -421,7 +614,8 @@ def successful_pay(message):
     bot.send_message(message.chat.id, 'Оплата прошла успешно! Ваша подписка активирована.')
 
 
-@bot.message_handler(commands=["start", "help"])
+# Модифицируем функцию send_welcome для использования нашего главного меню
+@bot.message_handler(commands=["start", "help"])  # ANCHOR - start
 def send_welcome(message):
     # Получаем реферальный ID, если он есть
     referrer_id = message.text.split()[1] if len(message.text.split()) > 1 else None
@@ -432,53 +626,49 @@ def send_welcome(message):
     # Проверяем, существует ли пользователь
     user_data = load_user_data(user_id)
 
-    if referrer_id:
-        if user_data:
+    if user_data:
+        if referrer_id:
             bot.reply_to(message, "Вы уже зарегистрированы. Нельзя использовать реферальную ссылку.")
-            return
+        else:
+            # Если пользователь уже есть, просто отправляем приветственное сообщение
+            bot.send_message(message.chat.id, "Добро пожаловать обратно!")
+    else:
+        # Если пользователя не найдено, и есть реферальный ID, то создаем нового пользователя
+        if referrer_id:
+            try:
+                referrer_id = int(referrer_id)
+                referrer_data = load_user_data(referrer_id)
 
-        try:
-            referrer_id = int(referrer_id)
-            referrer_data = load_user_data(referrer_id)
+                if referrer_data:
+                    referrer_data['invited_users'] = referrer_data.get('invited_users', 0) + 1
+                    referrer_data['daily_tokens'] += 100000
+                    save_user_data(referrer_data)
 
-            if referrer_data:
-                referrer_data['invited_users'] = referrer_data.get('invited_users', 0) + 1
-                referrer_data['daily_tokens'] += 100000
-                save_user_data(referrer_data)
+            except ValueError:
+                print("Invalid referrer ID format")
 
-        except ValueError:
-            print("Invalid referrer ID format")
+        # Создаем нового пользователя без реферала
+        user_data = create_default_user(user_id, referrer_id)
 
-    # Создаем клавиатуру только с кнопками профиля и подписки
-    keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    
-    profile_btn = types.KeyboardButton("Мой профиль")
-    keyboard.add(profile_btn)
-    sub_btn = types.KeyboardButton("Купить подписку")
-    keyboard.add(sub_btn)
+        # Отправляем приветственное сообщение
+        bot.send_message(message.chat.id, "Вы успешно зарегистрированы!")
+        
+    # Создаем и отправляем клавиатуру с опциями, используя нашу функцию
+    bot.send_message(message.chat.id, """Привет, я Финни! 👋
 
-    bot.send_message(message.chat.id, """Привет! Я — Финни
+Я — твой друг и помощник в мире финансов!  🏆 Я здесь, чтобы сделать твой путь к финансовой грамотности лёгким и интересным — вне зависимости от твоего возраста или уровня знаний.
 
-🏆 Я единственный бот в Telegram с полноценной персонализированной поддержкой в мире финансов. 
+💡 Что я умею:
 
-🎯 Моя цель — помочь тебе стать финансово грамотным, независимо от твоего возраста или уровня знаний.
+🎯 Я помогу тебе разобраться в любых финансовых вопросах — от базовых основ до сложных стратегий.
+📚 Я адаптирую материал под твой уровень знаний, так что не волнуйся, если ты новичок — всё будет просто и понятно!
+🔍 После каждого ответа я предложу три варианта, как двигаться дальше. Это поможет тебе лучше усвоить материал и не потеряться в сложных терминах.
+🤝 Если у тебя возникнут вопросы — я всегда рядом! Мои контакты в шапке профиля — пиши, не стесняйся.
 
-Выберите интересующего вас ассистента из меню команд:
+💬 У меня есть команда ассистентов по разным финансовым темам — инвестиции, кредиты, налоги, бизнес и многое другое. Просто открой меню, выбери нужную тему и получи профессиональную консультацию!
 
-📊 /finance - Финансовая грамотность
-💰 /crypto - Инвестиции в криптовалюту 
-📈 /stocks - Инвестирование на фондовом рынке
-🏡 /realestate - Инвестирование в недвижимость
-💡 /business - Создание бизнеса
-💸 /loans - Кредиты и займы
-🔐 /cyber - Кибербезопасность
-🏦 /insurance - Страхование
-💰 /economics - Экономика и финансы
+💬 Хочешь пообщаться с нашими экспертами? Легко! Просто открой меню, выбери нужную тему и получи профессиональную консультацию.""", reply_markup=create_main_menu())
 
-📚 Персонализированное обучение: Я адаптирую материал в зависимости от твоего уровня знаний. Если ты новичок, не переживай — я объясню все доступно и шаг за шагом.
-🔍 Как я работаю? После каждого ответа я предложу тебе 3 возможных опции для дальнейшего изучения. Это поможет двигаться по пути финансовой грамотности, не запутываясь в сложных терминах.
-🤝 Твоя помощь в обучении: Если нужно, можете задать дополнительные вопросы, мои контакты в шапке профиля""",
-                     reply_markup=keyboard)
 
 @bot.message_handler(commands=['referral'])
 def send_referral_link(message):
@@ -526,7 +716,17 @@ def send_broadcast(message_content, photo=None):
             else:
                 # Отправляем только текст
                 bot.send_message(user[0], message_content)
+        except telebot.apihelper.ApiTelegramException as e:
+            # Обрабатываем ошибку блокировки бота пользователем
+            if e.error_code == 403:
+                print(f"Пользователь {user[0]} заблокировал бота. Пропускаем.")
+                continue
+            else:
+                # Логируем другие ошибки API
+                print(f"Ошибка API при отправке сообщения пользователю {user[0]}: {e}")
+                continue
         except Exception as e:
+            # Обрабатываем другие исключения
             print(f"Не удалось отправить сообщение пользователю {user[0]}: {e}")
             continue
             
@@ -665,7 +865,7 @@ def update_user_tokens(user_id, input_tokens, output_tokens):
 
 
 def generate_referral_link(user_id):
-    return f"https://t.me/filling33_bot?start={user_id}"
+    return f"https://t.me/fiinny_bot?start={user_id}"
 
 def process_text_message(text, chat_id) -> str:
     input_tokens = len(text)
@@ -684,8 +884,8 @@ def process_text_message(text, chat_id) -> str:
     history.append({"role": "user", "content": input_text})
 
     try:
-        chat_completion = client.chat.completions.create(
-            model="gpt-4o-mini",
+        chat_completion = openai.ChatCompletion.create(
+            model="gpt-4o-2024-08-06",
             messages=history
         )
 
@@ -712,21 +912,29 @@ def process_text_message(text, chat_id) -> str:
 
 
 
+import tempfile
+
 @bot.message_handler(func=lambda msg: msg.voice.mime_type == "audio/ogg", content_types=["voice"])
 def voice(message):
     """Обрабатывает полученное голосовое сообщение."""
+    
     file_info = bot.get_file(message.voice.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
 
     try:
-        # Отправляем файл на распознавание с помощью Whisper
-        response = client.audio.transcriptions.create(
-            file=("file.ogg", downloaded_file, "audio/ogg"),
-            model="whisper-1",
-        )
+        # Создаем временный файл
+        with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as temp_file:
+            temp_file.write(downloaded_file)  # Записываем данные в файл
+            temp_file.flush()  # Сбрасываем буфер
+
+            # Отправляем файл на распознавание с помощью Whisper
+            response = openai.Audio.transcribe(
+                model="whisper-1",
+                file=temp_file  # Передаем временный файл
+            )
 
         # Получаем распознанный текст
-        recognized_text = response.text.strip()
+        recognized_text = response['text'].strip()
 
         # Проверка длины распознанного текста
         if len(recognized_text) > 1000000:
@@ -756,12 +964,17 @@ def handler(event, context):
     message = json.loads(event["body"])
     update = telebot.types.Update.de_json(message)
     allowed_updates=["message", "callback_query", "pre_checkout_query", "buy_rate_149"]
-    # Удаляем условие проверки имени пользователя
+    
     if update.message is not None:
         try:
             bot.process_new_updates([update])
+        except telebot.apihelper.ApiTelegramException as e:
+            if e.error_code == 403:
+                print(f"Пользователь заблокировал бота. Пропускаем обработку сообщения.")
+            else:
+                print(f"Ошибка API Telegram: {e}")
         except Exception as e:
-            print(e)
+            print(f"Ошибка при обработке обновления: {e}")
 
     return {
         "statusCode": 200,
@@ -783,15 +996,21 @@ if __name__ == "__main__":
         if count == 0:
             print("Таблица 'assistants' пуста. Вставляем начальные данные.")
             insert_initial_data(conn)
+        
+        # Проверяем наличие экспертов в базе данных
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT COUNT(*) FROM experts;")
+            experts_count = cursor.fetchone()[0]
+        
+        if experts_count == 0:
+            print("Таблица 'experts' пуста. Вставляем начальные данные экспертов.")
+            insert_initial_experts(conn)
 
         assistants_config = load_assistants_config()  # Загружаем конфигурацию
-        print(f"Загруженные ассистенты: {assistants_config}")
+        # print(f"Загруженные ассистенты: {assistants_config}")
 
         # Здесь можно дополнительно проверить кэш в Redis
         cached_config = r.get('assistants_config')
-        if cached_config:
-            print("Конфигурация ассистентов из Redis:", json.loads(cached_config))
-
         setup_bot_commands()  # Настраиваем команды бота
         bot.polling()  # Запускаем бота для опроса
     finally:
