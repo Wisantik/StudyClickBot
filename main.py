@@ -900,7 +900,7 @@ def process_text_message(text, chat_id) -> str:
 
 import tempfile
 
-bot.message_handler(func=lambda msg: msg.voice is not None, content_types=["voice"])
+bot.message_handler(func=lambda msg: msg.voice.mime_type == "audio/ogg", content_types=["voice"])
 def voice(message):
     """Обрабатывает полученное голосовое сообщение."""
     
