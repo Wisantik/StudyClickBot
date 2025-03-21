@@ -205,20 +205,6 @@ def create_price_menu() -> types.InlineKeyboardMarkup:
 # Загрузить конфигурацию ассистентов
 load_assistants_config()
 
-# Функции для управления подписками
-def load_chat_ids():
-    try:
-        with open("/function/storage/subscribers/subscribers.txt", "r") as file:
-            return {line.strip() for line in file.readlines()}
-    except FileNotFoundError:
-        return set()
-
-
-def save_chat_id(chat_id):
-    with open("//function/storage/subscribers/subscribers.txt", "a") as file:
-        file.write(str(chat_id) + "\n")
-
-
 # Функция для создания главного меню
 def create_main_menu():
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
@@ -914,15 +900,16 @@ def process_text_message(text, chat_id) -> str:
 
 import tempfile
 
-@bot.message_handler(func=lambda msg: msg.voice.mime_type == "audio/ogg", content_types=["voice"])
+bot.message_handler(func=lambda msg: msg.voice is not None, content_types=["voice"])
 def voice(message):
     """Обрабатывает полученное голосовое сообщение."""
     
+    # Получаем информацию о голосовом сообщении
     file_info = bot.get_file(message.voice.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
 
     try:
-        # Создаем временный файл
+        # Создаем временный файл для хранения голосового сообщения
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as temp_file:
             temp_file.write(downloaded_file)  # Записываем данные в файл
             temp_file.flush()  # Сбрасываем буфер
