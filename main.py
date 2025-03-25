@@ -871,7 +871,7 @@ def process_text_message(text, chat_id) -> str:
 
     try:
         chat_completion = openai.ChatCompletion.create(
-            model="gpt-4o-2024-08-06",
+            model="gpt-4o-search-preview-2025-03011",
             messages=history
         )
 
