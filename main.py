@@ -549,7 +549,7 @@ ID: {user_id}
 Ваш текущий тариф: {user_data['subscription_plan'].capitalize()}
 
 Оставшаяся квота:
-GPT-4o mini: {user_data['daily_tokens']} символов
+GPT-4o: {user_data['daily_tokens']} символов
 
 🏷 Детали расходов:
 💰 Общая сумма: ${user_data['total_spent']:.4f}
