@@ -984,14 +984,12 @@ if __name__ == "__main__":
             print("Таблица 'assistants' пуста. Вставляем начальные данные.")
             insert_initial_data(conn)
         
-        # Проверяем наличие экспертов в базе данных
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) FROM experts;")
-            experts_count = cursor.fetchone()[0]
+        # Всегда обновляем экспертов при запуске
+        print("Обновляем список экспертов...")
+        insert_initial_experts(conn)
         
-        if experts_count == 0:
-            print("Таблица 'experts' пуста. Вставляем начальные данные экспертов.")
-            insert_initial_experts(conn)
+        # Проверяем наличие экспертов в базе данных (для отладки)
+        check_experts_in_database(conn)
 
         assistants_config = load_assistants_config()  # Загружаем конфигурацию
         # print(f"Загруженные ассистенты: {assistants_config}")
