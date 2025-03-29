@@ -900,30 +900,42 @@ def process_text_message(text, chat_id) -> str:
 
 import tempfile
 
-bot.message_handler(func=lambda msg: msg.voice.mime_type == "audio/ogg", content_types=["voice"])
+
+from pydub import AudioSegment
+
+@bot.message_handler(content_types=["voice"])
 def voice(message):
     """Обрабатывает полученное голосовое сообщение."""
-    
-    # Получаем информацию о голосовом сообщении
-    file_info = bot.get_file(message.voice.file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
+
+    try:
+        # Получаем информацию о голосовом сообщении
+        file_info = bot.get_file(message.voice.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+    except Exception as e:
+        logging.error(f"Ошибка при получении файла: {e}")
+        bot.reply_to(message, "Не удалось получить голосовое сообщение.")
+        return
 
     try:
         # Создаем временный файл для хранения голосового сообщения
         with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as temp_file:
-            temp_file.write(downloaded_file)  # Записываем данные в файл
-            temp_file.flush()  # Сбрасываем буфер
+            temp_file.write(downloaded_file)
+            temp_file.flush()
+
+            # Перекодируем .ogg в .wav с использованием pydub
+            audio = AudioSegment.from_ogg(temp_file.name)
+            wav_temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            audio.export(wav_temp_file.name, format="wav")
 
             # Отправляем файл на распознавание с помощью Whisper
             response = openai.Audio.transcribe(
                 model="whisper-1",
-                file=temp_file  # Передаем временный файл
+                file=wav_temp_file.name  # Передаем временный WAV файл
             )
 
         # Получаем распознанный текст
         recognized_text = response['text'].strip()
 
-        # Проверка длины распознанного текста
         if len(recognized_text) > 1000000:
             bot.reply_to(message, "Предупреждение: распознанный текст слишком длинный, попробуйте сократить его.")
             return
@@ -945,7 +957,6 @@ def voice(message):
     except Exception as e:
         logging.error(f"Ошибка при обработке голосового сообщения: {e}")
         bot.reply_to(message, "Произошла ошибка, попробуйте позже!")
-
 
 def handler(event, context):
     message = json.loads(event["body"])
