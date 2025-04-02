@@ -953,6 +953,8 @@ def voice(message):
     except Exception as e:
         logging.error(f"Ошибка при обработке голосового сообщения: {e}")
         bot.reply_to(message, "Произошла ошибка, попробуйте позже!")
+
+        
 def handler(event, context):
     message = json.loads(event["body"])
     update = telebot.types.Update.de_json(message)

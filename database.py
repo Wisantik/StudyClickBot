@@ -510,18 +510,7 @@ def store_message_in_db(chat_id, role, content):
     print(f"Сообщение сохранено в базе данных и кэше Redis для chat_id {chat_id}.")
 
 def get_chat_history(chat_id, limit=10):
-    """Получает историю чата из Redis, если доступно, иначе из базы данных."""
-    cache_key = f'chat_history_{chat_id}'
-
-    # Попробуем получить историю из кэша
-    history = r.lrange(cache_key, 0, limit - 1)
-
-    if history:
-        # Если история есть в кэше, возвращаем её
-        print(f"История чата для chat_id {chat_id} получена из Redis.")
-        return [json.loads(msg) for msg in history][::-1]  # Обратно в хронологическом порядке
-
-    # Если в кэше нет, получаем из базы данных
+    """Получает историю чата из базы данных без использования кэша."""
     conn = connect_to_db()
     cur = conn.cursor()
 
@@ -536,14 +525,6 @@ def get_chat_history(chat_id, limit=10):
 
     cur.close()
     conn.close()
-
-    # Сохраняем полученные сообщения в кэш
-    for msg in history:
-        r.rpush(cache_key, json.dumps(msg))
-    
-    # Ограничиваем размер кэша (например, до 100 сообщений)
-    if r.llen(cache_key) > 100:
-        r.lpop(cache_key)  # Удаляем старое сообщение
 
     print(f"История чата для chat_id {chat_id} получена из базы данных.")
     return history[::-1]  # Обратно в хронологическом порядке
