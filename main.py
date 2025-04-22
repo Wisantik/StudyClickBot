@@ -205,6 +205,74 @@ def create_price_menu() -> types.InlineKeyboardMarkup:
 # Загрузить конфигурацию ассистентов
 load_assistants_config()
 
+REQUIRED_CHANNEL_ID = "@GuidingStarVlog"  # ID канала, на который должен быть подписан пользователь
+SUBSCRIPTION_CHECK_CACHE = {}  # Кэш для хранения результатов проверки подписки
+
+# Добавьте эту функцию для проверки подписки пользователя на канал
+def check_user_subscription(user_id):
+    """
+    Проверяет, подписан ли пользователь на требуемый канал
+    Возвращает True, если подписан, иначе False
+    """
+    try:
+        # Проверяем кэш, чтобы не делать лишних запросов к API
+        if user_id in SUBSCRIPTION_CHECK_CACHE:
+            last_check, is_subscribed = SUBSCRIPTION_CHECK_CACHE[user_id]
+            # Если проверка была менее 1 часа назад, используем кэшированный результат
+            if (datetime.datetime.now() - last_check).total_seconds() < 3600:
+                return is_subscribed
+        
+        # Проверяем статус пользователя в канале
+        chat_member = bot.get_chat_member(chat_id=REQUIRED_CHANNEL_ID, user_id=user_id)
+        
+        # Проверяем, является ли пользователь участником канала
+        status = chat_member.status
+        is_subscribed = status in ['member', 'administrator', 'creator']
+        
+        # Сохраняем результат в кэш
+        SUBSCRIPTION_CHECK_CACHE[user_id] = (datetime.datetime.now(), is_subscribed)
+        
+        return is_subscribed
+    except Exception as e:
+        print(f"Ошибка при проверке подписки пользователя {user_id}: {e}")
+        # В случае ошибки возвращаем True, чтобы не блокировать пользователя
+        return True
+
+# Добавьте функцию для создания клавиатуры с кнопкой подписки
+def create_subscription_keyboard():
+    """Создает клавиатуру с кнопкой для подписки на канал"""
+    keyboard = types.InlineKeyboardMarkup()
+    url_button = types.InlineKeyboardButton(text="Подписаться на канал", url=f"https://t.me/GuidingStarVlog")
+    check_button = types.InlineKeyboardButton(text="Я подписался", callback_data="check_subscription")
+    keyboard.add(url_button)
+    keyboard.add(check_button)
+    return keyboard
+
+# Добавьте обработчик для кнопки "Я подписался"
+@bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
+def subscription_check_callback(call):
+    """Обработчик нажатия на кнопку 'Я подписался'"""
+    user_id = call.from_user.id
+    
+    # Очищаем кэш для этого пользователя, чтобы проверить подписку заново
+    if user_id in SUBSCRIPTION_CHECK_CACHE:
+        del SUBSCRIPTION_CHECK_CACHE[user_id]
+    
+    # Проверяем подписку
+    if check_user_subscription(user_id):
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Спасибо за подписку! Теперь вы можете использовать бота."
+        )
+    else:
+        bot.answer_callback_query(
+            call.id,
+            "Вы все еще не подписаны на канал. Пожалуйста, подпишитесь для использования бота.",
+            show_alert=True
+        )
+
+
 # Функция для создания главного меню
 def create_main_menu():
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
@@ -600,8 +668,7 @@ def successful_pay(message):
     bot.send_message(message.chat.id, 'Оплата прошла успешно! Ваша подписка активирована.')
 
 
-# Модифицируем функцию send_welcome для использования нашего главного меню
-@bot.message_handler(commands=["start", "help"])  # ANCHOR - start
+@bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
     # Получаем реферальный ID, если он есть
     referrer_id = message.text.split()[1] if len(message.text.split()) > 1 else None
@@ -638,6 +705,15 @@ def send_welcome(message):
 
         # Отправляем приветственное сообщение
         bot.send_message(message.chat.id, "Вы успешно зарегистрированы!")
+    
+    # Проверяем подписку на канал
+    if not check_user_subscription(user_id):
+        bot.send_message(
+            message.chat.id,
+            "Для использования бота необходимо подписаться на наш канал!",
+            reply_markup=create_subscription_keyboard()
+        )
+        return
         
     # Создаем и отправляем клавиатуру с опциями, используя нашу функцию
     bot.send_message(message.chat.id, """Привет, я Финни! 👋
@@ -756,6 +832,15 @@ def handle_broadcast_photo(message):
 
 @bot.message_handler(func=lambda message: True, content_types=["text"])
 def echo_message(message):
+    # Проверяем подписку на канал
+    if not check_user_subscription(message.from_user.id):
+        bot.send_message(
+            message.chat.id,
+            "Для использования бота необходимо подписаться на наш канал!",
+            reply_markup=create_subscription_keyboard()
+        )
+        return
+    
     bot.send_chat_action(message.chat.id, "typing")
 
     try:
