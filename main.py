@@ -595,7 +595,6 @@ def show_stats_admin(message):
         'dig_marketing': 'Консультант по маркетингу',
         'brand_mgmt': 'Консультант по бренд-менеджменту',
         'biz_create': 'Консультант по открытию бизнеса',
-        'statsadmin12': 'Статистика (админ)'
     }
     
     # Красивое оформление статистики
@@ -611,7 +610,7 @@ def show_stats_admin(message):
         display_name = command_names.get(command, command)
         stats_text += f"🔹 {display_name}: {count} раз\n"
     stats_text += "\n——————————————\n"
-    stats_text += "✨ Спасибо за использование бота! ✨"
+  
 
     bot.reply_to(message, stats_text, parse_mode="Markdown")
 
