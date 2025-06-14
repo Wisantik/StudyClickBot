@@ -127,7 +127,6 @@ def setup_bot_commands():
         BotCommand("new", "Очистить историю чата"),
         BotCommand("profile", "Посмотреть профиль"),
         BotCommand("pay", "Купить подписку"),
-        BotCommand("stats", "Показать статистику использования команд"),
         BotCommand("cybersecurity", "Консультант по кибербезопасности"),
         BotCommand("dig_marketing", "Консультант по маркетингу"),
         BotCommand("brand_mgmt", "Консультант по бренд-менеджменту"),
@@ -573,13 +572,16 @@ GPT-4o: {user_data['daily_tokens']} символов
 """
     bot.send_message(message.chat.id, profile_text)
 
-@bot.message_handler(commands=['stats'])
-def show_stats(message):
-    """Показывает статистику использования команд"""
-    if message.from_user.id != 998107476:
+# Обновляем список администраторов
+ADMIN_IDS = [998107476, 741831495]
+
+@bot.message_handler(commands=['statsadmin12'])
+def show_stats_admin(message):
+    """Показывает статистику использования команд (только для администратора)"""
+    if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "У вас нет прав для просмотра статистики.")
         return
-    log_command(message.from_user.id, "stats")
+    log_command(message.from_user.id, "statsadmin12")
     week_stats = get_command_stats('week')
     month_stats = get_command_stats('month')
     command_names = {
@@ -592,17 +594,25 @@ def show_stats(message):
         'cybersecurity': 'Консультант по кибербезопасности',
         'dig_marketing': 'Консультант по маркетингу',
         'brand_mgmt': 'Консультант по бренд-менеджменту',
-        'biz_create': 'Консультант по открытию бизнеса'
+        'biz_create': 'Консультант по открытию бизнеса',
+        'statsadmin12': 'Статистика (админ)'
     }
-    stats_text = "📊 *Статистика использования команд*\n\n"
-    stats_text += "*За неделю:*\n"
+    
+    # Красивое оформление статистики
+    stats_text = "📊 *Статистика использования команд* 📊\n\n"
+    stats_text += "📅 *За неделю:*\n"
+    stats_text += "——————————————\n"
     for command, count in week_stats:
         display_name = command_names.get(command, command)
-        stats_text += f"{display_name}: {count} раз\n"
-    stats_text += "\n*За месяц:*\n"
+        stats_text += f"🔹 {display_name}: {count} раз\n"
+    stats_text += "\n📅 *За месяц:*\n"
+    stats_text += "——————————————\n"
     for command, count in month_stats:
         display_name = command_names.get(command, command)
-        stats_text += f"{display_name}: {count} раз\n"
+        stats_text += f"🔹 {display_name}: {count} раз\n"
+    stats_text += "\n——————————————\n"
+    stats_text += "✨ Спасибо за использование бота! ✨"
+
     bot.reply_to(message, stats_text, parse_mode="Markdown")
 
 @bot.message_handler(func=lambda message: message.text == "Отменить")
