@@ -96,7 +96,7 @@ def log_command(user_id, command):
     conn.close()
 
 def get_command_stats(period):
-    """Получает статистику команд за неделю или месяц"""
+    """Получает статистику команд за неделю, месяц или год"""
     conn = connect_to_db()
     with conn.cursor() as cursor:
         if period == 'week':
@@ -112,6 +112,14 @@ def get_command_stats(period):
                 SELECT command, COUNT(*) as count
                 FROM command_logs
                 WHERE timestamp >= CURRENT_DATE - INTERVAL '30 days'
+                GROUP BY command
+                ORDER BY count DESC;
+            """)
+        elif period == 'year':
+            cursor.execute("""
+                SELECT command, COUNT(*) as count
+                FROM command_logs
+                WHERE timestamp >= CURRENT_DATE - INTERVAL '1 year'
                 GROUP BY command
                 ORDER BY count DESC;
             """)
@@ -584,6 +592,7 @@ def show_stats_admin(message):
     log_command(message.from_user.id, "statsadmin12")
     week_stats = get_command_stats('week')
     month_stats = get_command_stats('month')
+    year_stats = get_command_stats('year')
     command_names = {
         'start': 'Запуск бота (/start)',
         'profile': 'Мой профиль',
@@ -595,6 +604,7 @@ def show_stats_admin(message):
         'dig_marketing': 'Консультант по маркетингу',
         'brand_mgmt': 'Консультант по бренд-менеджменту',
         'biz_create': 'Консультант по открытию бизнеса',
+        'statsadmin12': 'Статистика (админ)'
     }
     
     # Красивое оформление статистики
@@ -609,8 +619,13 @@ def show_stats_admin(message):
     for command, count in month_stats:
         display_name = command_names.get(command, command)
         stats_text += f"🔹 {display_name}: {count} раз\n"
+    stats_text += "\n📅 *За год:*\n"
+    stats_text += "——————————————\n"
+    for command, count in year_stats:
+        display_name = command_names.get(command, command)
+        stats_text += f"🔹 {display_name}: {count} раз\n"
     stats_text += "\n——————————————\n"
-  
+    stats_text += "✨ Спасибо за использование бота! ✨"
 
     bot.reply_to(message, stats_text, parse_mode="Markdown")
 
