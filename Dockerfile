@@ -3,7 +3,7 @@ FROM python:3.11-alpine
 # Установите необходимые системные зависимости
 RUN apk update && apk add libpq
 RUN apk add --virtual .build-deps gcc python3-dev musl-dev postgresql-dev
-
+RUN apt-get update && apt-get install -y ffmpeg
 WORKDIR /usr/src/app
 
 ENV PYTHONDONTWRITEBYTECODE 1
