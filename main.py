@@ -383,7 +383,6 @@ def expert_callback_handler(call):
 
 @bot.message_handler(func=lambda message: message.text == "Назад")
 def back_button_handler(message):
-    log_command(message.from_user.id, "Назад")
     bot.send_message(
         message.chat.id,
         "Вы вернулись в главное меню",
@@ -459,7 +458,6 @@ def successful_pay(message):
 
 @bot.message_handler(commands=['new'])
 def clear_chat_history(message):
-    log_command(message.from_user.id, "new")
     chat_id = message.chat.id
     conn = connect_to_db()
     cur = conn.cursor()
@@ -607,27 +605,32 @@ def show_stats_admin(message):
         'statsadmin12': 'Статистика (админ)'
     }
     
-    # Красивое оформление статистики
+    # Красивое оформление статистики без проблемных символов
     stats_text = "📊 *Статистика использования команд* 📊\n\n"
     stats_text += "📅 *За неделю:*\n"
-    stats_text += "——————————————\n"
+    stats_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     for command, count in week_stats:
         display_name = command_names.get(command, command)
         stats_text += f"🔹 {display_name}: {count} раз\n"
     stats_text += "\n📅 *За месяц:*\n"
-    stats_text += "——————————————\n"
+    stats_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     for command, count in month_stats:
         display_name = command_names.get(command, command)
         stats_text += f"🔹 {display_name}: {count} раз\n"
     stats_text += "\n📅 *За год:*\n"
-    stats_text += "——————————————\n"
+    stats_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     for command, count in year_stats:
         display_name = command_names.get(command, command)
         stats_text += f"🔹 {display_name}: {count} раз\n"
-    stats_text += "\n——————————————\n"
-    stats_text += "✨ Спасибо за использование бота! ✨"
+    stats_text += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 
-    bot.reply_to(message, stats_text, parse_mode="Markdown")
+    # Отправляем без parse_mode или используем HTML
+    try:
+        bot.reply_to(message, stats_text, parse_mode="Markdown")
+    except Exception as e:
+        # Если Markdown не работает, отправляем без форматирования
+        stats_text_plain = stats_text.replace("*", "").replace("_", "")
+        bot.reply_to(message, stats_text_plain)
 
 @bot.message_handler(func=lambda message: message.text == "Отменить")
 def cancel_subscription(message):
