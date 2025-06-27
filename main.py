@@ -383,6 +383,7 @@ def expert_callback_handler(call):
 
 @bot.message_handler(func=lambda message: message.text == "Назад")
 def back_button_handler(message):
+    log_command(message.from_user.id, "Назад")
     bot.send_message(
         message.chat.id,
         "Вы вернулись в главное меню",
@@ -458,6 +459,7 @@ def successful_pay(message):
 
 @bot.message_handler(commands=['new'])
 def clear_chat_history(message):
+    log_command(message.from_user.id, "new")
     chat_id = message.chat.id
     conn = connect_to_db()
     cur = conn.cursor()
