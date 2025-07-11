@@ -471,7 +471,8 @@ def clear_chat_history(message):
     conn.commit()
     cur.close()
     conn.close()
-    bot.reply_to(message, "История чата очищена! Можете начать новый диалог.")
+    set_user_assistant(message.from_user.id, 'universal_expert')  # Устанавливаем ассистента по умолчанию
+    bot.reply_to(message, "История чата очищена! Можете начать новый диалог с универсальным экспертом.")
 
 # Управление токенами
 def check_and_update_tokens(user_id):
@@ -694,6 +695,10 @@ def send_welcome(message):
                 print("Invalid referrer ID format")
         user_data = create_default_user(user_id, referrer_id)
         bot.send_message(message.chat.id, "Вы успешно зарегистрированы!")
+    
+    # Устанавливаем ассистента по умолчанию
+    set_user_assistant(user_id, 'universal_expert')
+    
     if not check_user_subscription(user_id):
         bot.send_message(
             message.chat.id,
@@ -702,6 +707,7 @@ def send_welcome(message):
             reply_markup=create_subscription_keyboard()
         )
         return
+    
     bot.send_message(message.chat.id, """Привет, я Финни! 👋
 Я — твой друг и помощник в мире финансов! 🏆 Я здесь, чтобы сделать твой путь к финансовой грамотности лёгким и интересным — вне зависимости от твоего возраста или уровня знаний.
 💡 Что я умею:
