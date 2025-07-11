@@ -135,6 +135,7 @@ def setup_bot_commands():
         BotCommand("new", "Очистить историю чата"),
         BotCommand("profile", "Посмотреть профиль"),
         BotCommand("pay", "Купить подписку"),
+        BotCommand("universal", "Универсальный эксперт"),
         BotCommand("cybersecurity", "Консультант по кибербезопасности"),
         BotCommand("dig_marketing", "Консультант по маркетингу"),
         BotCommand("brand_mgmt", "Консультант по бренд-менеджменту"),
@@ -166,6 +167,7 @@ def setup_bot_commands():
 def get_full_assistant_key(command: str) -> str:
     """Возвращает полный ключ ассистента по команде"""
     command_to_key = {
+        'universal': 'universal_expert',
         'cybersecurity': 'cybersecurity',
         'dig_marketing': 'Digital Marketing Consultant',
         'brand_mgmt': 'Brand Management Consultant',
@@ -190,7 +192,7 @@ def get_full_assistant_key(command: str) -> str:
     return command_to_key.get(command)
 
 @bot.message_handler(commands=[
-    'cybersecurity', 'dig_marketing', 'brand_mgmt',
+    'universal', 'cybersecurity', 'dig_marketing', 'brand_mgmt',
     'biz_create', 'comm_skills', 'stk_trading',
     'crypto', 'real_estate', 'startups',
     'passive_inv', 'esg', 'forex',
@@ -199,7 +201,7 @@ def get_full_assistant_key(command: str) -> str:
     'income_edu', 'prod_mgmt'
 ])
 def handle_assistant_commands(message):
-    command = message.text[1:]  # Убираем '/'
+    command = message.text[1:] 
     log_command(message.from_user.id, command)
     full_key = get_full_assistant_key(command)
     if full_key:
@@ -606,6 +608,7 @@ def show_stats_admin(message):
     'expert_1': 'Иван Петров - Финансовый эксперт',
     'expert_2': 'Самир - IT-разработчик',
     'Купить подписку': 'Купить подписку',
+    'universal': 'Универсальный эксперт',
     'cybersecurity': 'Консультант по кибербезопасности',
     'dig_marketing': 'Консультант по маркетингу',
     'brand_mgmt': 'Консультант по бренд-менеджменту',
