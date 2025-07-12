@@ -259,21 +259,32 @@ load_assistants_config()
 REQUIRED_CHANNEL_ID = "@GuidingStarVlog"
 SUBSCRIPTION_CHECK_CACHE = {}
 
-def check_user_subscription(user_id):
-    """Проверяет, подписан ли пользователь на канал"""
-    try:
-        if user_id in SUBSCRIPTION_CHECK_CACHE:
-            last_check, is_subscribed = SUBSCRIPTION_CHECK_CACHE[user_id]
-            if (datetime.datetime.now() - last_check).total_seconds() < 3600:
-                return is_subscribed
-        chat_member = bot.get_chat_member(chat_id=REQUIRED_CHANNEL_ID, user_id=user_id)
-        status = chat_member.status
-        is_subscribed = status in ['member', 'administrator', 'creator']
-        SUBSCRIPTION_CHECK_CACHE[user_id] = (datetime.datetime.now(), is_subscribed)
-        return is_subscribed
-    except Exception as e:
-        print(f"Ошибка проверки подписки для {user_id}: {e}")
-        return True
+@bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
+def check_user_subscription(call):
+    """Обрабатывает нажатие кнопки 'Я подписался'"""
+    user_id = call.from_user.id
+    
+    # Логирование нажатия
+    log_command(user_id, "check_subscription")
+    
+    if user_id in SUBSCRIPTION_CHECK_CACHE:
+        del SUBSCRIPTION_CHECK_CACHE[user_id]
+    if check_user_subscription(user_id):
+        # Устанавливаем ассистента universal_expert
+        set_user_assistant(user_id, 'universal_expert')
+        config = load_assistants_config()
+        assistant_name = config['assistants'].get('universal_expert', {}).get('name', 'Универсальный эксперт')
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"Спасибо за подписку!"
+        )
+    else:
+        bot.answer_callback_query(
+            call.id,
+            "Вы всё ещё не подписаны. Подпишитесь для использования бота.",
+            show_alert=True
+        )
 
 def create_subscription_keyboard():
     """Создаёт клавиатуру для проверки подписки"""
