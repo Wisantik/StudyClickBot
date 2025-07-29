@@ -269,7 +269,7 @@ def check_and_create_columns(connection):
             trial_used BOOLEAN DEFAULT FALSE,
             auto_renewal BOOLEAN DEFAULT TRUE,
             web_search_enabled BOOLEAN DEFAULT FALSE,
-            language VARCHAR(10) DEFAULT 'ru'  # Новый столбец
+            language VARCHAR(10) DEFAULT 'ru' 
         );
         """
         try:
