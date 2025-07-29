@@ -11,6 +11,7 @@ from telebot import types
 import docx
 import pdfplumber
 import datetime
+import requests  # Добавлено для веб-поиска
 from database import *
 from assistance import *
 
@@ -36,6 +37,9 @@ telebot.logger.setLevel(logging.INFO)
 pay_token = os.getenv('PAY_TOKEN')
 bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
 openai.api_key = os.getenv('OPENAI_API_KEY')
+
+# API-ключ для Bing Search
+BING_API_KEY = "yLtkhrR3H6UjzBm3naReSJQ8G81ct409iLrcmQTeIAH338TwBZNEvSLQJ8og"
 
 # Класс для обработки исключений
 class ExceptionHandler:
@@ -826,6 +830,30 @@ def handle_broadcast_photo(message):
         send_broadcast(caption, photo=photo)
         bot.reply_to(message, "Рассылка с изображением успешно завершена!")
 
+# Функция для веб-поиска
+def perform_web_search(query: str) -> str:
+    endpoint = "https://api.bing.microsoft.com/v7.0/search"
+    headers = {"Ocp-Apim-Subscription-Key": BING_API_KEY}
+    params = {"q": query, "count": 3, "textDecorations": False, "textFormat": "Raw"}
+
+    try:
+        response = requests.get(endpoint, headers=headers, params=params)
+        data = response.json()
+        web_pages = data.get("webPages", {}).get("value", [])
+        if not web_pages:
+            return "Нет результатов из веб-поиска."
+
+        results = "\n".join([f"{item['name']}: {item['url']}" for item in web_pages])
+        return results
+    except Exception as e:
+        print(f"[ОТЛАДКА] Ошибка Bing Search: {str(e)}")
+        return "Ошибка при поиске в интернете."
+
+# Функция для определения необходимости веб-поиска
+def needs_web_search(message: str) -> bool:
+    keywords = ["найди", "что сейчас", "новости", "поиск", "в интернете", "актуально"]
+    return any(kw in message.lower() for kw in keywords)
+
 # Обработка сообщений и документов
 @bot.message_handler(func=lambda message: True, content_types=["text"])
 def echo_message(message):
@@ -915,13 +943,22 @@ def process_text_message(text, chat_id) -> str:
     input_tokens = len(text)
     if not update_user_tokens(chat_id, input_tokens, 0):
         return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку."
+    
     config = load_assistants_config()
     current_assistant = get_user_assistant(chat_id)
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
+    
+    # Проверяем, нужно ли выполнять веб-поиск
+    if needs_web_search(text):
+        print("[ОТЛАДКА] Автоматически определён запрос для веб-поиска")
+        search_results = perform_web_search(text)
+        text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
+    
     input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
     history = get_chat_history(chat_id)
     history.append({"role": "user", "content": input_text})
+    
     try:
         chat_completion = openai.ChatCompletion.create(
             model="gpt-4.1-mini-2025-04-14",
