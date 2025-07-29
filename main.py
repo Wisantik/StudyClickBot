@@ -114,15 +114,16 @@ def get_command_stats(period):
 
 def setup_bot_commands():
     commands = [
-        BotCommand("profile", "Мой профиль"),
-        BotCommand("language", "Выбрать язык"),
-        BotCommand("assistants", "Ассистенты"),
-        BotCommand("experts", "Эксперты"),
-        BotCommand("search", "Включить/выключить интернет-поиск"),
-        BotCommand("pay", "Подписка"),
-        BotCommand("cancel_subscription", "Отмена подписки"),
-        BotCommand("new", "Очистить историю чата"),
-        BotCommand("support", "Поддержка"),
+        BotCommand("profile", "👤 Мой профиль"),
+        BotCommand("language", "🌐 Выбрать язык"),
+        BotCommand("assistants", "🤖 Ассистенты"),
+        BotCommand("experts", "👨‍💼 Эксперты"),
+        BotCommand("search", "🔍 Включить/выключить интернет-поиск"),
+        BotCommand("pay", "💳 Подписка"),
+        BotCommand("cancel_subscription", "❌ Отмена подписки"),
+        BotCommand("new", "🗑 Очистить историю чата"),
+        BotCommand("support", "📞 Поддержка"),
+        BotCommand("referral", "🔗 Реферальная ссылка"),  # Добавляем команду /referral
     ]
     try:
         bot.set_my_commands(commands)
@@ -301,6 +302,7 @@ def assistant_callback_handler(call):
     assistant_id = call.data.split("_")[-1]
     log_command(call.from_user.id, f"select_assistant_{assistant_id}")
     config = load_assistants_config()
+    print(f"[DEBUG] Доступные ассистенты: {config['assistants'].keys()}")
     if assistant_id in config['assistants']:
         set_user_assistant(call.from_user.id, assistant_id)
         bot.edit_message_text(
@@ -309,6 +311,7 @@ def assistant_callback_handler(call):
             text=f"Выбран ассистент: {config['assistants'][assistant_id]['name']}"
         )
     else:
+        print(f"[ERROR] Ассистент {assistant_id} не найден в конфигурации")
         bot.answer_callback_query(call.id, "Ассистент не найден")
 
 @bot.message_handler(commands=['experts'])
@@ -545,11 +548,57 @@ def clear_chat_history(message):
     set_user_assistant(message.from_user.id, 'universal_expert')
     bot.reply_to(message, "История чата очищена! Можете начать новый диалог с универсальным экспертом.")
 
+def create_language_menu():
+    keyboard = types.InlineKeyboardMarkup(row_width=3)  # 3 кнопки в ряд для компактности
+    languages = [
+        ("Россия", "ru", "🇷🇺"),
+        ("Английский", "en", "🇬🇧"),
+        ("Франция", "fr", "🇫🇷"),
+        ("Германия", "de", "🇩🇪"),
+        ("Турция", "tr", "🇹🇷"),
+        ("Бразилия", "pt", "🇧🇷"),
+        ("Мексика", "es", "🇲🇽"),
+        ("Италия", "it", "🇮🇹"),
+        ("Индия", "hi", "🇮🇳"),
+        ("Китай", "zh", "🇨🇳"),
+    ]
+    for lang_name, lang_code, emoji in languages:
+        keyboard.add(types.InlineKeyboardButton(
+            text=f"{emoji} {lang_name}",
+            callback_data=f"lang_{lang_code}"
+        ))
+    return keyboard
+
 @bot.message_handler(commands=['language'])
 @bot.message_handler(func=lambda message: message.text == "Выбрать язык")
 def language_handler(message):
     log_command(message.from_user.id, "language")
-    bot.reply_to(message, "Функция выбора языка находится в разработке. Пожалуйста, подождите.")
+    bot.send_message(
+        message.chat.id,
+        "Выберите язык:",
+        reply_markup=create_language_menu()
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("lang_"))
+def language_callback_handler(call):
+    lang_code = call.data.split("_")[-1]
+    log_command(call.from_user.id, f"lang_{lang_code}")
+    user_data = load_user_data(call.from_user.id)
+    if user_data:
+        user_data['language'] = lang_code
+        save_user_data(user_data)
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"Выбран язык: {lang_code.upper()}"
+        )
+    else:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Ошибка: пользователь не найден."
+        )
+    bot.answer_callback_query(call.id)
 
 @bot.message_handler(commands=['search'])
 @bot.message_handler(func=lambda message: message.text == "Интернет поиск")
