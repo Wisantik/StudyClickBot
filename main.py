@@ -13,40 +13,23 @@ import pdfplumber
 import datetime
 import requests
 from database import *
-from assistance import *
+import schedule
 
-# Подключение к базе данных
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 connect_to_db()
 
-# Тарифные планы как константы
-TOKEN_PLANS = {
-    "free": {"tokens": 30000},
-    "basic": {"price": 149, "tokens": 200000},
-    "advanced": {"price": 349, "tokens": 500000},
-    "premium": {"price": 649, "tokens": 1200000},
-    "unlimited": {"price": 1499, "tokens": 3000000},
-}
+MIN_TOKENS_THRESHOLD: Final = 5000
+FREE_DAILY_TOKENS: Final = 30000
 
-# Тарифы, для которых доступен веб-поиск
-WEB_SEARCH_PLANS = ["premium", "unlimited"]
-
-MIN_TOKENS_THRESHOLD: Final = 5000  # Порог для обновления токенов
-FREE_DAILY_TOKENS: Final = 30000    # Бесплатные ежедневные токены
-
-# Настройка логирования
 logger = telebot.logger
 telebot.logger.setLevel(logging.INFO)
 pay_token = os.getenv('PAY_TOKEN')
 bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
-# API-ключ для Bing Search
 BING_API_KEY = os.getenv('BING_API_KEY', "yLtkhrR3H6UjzBm3naReSJQ8G81ct409iLrcmQTeIAH338TwBZNEvSLQJ8og")
 
-# Класс для обработки исключений
 class ExceptionHandler:
-    """Обработчик исключений для бота"""
     def handle(self, exception):
         if isinstance(exception, telebot.apihelper.ApiTelegramException):
             if exception.error_code == 403:
@@ -72,12 +55,9 @@ class ExceptionHandler:
                 return True
         return False
 
-# Установка обработчика исключений
 bot.exception_handler = ExceptionHandler()
 
-# Работа с таблицей логов команд
 def create_command_logs_table():
-    """Создаёт таблицу для логов использования команд"""
     conn = connect_to_db()
     with conn.cursor() as cursor:
         cursor.execute("""
@@ -92,7 +72,6 @@ def create_command_logs_table():
     conn.close()
 
 def log_command(user_id, command):
-    """Логирует вызов команды в базу данных"""
     conn = connect_to_db()
     with conn.cursor() as cursor:
         cursor.execute("""
@@ -103,7 +82,6 @@ def log_command(user_id, command):
     conn.close()
 
 def get_command_stats(period):
-    """Получает статистику команд за неделю, месяц или год"""
     conn = connect_to_db()
     with conn.cursor() as cursor:
         if period == 'week':
@@ -134,9 +112,7 @@ def get_command_stats(period):
     conn.close()
     return stats
 
-# Настройка команд бота
 def setup_bot_commands():
-    """Устанавливает команды бота в Telegram"""
     commands = [
         BotCommand("profile", "Мой профиль"),
         BotCommand("language", "Выбрать язык"),
@@ -154,29 +130,31 @@ def setup_bot_commands():
     except Exception as e:
         print(f"Ошибка при настройке команд: {e}")
 
-# Меню и подписка
 def create_price_menu() -> types.InlineKeyboardMarkup:
-    """Создаёт меню с ценами на подписки"""
     markup = types.InlineKeyboardMarkup(
         keyboard=[
             [
                 types.InlineKeyboardButton(
-                    text=f"Базовый - {TOKEN_PLANS['basic']['price']}₽",
-                    callback_data=f"buy_rate_{TOKEN_PLANS['basic']['price']}"
-                ),
-                types.InlineKeyboardButton(
-                    text=f"Расширенный - {TOKEN_PLANS['advanced']['price']}₽",
-                    callback_data=f"buy_rate_{TOKEN_PLANS['advanced']['price']}"
+                    text="Пробная (3 дня за 1₽)",
+                    callback_data="buy_trial"
                 )
             ],
             [
                 types.InlineKeyboardButton(
-                    text=f"Премиум - {TOKEN_PLANS['premium']['price']}₽",
-                    callback_data=f"buy_rate_{TOKEN_PLANS['premium']['price']}"
-                ),
+                    text="Недельная - 149₽",
+                    callback_data="buy_week"
+                )
+            ],
+            [
                 types.InlineKeyboardButton(
-                    text=f"Неограниченный - {TOKEN_PLANS['unlimited']['price']}₽",
-                    callback_data=f"buy_rate_{TOKEN_PLANS['unlimited']['price']}"
+                    text="Месячная - 399₽",
+                    callback_data="buy_month"
+                )
+            ],
+            [
+                types.InlineKeyboardButton(
+                    text="Годовая - 2499₽",
+                    callback_data="buy_year"
                 )
             ],
         ]
@@ -184,7 +162,6 @@ def create_price_menu() -> types.InlineKeyboardMarkup:
     return markup
 
 def create_subscription_required_keyboard():
-    """Создаёт клавиатуру с кнопкой 'Купить подписку'"""
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton(
         text="Купить подписку",
@@ -198,7 +175,6 @@ REQUIRED_CHANNEL_ID = "@GuidingStarVlog"
 SUBSCRIPTION_CHECK_CACHE = {}
 
 def check_user_subscription(user_id):
-    """Проверяет, подписан ли пользователь на канал"""
     try:
         if user_id in SUBSCRIPTION_CHECK_CACHE:
             last_check, is_subscribed = SUBSCRIPTION_CHECK_CACHE[user_id]
@@ -214,7 +190,6 @@ def check_user_subscription(user_id):
         return True
 
 def create_subscription_keyboard():
-    """Создаёт клавиатуру для проверки подписки"""
     keyboard = types.InlineKeyboardMarkup()
     url_button = types.InlineKeyboardButton(text="Подписаться на канал", url="https://t.me/GuidingStarVlog")
     check_button = types.InlineKeyboardButton(text="Я подписался", callback_data="check_subscription")
@@ -224,19 +199,12 @@ def create_subscription_keyboard():
 
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
 def subscription_check_callback(call):
-    """Обрабатывает нажатие кнопки 'Я подписался'"""
     user_id = call.from_user.id
-    
-    # Логирование нажатия
     log_command(user_id, "check_subscription")
-    
     if user_id in SUBSCRIPTION_CHECK_CACHE:
         del SUBSCRIPTION_CHECK_CACHE[user_id]
-    
     if check_user_subscription(user_id):
-        # Устанавливаем ассистента по умолчанию
         set_user_assistant(user_id, 'universal_expert')
-        
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
@@ -251,26 +219,30 @@ def subscription_check_callback(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == "show_pay_menu")
 def show_pay_menu_callback(call):
-    """Обрабатывает нажатие кнопки 'Купить подписку'"""
     log_command(call.from_user.id, "show_pay_menu")
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
-        text="""🎉 Бесплатно - 30 000 в день на каждого пользователя ✨
-💼 Базовый: 149 руб. (200 000 токенов)
-📝 Всё необходимое для простых задач.
-🚀 Расширенный: 349 руб. (500 000 токенов)
-🌈 Для тех, кто ценит больше возможностей.
-🌟 Премиум: 649 руб. (1 200 000 токенов)
-💪 Все функции для эффективной работы, включая веб-поиск.
-🔓 Неограниченный: 1499 руб. (3 000 000 токенов)
-🌍 Абсолютная свобода, включая веб-поиск.
-🎁 За приглашенного друга — 100 000 токенов в подарок! 🎊""",
+        text="""Подписка Plus предоставляет безлимитный доступ к:
+- GPT-4.0
+- Чтение PDF файлов
+- Чтение ссылок
+- Интернет-поиск
+- Обработка голосовых запросов
+
+⚠️ Пробная подписка (3 дня за 1₽) включает автопродление на месяц за 399₽. Отменить можно в любое время после оплаты.
+
+Варианты подписки:
+- Пробная: 3 дня за 1₽
+- Недельная: 149₽
+- Месячная: 399₽
+- Годовая: 2499₽
+
+По вопросам: https://t.me/mon_tti1""",
         reply_markup=create_price_menu()
     )
 
 def create_main_menu():
-    """Создаёт главное меню бота"""
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     profile_btn = types.KeyboardButton("Мой профиль")
     language_btn = types.KeyboardButton("Выбрать язык")
@@ -289,7 +261,6 @@ def create_main_menu():
     return keyboard
 
 def create_assistants_menu():
-    """Создаёт инлайн-меню с ассистентами"""
     config = load_assistants_config()
     assistants = config.get("assistants", {})
     keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -303,7 +274,6 @@ def create_assistants_menu():
     return keyboard
 
 def create_experts_menu():
-    """Создаёт меню выбора экспертов"""
     conn = connect_to_db()
     experts = get_all_experts(conn)
     conn.close()
@@ -316,11 +286,9 @@ def create_experts_menu():
         ))
     return keyboard
 
-# Обработчики кнопок и команд
 @bot.message_handler(commands=['assistants'])
 @bot.message_handler(func=lambda message: message.text == "Ассистенты")
 def assistants_button_handler(message):
-    """Обрабатывает нажатие кнопки 'Ассистенты' и команду /assistants"""
     log_command(message.from_user.id, "assistants")
     bot.send_message(
         message.chat.id,
@@ -330,7 +298,6 @@ def assistants_button_handler(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("select_assistant_"))
 def assistant_callback_handler(call):
-    """Обрабатывает выбор ассистента из инлайн-кнопок"""
     assistant_id = call.data.split("_")[-1]
     log_command(call.from_user.id, f"select_assistant_{assistant_id}")
     config = load_assistants_config()
@@ -347,7 +314,6 @@ def assistant_callback_handler(call):
 @bot.message_handler(commands=['experts'])
 @bot.message_handler(func=lambda message: message.text == "Эксперты")
 def experts_button_handler(message):
-    """Обрабатывает нажатие кнопки 'Эксперты' и команду /experts"""
     log_command(message.from_user.id, "experts")
     bot.send_message(
         message.chat.id,
@@ -421,31 +387,60 @@ def get_pay(message):
     log_command(message.from_user.id, "pay")
     bot.send_message(
         message.chat.id,
-        """🎉 Бесплатно - 30 000 в день на каждого пользователя ✨
-💼 Базовый: 149 руб. (200 000 токенов)
-📝 Всё необходимое для простых задач.
-🚀 Расширенный: 349 руб. (500 000 токенов)
-🌈 Для тех, кто ценит больше возможностей.
-🌟 Премиум: 649 руб. (1 200 000 токенов)
-💪 Все функции для эффективной работы, включая веб-поиск.
-🔓 Неограниченный: 1499 руб. (3 000 000 токенов)
-🌍 Абсолютная свобода, включая веб-поиск.
-🎁 За приглашенного друга — 100 000 токенов в подарок! 🎊""",
+        """Подписка Plus предоставляет безлимитный доступ к:
+- GPT-4.0
+- Чтение PDF файлов
+- Чтение ссылок
+- Интернет-поиск
+- Обработка голосовых запросов
+
+⚠️ Пробная подписка (3 дня за 1₽) включает автопродление на месяц за 399₽. Отменить можно в любое время после оплаты.
+
+Варианты подписки:
+- Пробная: 3 дня за 1₽
+- Недельная: 149₽
+- Месячная: 399₽
+- Годовая: 2499₽
+
+По вопросам: https://t.me/mon_tti1""",
         reply_markup=create_price_menu()
     )
 
-@bot.callback_query_handler(func=lambda callback: callback.data.startswith("buy_rate_"))
-def buy_rate(callback):
-    price = int(callback.data.split("_")[-1])
+@bot.callback_query_handler(func=lambda callback: callback.data in ["buy_trial", "buy_week", "buy_month", "buy_year"])
+def buy_subscription(callback):
+    user_id = callback.from_user.id
+    user_data = load_user_data(user_id)
+    if not user_data:
+        bot.send_message(callback.message.chat.id, "Ошибка: пользователь не найден.")
+        return
+    if callback.data == "buy_trial":
+        if user_data['trial_used']:
+            bot.send_message(callback.message.chat.id, "Вы уже использовали пробную подписку.")
+            return
+        price = 1
+        period = "trial"
+        duration_days = 3
+    elif callback.data == "buy_week":
+        price = 149
+        period = "week"
+        duration_days = 7
+    elif callback.data == "buy_month":
+        price = 399
+        period = "month"
+        duration_days = 30
+    elif callback.data == "buy_year":
+        price = 2499
+        period = "year"
+        duration_days = 365
     bot.send_invoice(
         callback.message.chat.id,
-        title=f"Подписка за {price}",
-        description="Описание тарифа",
-        invoice_payload="month_subscription",
+        title=f"Подписка Plus ({period})",
+        description=f"Подписка на {duration_days} дней",
+        invoice_payload=f"plus_{period}",
         provider_token=pay_token,
         currency="RUB",
         start_parameter="test_bot",
-        prices=[types.LabeledPrice(label="Тариф", amount=price * 100)]
+        prices=[types.LabeledPrice(label=f"Подписка Plus ({period})", amount=price * 100)]
     )
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
@@ -454,34 +449,78 @@ def process_pre_checkout_query(pre_checkout_query):
 
 @bot.message_handler(content_types=['successful_payment'])
 def successful_pay(message):
-    amount = message.successful_payment.total_amount / 100
-    selected_plan = None
-    for plan_name, plan_info in TOKEN_PLANS.items():
-        if plan_info.get('price', 0) == amount:
-            selected_plan = plan_name
-            break
-    if selected_plan:
-        conn = connect_to_db()
-        cur = conn.cursor()
-        # Рассчитываем дату окончания подписки (30 дней от текущего момента)
-        end_date = datetime.datetime.now().date() + datetime.timedelta(days=30)
-        # Включаем веб-поиск для premium и unlimited
-        web_search_enabled = selected_plan in WEB_SEARCH_PLANS
+    payload = message.successful_payment.invoice_payload
+    user_id = message.from_user.id
+    conn = connect_to_db()
+    cur = conn.cursor()
+    if payload.startswith("plus_"):
+        period = payload.split("_")[1]
+        if period == "trial":
+            duration_days = 3
+            cur.execute("UPDATE users SET trial_used = TRUE WHERE user_id = %s", (user_id,))
+        elif period == "week":
+            duration_days = 7
+        elif period == "month":
+            duration_days = 30
+        elif period == "year":
+            duration_days = 365
+        start_date = datetime.datetime.now().date()
+        end_date = start_date + datetime.timedelta(days=duration_days)
         cur.execute("""
             UPDATE users 
             SET subscription_plan = %s,
-                daily_tokens = daily_tokens + %s,
+                subscription_start_date = %s,
                 subscription_end_date = %s,
-                web_search_enabled = %s
+                web_search_enabled = TRUE,
+                auto_renewal = %s
             WHERE user_id = %s
-        """, (selected_plan, TOKEN_PLANS[selected_plan]['tokens'], end_date, web_search_enabled, message.from_user.id))
+        """, (f"plus_{period}", start_date, end_date, period == "trial", user_id))
         conn.commit()
         cur.close()
         conn.close()
         bot.send_message(
             message.chat.id, 
-            f'Оплата прошла успешно!\nНачислено токенов: {TOKEN_PLANS[selected_plan]["tokens"]}\nПодписка активна до: {end_date.strftime("%d.%m.%Y")}\nВеб-поиск: {"включён" if web_search_enabled else "недоступен для этого тарифа"}'
+            f'Оплата прошла успешно!\nПодписка Plus ({period}) активирована до {end_date.strftime("%d.%m.%Y")}\n'
+            f'Веб-поиск: включён\n'
+            f'Автопродление: {"включено" if period == "trial" else "выключено"}'
         )
+    else:
+        bot.send_message(message.chat.id, "Неизвестный тип подписки.")
+
+def check_auto_renewal():
+    conn = connect_to_db()
+    cur = conn.cursor()
+    today = datetime.datetime.now().date()
+    cur.execute("""
+        SELECT user_id FROM users 
+        WHERE subscription_plan = 'plus_trial' 
+        AND subscription_end_date <= %s
+        AND auto_renewal = TRUE
+    """, (today,))
+    users = cur.fetchall()
+    for user_id in users:
+        user_id = user_id[0]
+        # Здесь должна быть интеграция с YooKassa для автоматической оплаты 399 рублей
+        # Примерный код (нужна реализация через API YooKassa):
+        # payment_result = make_payment(user_id, amount=399)
+        # if payment_result:
+        #     start_date = today
+        #     end_date = start_date + datetime.timedelta(days=30)
+        #     cur.execute("""
+        #         UPDATE users 
+        #         SET subscription_plan = 'plus_month',
+        #             subscription_start_date = %s,
+        #             subscription_end_date = %s
+        #         WHERE user_id = %s
+        #     """, (start_date, end_date, user_id))
+        #     bot.send_message(user_id, "Ваша пробная подписка продлена на месяц за 399₽.")
+        # else:
+        #     bot.send_message(user_id, "Не удалось продлить подписку. Пожалуйста, обновите платёжные данные.")
+    conn.commit()
+    cur.close()
+    conn.close()
+
+schedule.every().day.at("00:00").do(check_auto_renewal)
 
 @bot.message_handler(commands=['new'])
 @bot.message_handler(func=lambda message: message.text == "Очистить историю чата")
@@ -494,7 +533,7 @@ def clear_chat_history(message):
     conn.commit()
     cur.close()
     conn.close()
-    set_user_assistant(message.from_user.id, 'universal_expert')  # Устанавливаем ассистента по умолчанию
+    set_user_assistant(message.from_user.id, 'universal_expert')
     bot.reply_to(message, "История чата очищена! Можете начать новый диалог с универсальным экспертом.")
 
 @bot.message_handler(commands=['language'])
@@ -506,34 +545,25 @@ def language_handler(message):
 @bot.message_handler(commands=['search'])
 @bot.message_handler(func=lambda message: message.text == "Интернет поиск")
 def search_handler(message):
-    """Включает или выключает веб-поиск для пользователя, если у него подходящая подписка"""
     user_id = message.from_user.id
     user_data = load_user_data(user_id)
     if not user_data:
         bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.")
         return
-    
-    # Проверяем подписку
-    if user_data['subscription_plan'] not in WEB_SEARCH_PLANS:
+    if user_data['subscription_plan'] == 'free':
         bot.reply_to(
             message,
-            "🌐 Веб-поиск доступен только с подпиской Plus и выше.\nПодпишитесь, чтобы получить доступ к этой функции!",
+            "🌐 Веб-поиск доступен только с подпиской Plus.\nПодпишитесь, чтобы получить доступ к этой функции!",
             reply_markup=create_subscription_required_keyboard()
         )
         log_command(user_id, "search_denied_no_subscription")
         return
-    
-    # Переключаем состояние
     new_state = not user_data['web_search_enabled']
     user_data['web_search_enabled'] = new_state
     save_user_data(user_data)
-    
-    # Логируем действие
     log_command(user_id, f"search_{'on' if new_state else 'off'}")
-    
-    # Уведомляем пользователя
     status_text = "включён" if new_state else "выключен"
-    bot.reply_to(message, f"Веб-поиск {status_text}. Теперь ваши запросы {'будут' if new_state else 'не будут'} использовать интернет-поиск, если содержат ключевые слова (например, 'найди', 'новости').")
+    bot.reply_to(message, f"Веб-поиск {status_text}.")
 
 @bot.message_handler(commands=['support'])
 @bot.message_handler(func=lambda message: message.text == "Поддержка")
@@ -544,12 +574,27 @@ def support_handler(message):
 @bot.message_handler(commands=['cancel_subscription'])
 @bot.message_handler(func=lambda message: message.text == "Отмена подписки")
 def cancel_subscription_handler(message):
-    log_command(message.from_user.id, "cancel_subscription")
-    bot.reply_to(message, "Функция отмены подписки находится в разработке. Пожалуйста, подождите.")
+    user_id = message.from_user.id
+    user_data = load_user_data(user_id)
+    if not user_data or user_data['subscription_plan'] == 'free':
+        bot.reply_to(message, "У вас нет активной подписки для отмены.")
+        return
+    conn = connect_to_db()
+    cur = conn.cursor()
+    cur.execute("""
+        UPDATE users 
+        SET auto_renewal = FALSE,
+            subscription_plan = 'free',
+            subscription_end_date = NULL,
+            web_search_enabled = FALSE
+        WHERE user_id = %s
+    """, (user_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+    bot.reply_to(message, "Подписка отменена. Автопродление отключено.")
 
-# Управление токенами
 def check_and_update_tokens(user_id):
-    """Проверяет и обновляет токены пользователя"""
     conn = connect_to_db()
     cur = conn.cursor()
     cur.execute(""" 
@@ -567,8 +612,6 @@ def check_and_update_tokens(user_id):
         last_update_date = datetime.datetime.strptime(last_update, '%Y-%m-%d').date()
     else:
         last_update_date = last_update
-
-    # Проверяем, истекла ли подписка
     if current_plan != 'free' and subscription_end_date and current_date > subscription_end_date:
         cur.execute(""" 
             UPDATE users 
@@ -590,17 +633,7 @@ def check_and_update_tokens(user_id):
                 print(f"Ошибка API для {user_id}: {e}")
         except Exception as e:
             print(f"Ошибка отправки уведомления {user_id}: {e}")
-
-    # Проверяем токены
-    if tokens <= MIN_TOKENS_THRESHOLD:
-        if current_plan != 'free':
-            cur.execute(""" 
-                UPDATE users 
-                SET subscription_plan = 'free',
-                subscription_end_date = NULL,
-                web_search_enabled = FALSE
-                WHERE user_id = %s 
-            """, (user_id,))
+    if tokens <= MIN_TOKENS_THRESHOLD and current_plan == 'free':
         if current_date > last_update_date:
             cur.execute(""" 
                 UPDATE users 
@@ -608,92 +641,32 @@ def check_and_update_tokens(user_id):
                     last_token_update = %s 
                 WHERE user_id = %s 
             """, (FREE_DAILY_TOKENS, current_date, user_id))
-    
-    # Отправка предупреждения о низком балансе токенов
-    if tokens < 15000 and current_plan != 'free':
-        if last_warning_time is None or (datetime.datetime.now() - last_warning_time).total_seconds() > 86400:
-            try:
-                bot.send_message(
-                    user_id,
-                    """Ваши токены на исходе! ⏳
-Осталось меньше 15 000 токенов, и скоро вам может не хватить для дальнейшего использования. В таком случае вы будете автоматически переведены на бесплатный тариф с ограниченными возможностями.
-Чтобы избежать этого, пополните баланс и продолжайте пользоваться всеми функциями без ограничений! 🌟
-/pay — Пополнить баланс"""
-                )
-                cur.execute(""" 
-                    UPDATE users 
-                    SET last_warning_time = %s 
-                    WHERE user_id = %s
-                """, (datetime.datetime.now(), user_id))
-            except telebot.apihelper.ApiTelegramException as e:
-                if e.error_code == 403:
-                    print(f"Пользователь {user_id} заблокировал бота.")
-                else:
-                    print(f"Ошибка API для {user_id}: {e}")
-            except Exception as e:
-                print(f"Ошибка отправки уведомления {user_id}: {e}")
-    
-    # Перевод на бесплатный тариф, если токены закончились
-    if tokens < 3000:
-        if current_plan != 'free':
-            cur.execute(""" 
-                UPDATE users 
-                SET subscription_plan = 'free', 
-                    daily_tokens = 0,
-                    subscription_end_date = NULL,
-                    web_search_enabled = FALSE
-                WHERE user_id = %s 
-            """, (user_id,))
-            try:
-                bot.send_message(
-                    user_id,
-                    """Подписка завершена! 🚫
-Вы не потеряли токены, но для продолжения доступа выберите новый тариф.
-Новый тариф откроет вам ещё больше возможностей и токенов.
-/pay — Выбрать новый тариф"""
-                )
-            except telebot.apihelper.ApiTelegramException as e:
-                if e.error_code == 403:
-                    print(f"Пользователь {user_id} заблокировал бота.")
-                else:
-                    print(f"Ошибка API для {user_id}: {e}")
-            except Exception as e:
-                print(f"Ошибка отправки уведомления {user_id}: {e}")
-    
     conn.commit()
     cur.close()
     conn.close()
 
 @bot.message_handler(commands=['profile'])
 def show_profile(message):
-    """Показывает профиль пользователя"""
     log_command(message.from_user.id, "profile")
     user_id = message.from_user.id
     user_data = load_user_data(user_id)
-    
     if not user_data:
         bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.")
         return
-
-    # Рассчитываем оставшиеся дни подписки
     subscription_end_date = user_data.get('subscription_end_date')
     remaining_days = None
     if user_data['subscription_plan'] != 'free' and subscription_end_date:
         today = datetime.datetime.now().date()
         remaining_days = (subscription_end_date - today).days
         if remaining_days < 0:
-            remaining_days = 0  # Если подписка истекла
-
-    # Формируем текст профиля
+            remaining_days = 0
     invited_users = user_data['invited_users']
     referral_text = (
         "🙁 Вы пока не пригласили ни одного друга."
         if invited_users == 0
         else f"🎉 Вы пригласили: {invited_users} друзей"
     )
-    
-    web_search_status = "включён" if user_data['web_search_enabled'] else "выключен" if user_data['subscription_plan'] in WEB_SEARCH_PLANS else "недоступен (требуется подписка Plus)"
-
+    web_search_status = "включён" if user_data['web_search_enabled'] else "выключен" if user_data['subscription_plan'].startswith('plus_') else "недоступен (требуется подписка Plus)"
     profile_text = f"""
 ID: {user_id}
 
@@ -701,7 +674,6 @@ ID: {user_id}
 """
     if user_data['subscription_plan'] != 'free' and remaining_days is not None:
         profile_text += f"Подписка активна еще {remaining_days} дней\n"
-
     profile_text += f"""
 Веб-поиск: {web_search_status}
 
@@ -722,12 +694,10 @@ GPT-4o: {user_data['daily_tokens']} символов
 """
     bot.send_message(message.chat.id, profile_text)
 
-# Обновляем список администраторов
 ADMIN_IDS = [998107476, 741831495]
 
 @bot.message_handler(commands=['statsadmin12'])
 def show_stats_admin(message):
-    """Показывает статистику использования команд (только для администратора)"""
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "У вас нет прав для просмотра статистики.")
         return
@@ -751,8 +721,6 @@ def show_stats_admin(message):
         'check_subscription': '✅ Нажатие "Я подписался"',
         'show_pay_menu': 'Открытие меню подписки'
     }
-    
-    # Красивое оформление статистики без проблемных символов
     stats_text = "📊 *Статистика использования команд* 📊\n\n"
     stats_text += "📅 *За неделю:*\n"
     stats_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -770,12 +738,9 @@ def show_stats_admin(message):
         display_name = command_names.get(command, command)
         stats_text += f"🔹 {display_name}: {count} раз\n"
     stats_text += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-
-    # Отправляем без parse_mode или используем HTML
     try:
         bot.reply_to(message, stats_text, parse_mode="Markdown")
     except Exception as e:
-        # Если Markdown не работает, отправляем без форматирования
         stats_text_plain = stats_text.replace("*", "").replace("_", "")
         bot.reply_to(message, stats_text_plain)
 
@@ -809,10 +774,7 @@ def send_welcome(message):
                 print("Invalid referrer ID format")
         user_data = create_default_user(user_id, referrer_id)
         bot.send_message(message.chat.id, "Вы успешно зарегистрированы!")
-    
-    # Устанавливаем ассистента по умолчанию
     set_user_assistant(user_id, 'universal_expert')
-    
     if not check_user_subscription(user_id):
         bot.send_message(
             message.chat.id,
@@ -821,7 +783,6 @@ def send_welcome(message):
             reply_markup=create_subscription_keyboard()
         )
         return
-    
     bot.send_message(message.chat.id, """Привет, я Финни! 👋
 Я — твой друг и помощник в мире финансов! 🏆 Я здесь, чтобы сделать твой путь к финансовой грамотности лёгким и интересным — вне зависимости от твоего возраста или уровня знаний.
 💡 Что я умею:
@@ -839,14 +800,12 @@ def send_referral_link(message):
     referral_link = generate_referral_link(user_id)
     bot.reply_to(message, f"Ваша реферальная ссылка: {referral_link}")
 
-# Рассылка и действия
 def typing(chat_id):
     while True:
         bot.send_chat_action(chat_id, "typing")
         time.sleep(5)
 
 def send_broadcast(message_content, photo=None):
-    """Рассылает сообщение всем пользователям"""
     conn = connect_to_db()
     cur = conn.cursor()
     cur.execute("SELECT user_id FROM users")
@@ -895,31 +854,26 @@ def handle_broadcast_photo(message):
         send_broadcast(caption, photo=photo)
         bot.reply_to(message, "Рассылка с изображением успешно завершена!")
 
-# Функция для веб-поиска
 def perform_web_search(query: str) -> str:
     endpoint = "https://api.bing.microsoft.com/v7.0/search"
     headers = {"Ocp-Apim-Subscription-Key": BING_API_KEY}
     params = {"q": query, "count": 3, "textDecorations": False, "textFormat": "Raw"}
-
     try:
         response = requests.get(endpoint, headers=headers, params=params)
         data = response.json()
         web_pages = data.get("webPages", {}).get("value", [])
         if not web_pages:
             return "Нет результатов из веб-поиска."
-
         results = "\n".join([f"{item['name']}: {item['url']}" for item in web_pages])
         return results
     except Exception as e:
         print(f"[ОТЛАДКА] Ошибка Bing Search: {str(e)}")
         return "Ошибка при поиске в интернете."
 
-# Функция для определения необходимости веб-поиска
 def needs_web_search(message: str) -> bool:
     keywords = ["найди", "что сейчас", "новости", "поиск", "в интернете", "актуально"]
     return any(kw in message.lower() for kw in keywords)
 
-# Обработка сообщений и документов
 @bot.message_handler(func=lambda message: True, content_types=["text"])
 def echo_message(message):
     if not check_user_subscription(message.from_user.id):
@@ -940,32 +894,24 @@ def echo_message(message):
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
+    user_data = load_user_data(message.from_user.id)
+    if user_data['subscription_plan'] == 'free':
+        bot.reply_to(message, "Для чтения документов требуется подписка Plus. Выберите тариф: /pay")
+        return
     file_info = bot.get_file(message.document.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
     file_extension = message.document.file_name.split('.')[-1].lower()
     try:
         if file_extension == 'txt':
             content = downloaded_file.decode('utf-8')
-            input_tokens = len(content)
-            if not update_user_tokens(message.chat.id, input_tokens, 0):
-                bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку.")
-                return
             bot.reply_to(message, process_text_message(content, message.chat.id))
         elif file_extension == 'pdf':
             with io.BytesIO(downloaded_file) as pdf_file:
                 content = read_pdf(pdf_file)
-                input_tokens = len(content)
-                if not update_user_tokens(message.chat.id, input_tokens, 0):
-                    bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку.")
-                    return
                 bot.reply_to(message, process_text_message(content, message.chat.id))
         elif file_extension == 'docx':
             with io.BytesIO(downloaded_file) as docx_file:
                 content = read_docx(docx_file)
-                input_tokens = len(content)
-                if not update_user_tokens(message.chat.id, input_tokens, 0):
-                    bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку.")
-                    return
                 bot.reply_to(message, process_text_message(content, message.chat.id))
         else:
             bot.reply_to(message, "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx.")
@@ -991,6 +937,8 @@ def read_docx(file):
 def update_user_tokens(user_id, input_tokens, output_tokens):
     check_and_update_tokens(user_id)
     user_data = load_user_data(user_id)
+    if user_data['subscription_plan'].startswith('plus_'):
+        return True
     total_tokens_used = input_tokens + output_tokens
     new_tokens = user_data['daily_tokens'] - total_tokens_used
     if new_tokens < 0:
@@ -1005,33 +953,23 @@ def generate_referral_link(user_id):
     return f"https://t.me/fiinny_bot?start={user_id}"
 
 def process_text_message(text, chat_id) -> str:
+    user_data = load_user_data(chat_id)
+    if user_data['subscription_plan'] == 'free':
+        return "Для использования этой функции требуется подписка Plus. Выберите тариф: /pay"
     input_tokens = len(text)
     if not update_user_tokens(chat_id, input_tokens, 0):
         return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку."
-    
     config = load_assistants_config()
     current_assistant = get_user_assistant(chat_id)
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
-    
-    # Проверяем, нужно ли выполнять веб-поиск
-    user_data = load_user_data(chat_id)
-    if needs_web_search(text):
-        if user_data['subscription_plan'] not in WEB_SEARCH_PLANS:
-            return (
-                "🌐 Веб-поиск доступен только с подпиской Plus и выше.\n"
-                "Подпишитесь, чтобы получить доступ к этой функции!",
-                create_subscription_required_keyboard()
-            )
-        if user_data['web_search_enabled']:
-            print("[ОТЛАДКА] Автоматически определён запрос для веб-поиска")
-            search_results = perform_web_search(text)
-            text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
-    
+    if needs_web_search(text) and user_data['web_search_enabled']:
+        print("[ОТЛАДКА] Автоматически определён запрос для веб-поиска")
+        search_results = perform_web_search(text)
+        text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
     input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
     history = get_chat_history(chat_id)
     history.append({"role": "user", "content": input_text})
-    
     try:
         chat_completion = openai.ChatCompletion.create(
             model="gpt-4.1-mini-2025-04-14",
@@ -1050,13 +988,15 @@ def process_text_message(text, chat_id) -> str:
     except Exception as e:
         return f"Произошла ошибка: {str(e)}"
 
-# Обработка голосовых сообщений
 import tempfile
 from pydub import AudioSegment
 
 @bot.message_handler(content_types=["voice"])
 def voice(message):
-    """Обрабатывает голосовое сообщение"""
+    user_data = load_user_data(message.from_user.id)
+    if user_data['subscription_plan'] == 'free':
+        bot.reply_to(message, "Для обработки голосовых сообщений требуется подписка Plus. Выберите тариф: /pay")
+        return
     try:
         file_info = bot.get_file(message.voice.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
@@ -1078,24 +1018,16 @@ def voice(message):
         if not recognized_text:
             bot.reply_to(message, "Текст неразборчив. Попробуйте снова.")
             return
-        input_tokens = len(recognized_text)
-        if not update_user_tokens(message.chat.id, input_tokens, 0):
-            bot.reply_to(message, "Лимит токенов исчерпан. Попробуйте завтра или купите подписку.")
-            return
         ai_response = process_text_message(recognized_text, message.chat.id)
-        if isinstance(ai_response, tuple):
-            bot.reply_to(message, ai_response[0], reply_markup=ai_response[1])
-        else:
-            bot.reply_to(message, ai_response)
+        bot.reply_to(message, ai_response)
     except Exception as e:
         logging.error(f"Ошибка обработки голосового сообщения: {e}")
         bot.reply_to(message, "Произошла ошибка, попробуйте позже!")
 
-# Обработчик событий и запуск
 def handler(event, context):
     message = json.loads(event["body"])
     update = telebot.types.Update.de_json(message)
-    allowed_updates=["message", "callback_query", "pre_checkout_query", "buy_rate_149"]
+    allowed_updates=["message", "callback_query", "pre_checkout_query"]
     if update.message is not None:
         try:
             bot.process_new_updates([update])
@@ -1137,6 +1069,9 @@ if __name__ == "__main__":
         assistants_config = load_assistants_config()
         setup_bot_commands()
         bot.polling()
+        while True:
+            schedule.run_pending()
+            time.sleep(60)
     finally:
         if conn:
             conn.close()
