@@ -124,7 +124,7 @@ def setup_bot_commands():
         BotCommand("new", "🗑 Очистить историю чата"),
         BotCommand("support", "📞 Поддержка"),
         BotCommand("referral", "🔗 Реферальная ссылка"),
-        BotCommand("universal", "🌍 Универсальный эксперт"),  # Добавляем /universal
+        BotCommand("universal", "🌍 Универсальный эксперт"),
     ]
     try:
         bot.set_my_commands(commands)
@@ -304,7 +304,7 @@ def assistants_button_handler(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("select_assistant_"))
 def assistant_callback_handler(call):
     print(f"[DEBUG] Callback data: {call.data}")
-    assistant_id = call.data.split("_", 2)[-1]  # Используем split с ограничением
+    assistant_id = call.data.split("_", 2)[-1]
     log_command(call.from_user.id, f"select_assistant_{assistant_id}")
     config = load_assistants_config()
     print(f"[DEBUG] Доступные ассистенты: {config['assistants'].keys()}")
@@ -437,7 +437,7 @@ def buy_subscription(callback):
             if user_data['trial_used']:
                 bot.send_message(callback.message.chat.id, "Вы уже использовали пробную подписку.")
                 return
-            price = 99  # Временно увеличим до 2 рублей для тестирования
+            price = 99
             period = "trial"
             duration_days = 3
         elif callback.data == "buy_week":
@@ -565,7 +565,7 @@ def clear_chat_history(message):
     bot.reply_to(message, "История чата очищена! Можете начать новый диалог с универсальным экспертом.")
 
 def create_language_menu():
-    keyboard = types.InlineKeyboardMarkup(row_width=3)  # 3 кнопки в ряд для компактности
+    keyboard = types.InlineKeyboardMarkup(row_width=3)
     languages = [
         ("Россия", "ru", "🇷🇺"),
         ("Английский", "en", "🇬🇧"),
@@ -677,6 +677,7 @@ def check_and_update_tokens(user_id):
     """, (user_id,))
     user_data = cur.fetchone()
     if not user_data:
+        print(f"[DEBUG] Пользователь {user_id} не найден в базе данных")
         cur.close()
         conn.close()
         return
@@ -686,7 +687,9 @@ def check_and_update_tokens(user_id):
         last_update_date = datetime.datetime.strptime(last_update, '%Y-%m-%d').date()
     else:
         last_update_date = last_update
+    print(f"[DEBUG] Проверка токенов для user_id={user_id}: tokens={tokens}, plan={current_plan}, last_update={last_update_date}, current_date={current_date}")
     if current_plan != 'free' and subscription_end_date and current_date > subscription_end_date:
+        print(f"[DEBUG] Подписка user_id={user_id} истекла, перевод на free")
         cur.execute(""" 
             UPDATE users 
             SET subscription_plan = 'free', 
@@ -709,6 +712,7 @@ def check_and_update_tokens(user_id):
             print(f"Ошибка отправки уведомления {user_id}: {e}")
     if tokens <= MIN_TOKENS_THRESHOLD and current_plan == 'free':
         if current_date > last_update_date:
+            print(f"[DEBUG] Обновление токенов для user_id={user_id}: {FREE_DAILY_TOKENS}")
             cur.execute(""" 
                 UPDATE users 
                 SET daily_tokens = %s, 
@@ -1028,16 +1032,23 @@ def generate_referral_link(user_id):
 
 def process_text_message(text, chat_id) -> str:
     user_data = load_user_data(chat_id)
-    if user_data['subscription_plan'] == 'free':
-        return "Для использования этой функции требуется подписка Plus. Выберите тариф: /pay"
+    if not user_data:
+        return "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
     input_tokens = len(text)
+    if user_data['subscription_plan'] == 'free':
+        check_and_update_tokens(chat_id)
+        user_data = load_user_data(chat_id)
+        if user_data['daily_tokens'] < input_tokens:
+            return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
     if not update_user_tokens(chat_id, input_tokens, 0):
-        return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку."
+        return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
     config = load_assistants_config()
     current_assistant = get_user_assistant(chat_id)
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
     if needs_web_search(text) and user_data['web_search_enabled']:
+        if user_data['subscription_plan'] == 'free':
+            return "Веб-поиск доступен только с подпиской Plus. Выберите тариф: /pay"
         print("[ОТЛАДКА] Автоматически определён запрос для веб-поиска")
         search_results = perform_web_search(text)
         text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
@@ -1125,7 +1136,7 @@ def check_experts_in_database(connection):
         for expert in experts:
             print(f"ID: {expert[0]}, Имя: {expert[1]}, Специализация: {expert[2]}")
 
-if __name__ == "__main__":
+def main():
     print("Bot started")
     conn = connect_to_db()
     try:
@@ -1142,12 +1153,17 @@ if __name__ == "__main__":
         check_experts_in_database(conn)
         assistants_config = load_assistants_config()
         setup_bot_commands()
-        bot.polling(none_stop=True)  # Изменено для продолжения работы после ошибок
+        bot.polling(none_stop=True)
         while True:
             schedule.run_pending()
             time.sleep(60)
     except Exception as e:
         print(f"Ошибка в главном цикле: {e}")
+        time.sleep(5)
+        main()
     finally:
         if conn:
             conn.close()
+
+if __name__ == "__main__":
+    main()
