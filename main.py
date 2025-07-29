@@ -281,10 +281,11 @@ def create_experts_menu():
     return keyboard
 
 # Обработчики кнопок и команд
+@bot.message_handler(commands=['assistants'])
 @bot.message_handler(func=lambda message: message.text == "Ассистенты")
 def assistants_button_handler(message):
-    """Обрабатывает нажатие кнопки 'Ассистенты'"""
-    log_command(message.from_user.id, "Ассистенты")
+    """Обрабатывает нажатие кнопки 'Ассистенты' и команду /assistants"""
+    log_command(message.from_user.id, "assistants")
     bot.send_message(
         message.chat.id,
         "Выберите ассистента:",
@@ -307,9 +308,11 @@ def assistant_callback_handler(call):
     else:
         bot.answer_callback_query(call.id, "Ассистент не найден")
 
+@bot.message_handler(commands=['experts'])
 @bot.message_handler(func=lambda message: message.text == "Эксперты")
 def experts_button_handler(message):
-    log_command(message.from_user.id, "Эксперты")
+    """Обрабатывает нажатие кнопки 'Эксперты' и команду /experts"""
+    log_command(message.from_user.id, "experts")
     bot.send_message(
         message.chat.id,
         "Выберите эксперта:",
@@ -379,7 +382,7 @@ def profile_button_handler(message):
 @bot.message_handler(commands=["pay"])
 @bot.message_handler(func=lambda message: message.text == "Подписка")
 def get_pay(message):
-    log_command(message.from_user.id, "Подписка")
+    log_command(message.from_user.id, "pay")
     bot.send_message(
         message.chat.id,
         """🎉 Бесплатно - 30 000 в день на каждого пользователя ✨
@@ -745,7 +748,7 @@ def send_welcome(message):
         bot.send_message(
             message.chat.id,
             """👋 Привет! Это быстро и бесплатно.
-Чтобы начать пользоваться ботом, подпишись на наш канал Guiding Star — ты получишь доступ к боту и эксклюзивным материалам по финансам и ИИ.""",
+Чтобы начать пользоваться ботом, подпишись на наш канал Guiding Star — ты получишь доступ к бота и эксклюзивным материалам по финансам и ИИ.""",
             reply_markup=create_subscription_keyboard()
         )
         return
