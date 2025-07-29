@@ -28,6 +28,9 @@ TOKEN_PLANS = {
     "unlimited": {"price": 1499, "tokens": 3000000},
 }
 
+# Тарифы, для которых доступен веб-поиск
+WEB_SEARCH_PLANS = ["premium", "unlimited"]
+
 MIN_TOKENS_THRESHOLD: Final = 5000  # Порог для обновления токенов
 FREE_DAILY_TOKENS: Final = 30000    # Бесплатные ежедневные токены
 
@@ -180,6 +183,15 @@ def create_price_menu() -> types.InlineKeyboardMarkup:
     )
     return markup
 
+def create_subscription_required_keyboard():
+    """Создаёт клавиатуру с кнопкой 'Купить подписку'"""
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton(
+        text="Купить подписку",
+        callback_data="show_pay_menu"
+    ))
+    return keyboard
+
 load_assistants_config()
 
 REQUIRED_CHANNEL_ID = "@GuidingStarVlog"
@@ -236,6 +248,26 @@ def subscription_check_callback(call):
             "Вы всё ещё не подписаны. Подпишитесь для использования бота.",
             show_alert=True
         )
+
+@bot.callback_query_handler(func=lambda call: call.data == "show_pay_menu")
+def show_pay_menu_callback(call):
+    """Обрабатывает нажатие кнопки 'Купить подписку'"""
+    log_command(call.from_user.id, "show_pay_menu")
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="""🎉 Бесплатно - 30 000 в день на каждого пользователя ✨
+💼 Базовый: 149 руб. (200 000 токенов)
+📝 Всё необходимое для простых задач.
+🚀 Расширенный: 349 руб. (500 000 токенов)
+🌈 Для тех, кто ценит больше возможностей.
+🌟 Премиум: 649 руб. (1 200 000 токенов)
+💪 Все функции для эффективной работы, включая веб-поиск.
+🔓 Неограниченный: 1499 руб. (3 000 000 токенов)
+🌍 Абсолютная свобода, включая веб-поиск.
+🎁 За приглашенного друга — 100 000 токенов в подарок! 🎊""",
+        reply_markup=create_price_menu()
+    )
 
 def create_main_menu():
     """Создаёт главное меню бота"""
@@ -394,10 +426,10 @@ def get_pay(message):
 📝 Всё необходимое для простых задач.
 🚀 Расширенный: 349 руб. (500 000 токенов)
 🌈 Для тех, кто ценит больше возможностей.
-🌟 Премиум-тариф: 649 руб. (1 200 000 токенов)
-💪 Все функции для эффективной работы.
+🌟 Премиум: 649 руб. (1 200 000 токенов)
+💪 Все функции для эффективной работы, включая веб-поиск.
 🔓 Неограниченный: 1499 руб. (3 000 000 токенов)
-🌍 Абсолютная свобода.
+🌍 Абсолютная свобода, включая веб-поиск.
 🎁 За приглашенного друга — 100 000 токенов в подарок! 🎊""",
         reply_markup=create_price_menu()
     )
@@ -433,19 +465,22 @@ def successful_pay(message):
         cur = conn.cursor()
         # Рассчитываем дату окончания подписки (30 дней от текущего момента)
         end_date = datetime.datetime.now().date() + datetime.timedelta(days=30)
+        # Включаем веб-поиск для premium и unlimited
+        web_search_enabled = selected_plan in WEB_SEARCH_PLANS
         cur.execute("""
             UPDATE users 
             SET subscription_plan = %s,
                 daily_tokens = daily_tokens + %s,
-                subscription_end_date = %s
+                subscription_end_date = %s,
+                web_search_enabled = %s
             WHERE user_id = %s
-        """, (selected_plan, TOKEN_PLANS[selected_plan]['tokens'], end_date, message.from_user.id))
+        """, (selected_plan, TOKEN_PLANS[selected_plan]['tokens'], end_date, web_search_enabled, message.from_user.id))
         conn.commit()
         cur.close()
         conn.close()
         bot.send_message(
             message.chat.id, 
-            f'Оплата прошла успешно!\nНачислено токенов: {TOKEN_PLANS[selected_plan]["tokens"]}\nПодписка активна до: {end_date.strftime("%d.%m.%Y")}'
+            f'Оплата прошла успешно!\nНачислено токенов: {TOKEN_PLANS[selected_plan]["tokens"]}\nПодписка активна до: {end_date.strftime("%d.%m.%Y")}\nВеб-поиск: {"включён" if web_search_enabled else "недоступен для этого тарифа"}'
         )
 
 @bot.message_handler(commands=['new'])
@@ -471,11 +506,21 @@ def language_handler(message):
 @bot.message_handler(commands=['search'])
 @bot.message_handler(func=lambda message: message.text == "Интернет поиск")
 def search_handler(message):
-    """Включает или выключает веб-поиск для пользователя"""
+    """Включает или выключает веб-поиск для пользователя, если у него подходящая подписка"""
     user_id = message.from_user.id
     user_data = load_user_data(user_id)
     if not user_data:
         bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.")
+        return
+    
+    # Проверяем подписку
+    if user_data['subscription_plan'] not in WEB_SEARCH_PLANS:
+        bot.reply_to(
+            message,
+            "🌐 Веб-поиск доступен только с подпиской Plus и выше.\nПодпишитесь, чтобы получить доступ к этой функции!",
+            reply_markup=create_subscription_required_keyboard()
+        )
+        log_command(user_id, "search_denied_no_subscription")
         return
     
     # Переключаем состояние
@@ -529,13 +574,14 @@ def check_and_update_tokens(user_id):
             UPDATE users 
             SET subscription_plan = 'free', 
                 daily_tokens = %s,
-                subscription_end_date = NULL
+                subscription_end_date = NULL,
+                web_search_enabled = FALSE
             WHERE user_id = %s 
         """, (FREE_DAILY_TOKENS, user_id))
         try:
             bot.send_message(
                 user_id,
-                "Ваша подписка истекла. Вы переведены на бесплатный тариф. Пожалуйста, выберите новый тариф: /pay"
+                "Ваша подписка истекла. Вы переведены на бесплатный тариф. Веб-поиск отключён. Пожалуйста, выберите новый тариф: /pay"
             )
         except telebot.apihelper.ApiTelegramException as e:
             if e.error_code == 403:
@@ -551,7 +597,8 @@ def check_and_update_tokens(user_id):
             cur.execute(""" 
                 UPDATE users 
                 SET subscription_plan = 'free',
-                    subscription_end_date = NULL
+                subscription_end_date = NULL,
+                web_search_enabled = FALSE
                 WHERE user_id = %s 
             """, (user_id,))
         if current_date > last_update_date:
@@ -593,7 +640,8 @@ def check_and_update_tokens(user_id):
                 UPDATE users 
                 SET subscription_plan = 'free', 
                     daily_tokens = 0,
-                    subscription_end_date = NULL
+                    subscription_end_date = NULL,
+                    web_search_enabled = FALSE
                 WHERE user_id = %s 
             """, (user_id,))
             try:
@@ -644,6 +692,8 @@ def show_profile(message):
         else f"🎉 Вы пригласили: {invited_users} друзей"
     )
     
+    web_search_status = "включён" if user_data['web_search_enabled'] else "выключен" if user_data['subscription_plan'] in WEB_SEARCH_PLANS else "недоступен (требуется подписка Plus)"
+
     profile_text = f"""
 ID: {user_id}
 
@@ -653,7 +703,7 @@ ID: {user_id}
         profile_text += f"Подписка активна еще {remaining_days} дней\n"
 
     profile_text += f"""
-Веб-поиск: {'включён' if user_data['web_search_enabled'] else 'выключен'}
+Веб-поиск: {web_search_status}
 
 Оставшаяся квота:
 GPT-4o: {user_data['daily_tokens']} символов
@@ -692,12 +742,14 @@ def show_stats_admin(message):
         'experts': 'Эксперты',
         'search_on': 'Включить веб-поиск',
         'search_off': 'Выключить веб-поиск',
+        'search_denied_no_subscription': 'Попытка веб-поиска без подписки',
         'pay': 'Подписка',
         'cancel_subscription': 'Отмена подписки',
         'new': 'Очистить историю чата',
         'support': 'Поддержка',
         'statsadmin12': 'Статистика (админ)',
-        'check_subscription': '✅ Нажатие "Я подписался"'
+        'check_subscription': '✅ Нажатие "Я подписался"',
+        'show_pay_menu': 'Открытие меню подписки'
     }
     
     # Красивое оформление статистики без проблемных символов
@@ -905,7 +957,7 @@ def handle_document(message):
                 input_tokens = len(content)
                 if not update_user_tokens(message.chat.id, input_tokens, 0):
                     bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку.")
-                return
+                    return
                 bot.reply_to(message, process_text_message(content, message.chat.id))
         elif file_extension == 'docx':
             with io.BytesIO(downloaded_file) as docx_file:
@@ -913,7 +965,7 @@ def handle_document(message):
                 input_tokens = len(content)
                 if not update_user_tokens(message.chat.id, input_tokens, 0):
                     bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку.")
-                return
+                    return
                 bot.reply_to(message, process_text_message(content, message.chat.id))
         else:
             bot.reply_to(message, "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx.")
@@ -964,10 +1016,17 @@ def process_text_message(text, chat_id) -> str:
     
     # Проверяем, нужно ли выполнять веб-поиск
     user_data = load_user_data(chat_id)
-    if needs_web_search(text) and user_data['web_search_enabled']:
-        print("[ОТЛАДКА] Автоматически определён запрос для веб-поиска")
-        search_results = perform_web_search(text)
-        text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
+    if needs_web_search(text):
+        if user_data['subscription_plan'] not in WEB_SEARCH_PLANS:
+            return (
+                "🌐 Веб-поиск доступен только с подпиской Plus и выше.\n"
+                "Подпишитесь, чтобы получить доступ к этой функции!",
+                create_subscription_required_keyboard()
+            )
+        if user_data['web_search_enabled']:
+            print("[ОТЛАДКА] Автоматически определён запрос для веб-поиска")
+            search_results = perform_web_search(text)
+            text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
     
     input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
     history = get_chat_history(chat_id)
@@ -1024,7 +1083,10 @@ def voice(message):
             bot.reply_to(message, "Лимит токенов исчерпан. Попробуйте завтра или купите подписку.")
             return
         ai_response = process_text_message(recognized_text, message.chat.id)
-        bot.reply_to(message, ai_response)
+        if isinstance(ai_response, tuple):
+            bot.reply_to(message, ai_response[0], reply_markup=ai_response[1])
+        else:
+            bot.reply_to(message, ai_response)
     except Exception as e:
         logging.error(f"Ошибка обработки голосового сообщения: {e}")
         bot.reply_to(message, "Произошла ошибка, попробуйте позже!")
