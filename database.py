@@ -274,10 +274,18 @@ def check_and_create_columns(connection):
             cursor.execute(create_assistants_table)
             cursor.execute(create_chat_history_table)
             cursor.execute(create_users_table)
+            # Добавляем новые столбцы, если они отсутствуют
+            cursor.execute("""
+                ALTER TABLE users 
+                ADD COLUMN IF NOT EXISTS subscription_start_date DATE,
+                ADD COLUMN IF NOT EXISTS subscription_end_date DATE,
+                ADD COLUMN IF NOT EXISTS trial_used BOOLEAN DEFAULT FALSE,
+                ADD COLUMN IF NOT EXISTS auto_renewal BOOLEAN DEFAULT TRUE;
+            """)
             connection.commit()
-            print("Таблицы созданы или уже существуют.")
+            print("Таблицы созданы или уже существуют, столбцы проверены и добавлены при необходимости.")
         except Exception as e:
-            print(f"Ошибка при создании таблиц: {e}")
+            print(f"Ошибка при создании таблиц или добавлении столбцов: {e}")
         create_experts_table(connection)
 
 def load_assistants_config():
