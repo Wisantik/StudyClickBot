@@ -316,9 +316,24 @@ def create_main_menu():
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     profile_btn = types.KeyboardButton("Мой профиль")
     experts_btn = types.KeyboardButton("Эксперты")
+    assistants_btn = types.KeyboardButton("Ассистенты")  # Новая кнопка
     sub_btn = types.KeyboardButton("Купить подписку")
     keyboard.add(profile_btn, experts_btn)
-    keyboard.add(sub_btn)
+    keyboard.add(assistants_btn, sub_btn)
+    return keyboard
+
+def create_assistants_menu():
+    """Создаёт инлайн-меню с ассистентами"""
+    config = load_assistants_config()
+    assistants = config.get("assistants", {})
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    for assistant_id, assistant_info in assistants.items():
+        keyboard.add(
+            types.InlineKeyboardButton(
+                text=assistant_info['name'],
+                callback_data=f"select_assistant_{assistant_id}"
+            )
+        )
     return keyboard
 
 def create_experts_menu():
@@ -336,6 +351,32 @@ def create_experts_menu():
     return keyboard
 
 # Обработчики кнопок и команд
+@bot.message_handler(func=lambda message: message.text == "Ассистенты")
+def assistants_button_handler(message):
+    """Обрабатывает нажатие кнопки 'Ассистенты'"""
+    log_command(message.from_user.id, "Ассистенты")
+    bot.send_message(
+        message.chat.id,
+        "Выберите ассистента:",
+        reply_markup=create_assistants_menu()
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("select_assistant_"))
+def assistant_callback_handler(call):
+    """Обрабатывает выбор ассистента из инлайн-кнопок"""
+    assistant_id = call.data.split("_")[-1]
+    log_command(call.from_user.id, f"select_assistant_{assistant_id}")
+    config = load_assistants_config()
+    if assistant_id in config['assistants']:
+        set_user_assistant(call.from_user.id, assistant_id)
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"Выбран ассистент: {config['assistants'][assistant_id]['name']}"
+        )
+    else:
+        bot.answer_callback_query(call.id, "Ассистент не найден")
+
 @bot.message_handler(func=lambda message: message.text == "Эксперты")
 def experts_button_handler(message):
     log_command(message.from_user.id, "Эксперты")
@@ -453,18 +494,21 @@ def successful_pay(message):
     if selected_plan:
         conn = connect_to_db()
         cur = conn.cursor()
+        # Рассчитываем дату окончания подписки (30 дней от текущего момента)
+        end_date = datetime.datetime.now().date() + datetime.timedelta(days=30)
         cur.execute("""
             UPDATE users 
             SET subscription_plan = %s,
-                daily_tokens = daily_tokens + %s
+                daily_tokens = daily_tokens + %s,
+                subscription_end_date = %s
             WHERE user_id = %s
-        """, (selected_plan, TOKEN_PLANS[selected_plan]['tokens'], message.from_user.id))
+        """, (selected_plan, TOKEN_PLANS[selected_plan]['tokens'], end_date, message.from_user.id))
         conn.commit()
         cur.close()
         conn.close()
         bot.send_message(
             message.chat.id, 
-            f'Оплата прошла успешно!\nНачислено токенов: {TOKEN_PLANS[selected_plan]["tokens"]}'
+            f'Оплата прошла успешно!\nНачислено токенов: {TOKEN_PLANS[selected_plan]["tokens"]}\nПодписка активна до: {end_date.strftime("%d.%m.%Y")}'
         )
 
 @bot.message_handler(commands=['new'])
@@ -486,23 +530,50 @@ def check_and_update_tokens(user_id):
     conn = connect_to_db()
     cur = conn.cursor()
     cur.execute(""" 
-        SELECT daily_tokens, subscription_plan, last_token_update, last_warning_time 
+        SELECT daily_tokens, subscription_plan, last_token_update, last_warning_time, subscription_end_date 
         FROM users WHERE user_id = %s 
     """, (user_id,))
     user_data = cur.fetchone()
     if not user_data:
+        cur.close()
+        conn.close()
         return
-    tokens, current_plan, last_update, last_warning_time = user_data
+    tokens, current_plan, last_update, last_warning_time, subscription_end_date = user_data
     current_date = datetime.datetime.now().date()
     if isinstance(last_update, str):
         last_update_date = datetime.datetime.strptime(last_update, '%Y-%m-%d').date()
     else:
         last_update_date = last_update
+
+    # Проверяем, истекла ли подписка
+    if current_plan != 'free' and subscription_end_date and current_date > subscription_end_date:
+        cur.execute(""" 
+            UPDATE users 
+            SET subscription_plan = 'free', 
+                daily_tokens = %s,
+                subscription_end_date = NULL
+            WHERE user_id = %s 
+        """, (FREE_DAILY_TOKENS, user_id))
+        try:
+            bot.send_message(
+                user_id,
+                "Ваша подписка истекла. Вы переведены на бесплатный тариф. Пожалуйста, выберите новый тариф: /pay"
+            )
+        except telebot.apihelper.ApiTelegramException as e:
+            if e.error_code == 403:
+                print(f"Пользователь {user_id} заблокировал бота.")
+            else:
+                print(f"Ошибка API для {user_id}: {e}")
+        except Exception as e:
+            print(f"Ошибка отправки уведомления {user_id}: {e}")
+
+    # Проверяем токены
     if tokens <= MIN_TOKENS_THRESHOLD:
         if current_plan != 'free':
             cur.execute(""" 
                 UPDATE users 
-                SET subscription_plan = 'free' 
+                SET subscription_plan = 'free',
+                    subscription_end_date = NULL
                 WHERE user_id = %s 
             """, (user_id,))
         if current_date > last_update_date:
@@ -512,6 +583,8 @@ def check_and_update_tokens(user_id):
                     last_token_update = %s 
                 WHERE user_id = %s 
             """, (FREE_DAILY_TOKENS, current_date, user_id))
+    
+    # Отправка предупреждения о низком балансе токенов
     if tokens < 15000 and current_plan != 'free':
         if last_warning_time is None or (datetime.datetime.now() - last_warning_time).total_seconds() > 86400:
             try:
@@ -520,9 +593,9 @@ def check_and_update_tokens(user_id):
                     """Ваши токены на исходе! ⏳
 Осталось меньше 15 000 токенов, и скоро вам может не хватить для дальнейшего использования. В таком случае вы будете автоматически переведены на бесплатный тариф с ограниченными возможностями.
 Чтобы избежать этого, пополните баланс и продолжайте пользоваться всеми функциями без ограничений! 🌟
-[Pay — Пополнить баланс]"""
+/pay — Пополнить баланс"""
                 )
-                cur.execute("""
+                cur.execute(""" 
                     UPDATE users 
                     SET last_warning_time = %s 
                     WHERE user_id = %s
@@ -534,12 +607,15 @@ def check_and_update_tokens(user_id):
                     print(f"Ошибка API для {user_id}: {e}")
             except Exception as e:
                 print(f"Ошибка отправки уведомления {user_id}: {e}")
+    
+    # Перевод на бесплатный тариф, если токены закончились
     if tokens < 3000:
         if current_plan != 'free':
             cur.execute(""" 
                 UPDATE users 
                 SET subscription_plan = 'free', 
-                    daily_tokens = 0 
+                    daily_tokens = 0,
+                    subscription_end_date = NULL
                 WHERE user_id = %s 
             """, (user_id,))
             try:
@@ -548,7 +624,7 @@ def check_and_update_tokens(user_id):
                     """Подписка завершена! 🚫
 Вы не потеряли токены, но для продолжения доступа выберите новый тариф.
 Новый тариф откроет вам ещё больше возможностей и токенов.
-[Pay — Выбрать новый тариф]"""
+/pay — Выбрать новый тариф"""
                 )
             except telebot.apihelper.ApiTelegramException as e:
                 if e.error_code == 403:
@@ -557,6 +633,7 @@ def check_and_update_tokens(user_id):
                     print(f"Ошибка API для {user_id}: {e}")
             except Exception as e:
                 print(f"Ошибка отправки уведомления {user_id}: {e}")
+    
     conn.commit()
     cur.close()
     conn.close()
@@ -567,13 +644,36 @@ def show_profile(message):
     log_command(message.from_user.id, "profile")
     user_id = message.from_user.id
     user_data = load_user_data(user_id)
-    invited_users = user_data['invited_users']
-    referrer_id = user_data['referrer_id']
+    
+    # Получаем данные о подписке
+    conn = connect_to_db()
+    cur = conn.cursor()
+    cur.execute("SELECT subscription_plan, subscription_end_date FROM users WHERE user_id = %s", (user_id,))
+    subscription_data = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    subscription_plan = subscription_data[0] if subscription_data else 'free'
+    subscription_end_date = subscription_data[1] if subscription_data and subscription_data[1] else None
+
+    # Рассчитываем оставшиеся дни подписки
+    remaining_days = None
+    if subscription_plan != 'free' and subscription_end_date:
+        today = datetime.datetime.now().date()
+        remaining_days = (subscription_end_date - today).days
+        if remaining_days < 0:
+            remaining_days = 0  # Если подписка истекла
+
+    # Формируем текст профиля
     profile_text = f"""
 ID: {user_id}
 
-Ваш текущий тариф: {user_data['subscription_plan'].capitalize()}
+Ваш текущий тариф: {subscription_plan.capitalize()}
+"""
+    if subscription_plan != 'free' and remaining_days is not None:
+        profile_text += f"Подписка активна еще {remaining_days} дней\n"
 
+    profile_text += f"""
 Оставшаяся квота:
 GPT-4o: {user_data['daily_tokens']} символов
 
@@ -583,10 +683,10 @@ GPT-4o: {user_data['daily_tokens']} символов
 📝 Входные токены: {user_data['input_tokens']}
 📝 Выходные токены: {user_data['output_tokens']}
 👥 Реферальная программа:
-Количество приглашенных пользователей: {invited_users}
-{'🙁 Вы пока не пригласили ни одного друга.' if invited_users == 0 else f'🎉 Вы пригласили: {invited_users} друзей'}
-{'👤 Вы были приглашены пользователем с ID: ' + str(referrer_id) if referrer_id else 'Вы не были приглашены никем.'}
-Чтобы пригласть пользователя, отправьте ему ссылку: {generate_referral_link(user_id)}
+Количество приглашенных пользователей: {user_data['invited_users']}
+{'🙁 Вы пока не пригласили ни одного друга.' if user_data['invited_users'] == 0 else f'🎉 Вы пригласили: {user_data['invited_users']} друзей'}
+{'👤 Вы были приглашены пользователем с ID: ' + str(user_data['referrer_id']) if user_data['referrer_id'] else 'Вы не были приглашены никем.'}
+Чтобы пригласить пользователя, отправьте ему ссылку: {generate_referral_link(user_id)}
 Чтобы добавить подписку нажмите /pay
 """
     bot.send_message(message.chat.id, profile_text)
@@ -612,6 +712,7 @@ def show_stats_admin(message):
     'expert_1': 'Иван Петров - Финансовый эксперт',
     'expert_2': 'Самир - IT-разработчик',
     'Купить подписку': 'Купить подписку',
+    'Ассистенты': 'Ассистенты',  # Добавляем новую команду
     'universal': 'Универсальный эксперт',
     'cybersecurity': 'Консультант по кибербезопасности',
     'dig_marketing': 'Консультант по маркетингу',

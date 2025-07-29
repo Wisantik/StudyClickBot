@@ -309,6 +309,9 @@ def check_and_create_columns(connection):
 
         # Выполнение SQL для создания таблиц
         try:
+            cursor.execute("""
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_end_date DATE;
+        """)
             cursor.execute(create_assistants_table)
             cursor.execute(create_chat_history_table)
             cursor.execute(create_users_table)
