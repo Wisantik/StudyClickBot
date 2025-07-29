@@ -1,11 +1,12 @@
-# Функция для подключения к базе данных PostgreSQL
 import json
 import psycopg2
 import os
 from dotenv import load_dotenv
 from assistance import *
-print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 import redis
+
+print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
+
 def connect_to_db():
     try:
         load_dotenv()  # Загружаем переменные из .env файла
@@ -31,7 +32,6 @@ def insert_initial_data(connection):
         except Exception as e:
             print(f"Ошибка при вставке начальных данных: {e}")
 
-
 def set_default_assistant(connection, assistant_key):
     """Устанавливает ассистента по умолчанию для всех пользователей"""
     with connection.cursor() as cursor:
@@ -42,13 +42,6 @@ def set_default_assistant(connection, assistant_key):
         """, (assistant_key,))
         connection.commit()
 
-# Вызов функции
-conn = connect_to_db()
-set_default_assistant(conn, 'universal_expert')
-conn.close()
-
-user_assistants_cache = {}
-
 # Настройка Connection для Redis
 r = redis.Redis(
     host='redis',  # Service name in Docker network
@@ -57,10 +50,6 @@ r = redis.Redis(
     decode_responses=True  # Automatically decode responses to strings
 )
 
-# Настройка Connection для Redis
-# r = redis.Redis(host='localhost', port=6379, db=0)
-
-
 def check_assistants_in_database(connection):
     with connection.cursor() as cursor:
         cursor.execute("SELECT assistant_key, name FROM assistants;")
@@ -68,7 +57,6 @@ def check_assistants_in_database(connection):
         print("Ассистенты в базе данных:")
         for assistant in assistants:
             print(f"Ключ: {assistant[0]}, Имя: {assistant[1]}")
-
 
 def set_user_assistant(user_id: int, assistant_key: str):
     """Сохраняет выбранного ассистента для конкретного пользователя в Redis и базе данных."""
@@ -153,7 +141,6 @@ def create_experts_table(connection):
         """)
         connection.commit()
 
-
 def insert_expert(connection, name, specialization, description, photo_url=None, telegram_username=None, contact_info=None):
     with connection.cursor() as cursor:
         cursor.execute("""
@@ -183,7 +170,6 @@ def get_expert_by_id(connection, expert_id):
         WHERE expert_id = %s;
         """, (expert_id,))
         return cursor.fetchone()
-
 
 def insert_initial_experts(connection):
     experts = [
@@ -277,7 +263,7 @@ def check_and_create_columns(connection):
         );
         """
         
-        # SQL для создания остальных таблиц...
+        # SQL для создания таблицы chat_history
         create_chat_history_table = """
         CREATE TABLE IF NOT EXISTS public.chat_history (
             id SERIAL PRIMARY KEY,
@@ -288,6 +274,7 @@ def check_and_create_columns(connection):
         );
         """
         
+        # SQL для создания таблицы users
         create_users_table = """
         CREATE TABLE IF NOT EXISTS public.users (
             user_id BIGINT PRIMARY KEY,
@@ -303,25 +290,28 @@ def check_and_create_columns(connection):
             created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             current_assistant VARCHAR(255),
             last_token_update DATE DEFAULT CURRENT_DATE,
-            last_warning_time TIMESTAMP WITHOUT TIME ZONE
+            last_warning_time TIMESTAMP WITHOUT TIME ZONE,
+            subscription_end_date DATE,
+            web_search_enabled BOOLEAN DEFAULT FALSE
         );
         """
 
         # Выполнение SQL для создания таблиц
         try:
-            cursor.execute("""
-            ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_end_date DATE;
-        """)
             cursor.execute(create_assistants_table)
             cursor.execute(create_chat_history_table)
             cursor.execute(create_users_table)
+            cursor.execute("""
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS subscription_end_date DATE;
+            """)
+            cursor.execute("""
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS web_search_enabled BOOLEAN DEFAULT FALSE;
+            """)
             connection.commit()
-            print("Таблицы созданы или уже существуют.")
+            print("Таблицы созданы или уже существуют, столбцы проверены и добавлены при необходимости.")
         except Exception as e:
-            print(f"Ошибка при создании таблиц: {e}")
+            print(f"Ошибка при создании таблиц или добавлении столбцов: {e}")
         create_experts_table(connection)
-
-
 
 def load_assistants_config():
     cache_key = 'assistants_config'
@@ -347,7 +337,6 @@ def load_assistants_config():
                 "name": name,
                 "prompt": prompt
             }
-        # print(f"Загруженные данные ассистентов: {assistants_config}")
 
         r.set(cache_key, json.dumps(assistants_config))
         print("Кэшированные данные в Redis.")
@@ -356,9 +345,7 @@ def load_assistants_config():
     except Exception as e:
         print(f"Ошибка при загрузке ассистентов: {e}")
         return {"assistants": {}}
-        ###############################################
-        #ЮЗЕРЫ
-        ###############################################
+
 def create_default_user(user_id: int, referrer_id: int = None):
     """Создание нового пользователя в базе данных с настройками по умолчанию"""
     try:
@@ -369,14 +356,16 @@ def create_default_user(user_id: int, referrer_id: int = None):
             INSERT INTO users (
                 user_id, daily_tokens, last_reset, total_spent,
                 referral_count, input_tokens, output_tokens,
-                invited_users, referrer_id, subscription_plan
+                invited_users, referrer_id, subscription_plan,
+                web_search_enabled
             ) VALUES (
                 %s, 30000, CURRENT_DATE, 0.0,
-                0, 0, 0, 0, %s, 'free'
+                0, 0, 0, 0, %s, 'free', FALSE
             )
             RETURNING daily_tokens, last_reset, total_spent,
                       referral_count, input_tokens, output_tokens,
-                      invited_users, referrer_id, subscription_plan
+                      invited_users, referrer_id, subscription_plan,
+                      web_search_enabled
         """, (user_id, referrer_id))
 
         # Получаем созданные данные
@@ -397,7 +386,8 @@ def create_default_user(user_id: int, referrer_id: int = None):
             "output_tokens": user[5],
             "invited_users": user[6],
             "referrer_id": user[7],
-            "subscription_plan": user[8]
+            "subscription_plan": user[8],
+            "web_search_enabled": user[9]
         }
     except Exception as e:
         print(f"Ошибка при создании пользователя: {e}")
@@ -413,7 +403,8 @@ def load_user_data(user_id: int):
         cursor.execute("""
             SELECT daily_tokens, last_reset, total_spent,
                    referral_count, input_tokens, output_tokens,
-                   invited_users, referrer_id, subscription_plan
+                   invited_users, referrer_id, subscription_plan,
+                   web_search_enabled
             FROM users
             WHERE user_id = %s
         """, (user_id,))
@@ -425,26 +416,27 @@ def load_user_data(user_id: int):
             return {
                 "user_id": user_id,
                 "daily_tokens": user[0],
-                "last_reset": str(user[1]),  # Преобразуем дату в строку для совместимости
-                "total_spent": float(user[2]),  # Преобразуем в float для совместимости
+                "last_reset": str(user[1]),
+                "total_spent": float(user[2]),
                 "referral_count": user[3],
                 "input_tokens": user[4],
                 "output_tokens": user[5],
                 "invited_users": user[6],
                 "referrer_id": user[7],
-                "subscription_plan": user[8]
+                "subscription_plan": user[8],
+                "web_search_enabled": user[9]
             }
 
         return None  # Возврат None, если пользователь не найден
 
     except Exception as e:
         print(f"Ошибка при загрузке данных пользователя: {e}")
-        return None  # Возврат None в случае ошибки
+        return None
 
     finally:
         if connection:
             cursor.close()
-            connection.close()  # Закрываем соединение в любом случае
+            connection.close()
 
 def save_user_data(user_data: dict):
     """Сохранение данных пользователя в базу данных"""
@@ -456,8 +448,9 @@ def save_user_data(user_data: dict):
             INSERT INTO users (
                 user_id, daily_tokens, last_reset, total_spent,
                 referral_count, input_tokens, output_tokens,
-                invited_users, referrer_id, subscription_plan
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                invited_users, referrer_id, subscription_plan,
+                web_search_enabled
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
                 daily_tokens = EXCLUDED.daily_tokens,
                 last_reset = EXCLUDED.last_reset,
@@ -467,7 +460,8 @@ def save_user_data(user_data: dict):
                 output_tokens = EXCLUDED.output_tokens,
                 invited_users = EXCLUDED.invited_users,
                 referrer_id = EXCLUDED.referrer_id,
-                subscription_plan = EXCLUDED.subscription_plan
+                subscription_plan = EXCLUDED.subscription_plan,
+                web_search_enabled = EXCLUDED.web_search_enabled
         """, (
             user_data["user_id"],
             user_data["daily_tokens"],
@@ -478,7 +472,8 @@ def save_user_data(user_data: dict):
             user_data["output_tokens"],
             user_data["invited_users"],
             user_data["referrer_id"],
-            user_data["subscription_plan"]
+            user_data["subscription_plan"],
+            user_data["web_search_enabled"]
         ))
         
         connection.commit()
@@ -490,10 +485,7 @@ def save_user_data(user_data: dict):
     except Exception as e:
         print(f"Ошибка при сохранении данных пользователя: {e}")
         return False
-    
-        ###############################################
-        #ИСТОРИЯ
-        ###############################################
+
 def store_message_in_db(chat_id, role, content):
     """Сохраняет сообщение в базу данных и кэширует его в Redis."""
     conn = connect_to_db()
@@ -554,4 +546,7 @@ def clear_chat_history(chat_id):
     cur.close()
     conn.close()
 
-
+# Вызов функции
+conn = connect_to_db()
+set_default_assistant(conn, 'universal_expert')
+conn.close()

@@ -11,7 +11,7 @@ from telebot import types
 import docx
 import pdfplumber
 import datetime
-import requests  # Добавлено для веб-поиска
+import requests
 from database import *
 from assistance import *
 
@@ -39,7 +39,7 @@ bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
 # API-ключ для Bing Search
-BING_API_KEY = "yLtkhrR3H6UjzBm3naReSJQ8G81ct409iLrcmQTeIAH338TwBZNEvSLQJ8og"
+BING_API_KEY = os.getenv('BING_API_KEY', "yLtkhrR3H6UjzBm3naReSJQ8G81ct409iLrcmQTeIAH338TwBZNEvSLQJ8og")
 
 # Класс для обработки исключений
 class ExceptionHandler:
@@ -139,7 +139,7 @@ def setup_bot_commands():
         BotCommand("language", "Выбрать язык"),
         BotCommand("assistants", "Ассистенты"),
         BotCommand("experts", "Эксперты"),
-        BotCommand("search", "Интернет поиск"),
+        BotCommand("search", "Включить/выключить интернет-поиск"),
         BotCommand("pay", "Подписка"),
         BotCommand("cancel_subscription", "Отмена подписки"),
         BotCommand("new", "Очистить историю чата"),
@@ -471,8 +471,24 @@ def language_handler(message):
 @bot.message_handler(commands=['search'])
 @bot.message_handler(func=lambda message: message.text == "Интернет поиск")
 def search_handler(message):
-    log_command(message.from_user.id, "search")
-    bot.reply_to(message, "Функция интернет-поиска находится в разработке. Пожалуйста, подождите.")
+    """Включает или выключает веб-поиск для пользователя"""
+    user_id = message.from_user.id
+    user_data = load_user_data(user_id)
+    if not user_data:
+        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.")
+        return
+    
+    # Переключаем состояние
+    new_state = not user_data['web_search_enabled']
+    user_data['web_search_enabled'] = new_state
+    save_user_data(user_data)
+    
+    # Логируем действие
+    log_command(user_id, f"search_{'on' if new_state else 'off'}")
+    
+    # Уведомляем пользователя
+    status_text = "включён" if new_state else "выключен"
+    bot.reply_to(message, f"Веб-поиск {status_text}. Теперь ваши запросы {'будут' if new_state else 'не будут'} использовать интернет-поиск, если содержат ключевые слова (например, 'найди', 'новости').")
 
 @bot.message_handler(commands=['support'])
 @bot.message_handler(func=lambda message: message.text == "Поддержка")
@@ -607,20 +623,14 @@ def show_profile(message):
     user_id = message.from_user.id
     user_data = load_user_data(user_id)
     
-    # Получаем данные о подписке
-    conn = connect_to_db()
-    cur = conn.cursor()
-    cur.execute("SELECT subscription_plan, subscription_end_date FROM users WHERE user_id = %s", (user_id,))
-    subscription_data = cur.fetchone()
-    cur.close()
-    conn.close()
-
-    subscription_plan = subscription_data[0] if subscription_data else 'free'
-    subscription_end_date = subscription_data[1] if subscription_data and subscription_data[1] else None
+    if not user_data:
+        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.")
+        return
 
     # Рассчитываем оставшиеся дни подписки
+    subscription_end_date = user_data.get('subscription_end_date')
     remaining_days = None
-    if subscription_plan != 'free' and subscription_end_date:
+    if user_data['subscription_plan'] != 'free' and subscription_end_date:
         today = datetime.datetime.now().date()
         remaining_days = (subscription_end_date - today).days
         if remaining_days < 0:
@@ -637,12 +647,14 @@ def show_profile(message):
     profile_text = f"""
 ID: {user_id}
 
-Ваш текущий тариф: {subscription_plan.capitalize()}
+Ваш текущий тариф: {user_data['subscription_plan'].capitalize()}
 """
-    if subscription_plan != 'free' and remaining_days is not None:
+    if user_data['subscription_plan'] != 'free' and remaining_days is not None:
         profile_text += f"Подписка активна еще {remaining_days} дней\n"
 
     profile_text += f"""
+Веб-поиск: {'включён' if user_data['web_search_enabled'] else 'выключен'}
+
 Оставшаяся квота:
 GPT-4o: {user_data['daily_tokens']} символов
 
@@ -678,7 +690,8 @@ def show_stats_admin(message):
         'language': 'Выбрать язык',
         'assistants': 'Ассистенты',
         'experts': 'Эксперты',
-        'search': 'Интернет поиск',
+        'search_on': 'Включить веб-поиск',
+        'search_off': 'Выключить веб-поиск',
         'pay': 'Подписка',
         'cancel_subscription': 'Отмена подписки',
         'new': 'Очистить историю чата',
@@ -892,7 +905,7 @@ def handle_document(message):
                 input_tokens = len(content)
                 if not update_user_tokens(message.chat.id, input_tokens, 0):
                     bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку.")
-                    return
+                return
                 bot.reply_to(message, process_text_message(content, message.chat.id))
         elif file_extension == 'docx':
             with io.BytesIO(downloaded_file) as docx_file:
@@ -900,7 +913,7 @@ def handle_document(message):
                 input_tokens = len(content)
                 if not update_user_tokens(message.chat.id, input_tokens, 0):
                     bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку.")
-                    return
+                return
                 bot.reply_to(message, process_text_message(content, message.chat.id))
         else:
             bot.reply_to(message, "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx.")
@@ -950,7 +963,8 @@ def process_text_message(text, chat_id) -> str:
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
     
     # Проверяем, нужно ли выполнять веб-поиск
-    if needs_web_search(text):
+    user_data = load_user_data(chat_id)
+    if needs_web_search(text) and user_data['web_search_enabled']:
         print("[ОТЛАДКА] Автоматически определён запрос для веб-поиска")
         search_results = perform_web_search(text)
         text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
