@@ -19,7 +19,7 @@ print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, 
 connect_to_db()
 
 MIN_TOKENS_THRESHOLD: Final = 5000
-FREE_DAILY_TOKENS: Final = 30000
+FREE_DAILY_TOKENS: Final = 10000
 
 logger = telebot.logger
 telebot.logger.setLevel(logging.INFO)
@@ -418,7 +418,7 @@ def buy_subscription(callback):
             if user_data['trial_used']:
                 bot.send_message(callback.message.chat.id, "Вы уже использовали пробную подписку.")
                 return
-            price = 2  # Временно увеличим до 2 рублей для тестирования
+            price = 99  # Временно увеличим до 2 рублей для тестирования
             period = "trial"
             duration_days = 3
         elif callback.data == "buy_week":
