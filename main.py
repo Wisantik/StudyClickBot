@@ -123,7 +123,8 @@ def setup_bot_commands():
         BotCommand("cancel_subscription", "❌ Отмена подписки"),
         BotCommand("new", "🗑 Очистить историю чата"),
         BotCommand("support", "📞 Поддержка"),
-        BotCommand("referral", "🔗 Реферальная ссылка"),  # Добавляем команду /referral
+        BotCommand("referral", "🔗 Реферальная ссылка"),
+        BotCommand("universal", "🌍 Универсальный эксперт"),  # Добавляем /universal
     ]
     try:
         bot.set_my_commands(commands)
@@ -264,12 +265,15 @@ def create_main_menu():
 def create_assistants_menu():
     config = load_assistants_config()
     assistants = config.get("assistants", {})
+    print(f"[DEBUG] Формирование меню ассистентов: {assistants.keys()}")
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     for assistant_id, assistant_info in assistants.items():
+        callback_data = f"select_assistant_{assistant_id}"
+        print(f"[DEBUG] Создание кнопки: text={assistant_info['name']}, callback_data={callback_data}")
         keyboard.add(
             types.InlineKeyboardButton(
                 text=assistant_info['name'],
-                callback_data=f"select_assistant_{assistant_id}"
+                callback_data=callback_data
             )
         )
     return keyboard
@@ -299,7 +303,8 @@ def assistants_button_handler(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("select_assistant_"))
 def assistant_callback_handler(call):
-    assistant_id = call.data.split("_")[-1]
+    print(f"[DEBUG] Callback data: {call.data}")
+    assistant_id = call.data.split("_", 2)[-1]  # Используем split с ограничением
     log_command(call.from_user.id, f"select_assistant_{assistant_id}")
     config = load_assistants_config()
     print(f"[DEBUG] Доступные ассистенты: {config['assistants'].keys()}")
@@ -326,49 +331,60 @@ def experts_button_handler(message):
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("expert_"))
 def expert_callback_handler(call):
-    expert_id = int(call.data.split("_")[1])
-    log_command(call.from_user.id, f"expert_{expert_id}")
-    conn = connect_to_db()
-    expert = get_expert_by_id(conn, expert_id)
-    conn.close()
-    if not expert:
-        bot.answer_callback_query(call.id, "Эксперт не найден")
-        return
-    expert_id, name, specialization, description, photo_url, telegram_username, contact_info, is_available = expert
-    keyboard = types.InlineKeyboardMarkup()
-    if telegram_username:
-        keyboard.add(types.InlineKeyboardButton(
-            text="Написать эксперту",
-            url=f"https://t.me/{telegram_username.replace('@', '')}"
-        ))
-    message_text = f"*{name}*\n_{specialization}_\n\n{description}\n\n"
-    if contact_info:
-        message_text += f"*Контактная информация:*\n{contact_info}"
-    if photo_url:
-        try:
-            bot.send_photo(
-                call.message.chat.id,
-                photo=photo_url,
-                caption=message_text,
-                parse_mode="Markdown",
-                reply_markup=keyboard
-            )
-        except Exception as e:
-            print(f"Ошибка отправки фото эксперта: {e}")
+    print(f"[DEBUG] Expert callback data: {call.data}")
+    try:
+        expert_id = int(call.data.split("_")[1])
+        log_command(call.from_user.id, f"expert_{expert_id}")
+        conn = connect_to_db()
+        expert = get_expert_by_id(conn, expert_id)
+        conn.close()
+        if not expert:
+            bot.answer_callback_query(call.id, "Эксперт не найден")
+            return
+        expert_id, name, specialization, description, photo_url, telegram_username, contact_info, is_available = expert
+        keyboard = types.InlineKeyboardMarkup()
+        if telegram_username:
+            keyboard.add(types.InlineKeyboardButton(
+                text="Написать эксперту",
+                url=f"https://t.me/{telegram_username.replace('@', '')}"
+            ))
+        message_text = f"*{name}*\n_{specialization}_\n\n{description}\n\n"
+        if contact_info:
+            message_text += f"*Контактная информация:*\n{contact_info}"
+        if photo_url:
+            try:
+                bot.send_photo(
+                    call.message.chat.id,
+                    photo=photo_url,
+                    caption=message_text,
+                    parse_mode="Markdown",
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                print(f"Ошибка отправки фото эксперта: {e}")
+                bot.send_message(
+                    call.message.chat.id,
+                    message_text,
+                    parse_mode="Markdown",
+                    reply_markup=keyboard
+                )
+        else:
             bot.send_message(
                 call.message.chat.id,
                 message_text,
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
-    else:
-        bot.send_message(
-            call.message.chat.id,
-            message_text,
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        )
-    bot.answer_callback_query(call.id)
+        bot.answer_callback_query(call.id)
+    except ValueError:
+        print(f"[ERROR] Неверный формат expert_id в callback: {call.data}")
+        bot.answer_callback_query(call.id, "Ошибка при выборе эксперта")
+
+@bot.message_handler(commands=['universal'])
+def universal_assistant_handler(message):
+    log_command(message.from_user.id, "universal")
+    set_user_assistant(message.from_user.id, 'universal_expert')
+    bot.reply_to(message, "Универсальный эксперт выбран!")
 
 @bot.message_handler(func=lambda message: message.text == "Назад")
 def back_button_handler(message):
