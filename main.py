@@ -131,99 +131,21 @@ def get_command_stats(period):
 def setup_bot_commands():
     """Устанавливает команды бота в Telegram"""
     commands = [
-        BotCommand("start", "Начать работу с ботом"),
+        BotCommand("profile", "Мой профиль"),
+        BotCommand("language", "Выбрать язык"),
+        BotCommand("assistants", "Ассистенты"),
+        BotCommand("experts", "Эксперты"),
+        BotCommand("search", "Интернет поиск"),
+        BotCommand("pay", "Подписка"),
+        BotCommand("cancel_subscription", "Отмена подписки"),
         BotCommand("new", "Очистить историю чата"),
-        BotCommand("profile", "Посмотреть профиль"),
-        BotCommand("pay", "Купить подписку"),
-        BotCommand("universal", "Универсальный эксперт"),
-        BotCommand("cybersecurity", "Консультант по кибербезопасности"),
-        BotCommand("dig_marketing", "Консультант по маркетингу"),
-        BotCommand("brand_mgmt", "Консультант по бренд-менеджменту"),
-        BotCommand("biz_create", "Консультант по открытию бизнеса"),
-        BotCommand("comm_skills", "Консультант по навыкам общения"),
-        BotCommand("stk_trading", "Консультант по фондовому рынку"),
-        BotCommand("crypto", "Консультант по криптовалютам"),
-        BotCommand("real_estate", "Консультант по недвижимости"),
-        BotCommand("startups", "Консультант по стартапам"),
-        BotCommand("passive_inv", "Консультант по пассивным инвестициям"),
-        BotCommand("esg", "Консультант по ESG-инвестициям"),
-        BotCommand("forex", "Консультант по валютным рынкам"),
-        BotCommand("finance", "Консультант по международным финансам"),
-        BotCommand("fintech", "Консультант по финтеху"),
-        BotCommand("pensions", "Консультант по пенсиям"),
-        BotCommand("insurance", "Консультант по страхованию"),
-        BotCommand("tax_credit", "Консультант по налогам и кредитам"),
-        BotCommand("personal_fin", "Консультант по личным финансам"),
-        BotCommand("income_edu", "Консультант по доходам и образованию"),
-        BotCommand("prod_mgmt", "Консультант по продакт-менеджменту"),
+        BotCommand("support", "Поддержка"),
     ]
     try:
         bot.set_my_commands(commands)
         print("Команды бота успешно настроены")
     except Exception as e:
         print(f"Ошибка при настройке команд: {e}")
-
-# Работа с ассистентами
-def get_full_assistant_key(command: str) -> str:
-    """Возвращает полный ключ ассистента по команде"""
-    command_to_key = {
-        'universal': 'universal_expert',
-        'cybersecurity': 'cybersecurity',
-        'dig_marketing': 'Digital Marketing Consultant',
-        'brand_mgmt': 'Brand Management Consultant',
-        'biz_create': 'Business Creation Consultant',
-        'comm_skills': 'Communication Skills Consultant',
-        'stk_trading': 'Stock Market Trading Consultant',
-        'crypto': 'Cryptocurrency Consultant',
-        'real_estate': 'Real Estate Investment Consultant',
-        'startups': 'Startup Investment Consultant',
-        'passive_inv': 'Passive Investment Consultant',
-        'esg': 'ESG Investment Consultant',
-        'forex': 'Forex Market Consultant',
-        'finance': 'Digital Finance Consultant',
-        'fintech': 'Fintech Consultant',
-        'pensions': 'Pension Consultant',
-        'insurance': 'Insurance Consultant',
-        'tax_credit': 'Tax and Credit Consultant',
-        'personal_fin': 'Personal Finance Consultant',
-        'income_edu': 'Income and Finance Education Consultant',
-        'prod_mgmt': 'Product_management_con',
-    }
-    return command_to_key.get(command)
-
-@bot.message_handler(commands=[
-    'universal', 'cybersecurity', 'dig_marketing', 'brand_mgmt',
-    'biz_create', 'comm_skills', 'stk_trading',
-    'crypto', 'real_estate', 'startups',
-    'passive_inv', 'esg', 'forex',
-    'finance', 'fintech', 'pensions',
-    'insurance', 'tax_credit', 'personal_fin',
-    'income_edu', 'prod_mgmt'
-])
-def handle_assistant_commands(message):
-    command = message.text[1:] 
-    log_command(message.from_user.id, command)
-    full_key = get_full_assistant_key(command)
-    if full_key:
-        config = load_assistants_config()
-        if full_key in config['assistants']:
-            set_user_assistant(message.from_user.id, full_key)
-            bot.reply_to(message, f"Выбран ассистент: {config['assistants'][full_key]['name']}")
-        else:
-            bot.reply_to(message, "Ассистент не найден в конфигурации.")
-    else:
-        bot.reply_to(message, "Ассистент не найден")
-
-def setup_assistant_handlers():
-    """Настраивает обработчики для ассистентов"""
-    config = load_assistants_config()
-    assistants = config.get("assistants", {})
-    for assistant_id, assistant_info in assistants.items():
-        @bot.message_handler(func=lambda message, name=assistant_info['name']: message.text == name)
-        def handle_assistant(message, assistant_id=assistant_id):
-            global current_assistant
-            current_assistant = assistant_id
-            bot.reply_to(message, f"Текущий ассистент установлен на: {message.text}.")
 
 # Меню и подписка
 def create_price_menu() -> types.InlineKeyboardMarkup:
@@ -315,11 +237,19 @@ def create_main_menu():
     """Создаёт главное меню бота"""
     keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     profile_btn = types.KeyboardButton("Мой профиль")
+    language_btn = types.KeyboardButton("Выбрать язык")
+    assistants_btn = types.KeyboardButton("Ассистенты")
     experts_btn = types.KeyboardButton("Эксперты")
-    assistants_btn = types.KeyboardButton("Ассистенты")  # Новая кнопка
-    sub_btn = types.KeyboardButton("Купить подписку")
-    keyboard.add(profile_btn, experts_btn)
-    keyboard.add(assistants_btn, sub_btn)
+    search_btn = types.KeyboardButton("Интернет поиск")
+    pay_btn = types.KeyboardButton("Подписка")
+    cancel_subscription_btn = types.KeyboardButton("Отмена подписки")
+    new_btn = types.KeyboardButton("Очистить историю чата")
+    support_btn = types.KeyboardButton("Поддержка")
+    keyboard.add(profile_btn, language_btn)
+    keyboard.add(assistants_btn, experts_btn)
+    keyboard.add(search_btn, pay_btn)
+    keyboard.add(cancel_subscription_btn, new_btn)
+    keyboard.add(support_btn)
     return keyboard
 
 def create_assistants_menu():
@@ -447,9 +377,9 @@ def profile_button_handler(message):
     show_profile(message)
 
 @bot.message_handler(commands=["pay"])
-@bot.message_handler(func=lambda message: message.text == "Купить подписку")
+@bot.message_handler(func=lambda message: message.text == "Подписка")
 def get_pay(message):
-    log_command(message.from_user.id, "Купить подписку")
+    log_command(message.from_user.id, "Подписка")
     bot.send_message(
         message.chat.id,
         """🎉 Бесплатно - 30 000 в день на каждого пользователя ✨
@@ -512,6 +442,7 @@ def successful_pay(message):
         )
 
 @bot.message_handler(commands=['new'])
+@bot.message_handler(func=lambda message: message.text == "Очистить историю чата")
 def clear_chat_history(message):
     log_command(message.from_user.id, "new")
     chat_id = message.chat.id
@@ -523,6 +454,30 @@ def clear_chat_history(message):
     conn.close()
     set_user_assistant(message.from_user.id, 'universal_expert')  # Устанавливаем ассистента по умолчанию
     bot.reply_to(message, "История чата очищена! Можете начать новый диалог с универсальным экспертом.")
+
+@bot.message_handler(commands=['language'])
+@bot.message_handler(func=lambda message: message.text == "Выбрать язык")
+def language_handler(message):
+    log_command(message.from_user.id, "language")
+    bot.reply_to(message, "Функция выбора языка находится в разработке. Пожалуйста, подождите.")
+
+@bot.message_handler(commands=['search'])
+@bot.message_handler(func=lambda message: message.text == "Интернет поиск")
+def search_handler(message):
+    log_command(message.from_user.id, "search")
+    bot.reply_to(message, "Функция интернет-поиска находится в разработке. Пожалуйста, подождите.")
+
+@bot.message_handler(commands=['support'])
+@bot.message_handler(func=lambda message: message.text == "Поддержка")
+def support_handler(message):
+    log_command(message.from_user.id, "support")
+    bot.reply_to(message, "Напишите сюда - https://t.me/mon_tti1")
+
+@bot.message_handler(commands=['cancel_subscription'])
+@bot.message_handler(func=lambda message: message.text == "Отмена подписки")
+def cancel_subscription_handler(message):
+    log_command(message.from_user.id, "cancel_subscription")
+    bot.reply_to(message, "Функция отмены подписки находится в разработке. Пожалуйста, подождите.")
 
 # Управление токенами
 def check_and_update_tokens(user_id):
@@ -712,45 +667,17 @@ def show_stats_admin(message):
     month_stats = get_command_stats('month')
     year_stats = get_command_stats('year')
     command_names = {
-    'start': 'Запуск бота (/start)',
-    'profile': 'Мой профиль',
-    'new': 'Очистить историю чата (/new)',
-    'Эксперты': 'Эксперты',
-    'expert_1': 'Иван Петров - Финансовый эксперт',
-    'expert_2': 'Самир - IT-разработчик',
-    'Купить подписку': 'Купить подписку',
-    'Ассистенты': 'Ассистенты',  # Добавляем новую команду
-    'universal': 'Универсальный эксперт',
-    'cybersecurity': 'Консультант по кибербезопасности',
-    'dig_marketing': 'Консультант по маркетингу',
-    'brand_mgmt': 'Консультант по бренд-менеджменту',
-    'biz_create': 'Консультант по открытию бизнеса',
-    'comm_skills': 'Консультант по навыкам общения',
-    'commskills': 'Консультант по навыкам общения',
-    'stk_trading': 'Консультант по фондовому рынку',
-    'stktrading': 'Консультант по фондовому рынку',
-    'crypto': 'Консультант по криптовалютам',
-    'real_estate': 'Консультант по недвижимости',
-    'realestate': 'Консультант по недвижимости',
-    'startups': 'Консультант по стартапам',
-    'passive_inv': 'Консультант по пассивным инвестициям',
-    'passiveinv': 'Консультант по пассивным инвестициям',
-    'esg': 'Консультант по ESG-инвестициям',
-    'forex': 'Консультант по валютным рынкам',
-    'finance': 'Консультант по международным финансам',
-    'fintech': 'Консультант по финтеху',
-    'pensions': 'Консультант по пенсиям',
-    'insurance': 'Консультант по страхованию',
-    'tax_credit': 'Консультант по налогам и кредитам',
-    'taxcredit': 'Консультант по налогам и кредитам',
-    'personal_fin': 'Консультант по личным финансам',
-    'personalfin': 'Консультант по личным финансам',
-    'income_edu': 'Консультант по доходам и образованию',
-    'incomeedu': 'Консультант по доходам и образованию',
-    'prod_mgmt': 'Консультант по продакт-менеджменту',
-    'prodmgmt': 'Консультант по продакт-менеджменту',
-    'statsadmin12': 'Статистика (админ)',
-    'check_subscription': '✅ Нажатие "Я подписался"'
+        'profile': 'Мой профиль',
+        'language': 'Выбрать язык',
+        'assistants': 'Ассистенты',
+        'experts': 'Эксперты',
+        'search': 'Интернет поиск',
+        'pay': 'Подписка',
+        'cancel_subscription': 'Отмена подписки',
+        'new': 'Очистить историю чата',
+        'support': 'Поддержка',
+        'statsadmin12': 'Статистика (админ)',
+        'check_subscription': '✅ Нажатие "Я подписался"'
     }
     
     # Красивое оформление статистики без проблемных символов
@@ -840,21 +767,6 @@ def send_referral_link(message):
     referral_link = generate_referral_link(user_id)
     bot.reply_to(message, f"Ваша реферальная ссылка: {referral_link}")
 
-@bot.message_handler(commands=['cybersecurity', 'tax_payment_consultant', 'consultant_on_benefits_for_large_families',
-                              'financial_literacy_assistant', 'business_creation_consultant', 'economics_consultant'])
-def set_assistant(message):
-    global current_assistant
-    command = message.text[1:]
-    log_command(message.from_user.id, command)
-    config = load_assistants_config()
-    assistants = config.get("assistants", {})
-    if command in assistants:
-        current_assistant = command
-        assistant_name = assistants[command]['name']
-        bot.reply_to(message, f"Текущий ассистент установлен на: {current_assistant}.")
-    else:
-        bot.reply_to(message, "Неизвестный ассистент. Попробуйте выбрать ассистента из меню.")
-
 # Рассылка и действия
 def typing(chat_id):
     while True:
@@ -918,7 +830,7 @@ def echo_message(message):
         bot.send_message(
             message.chat.id,
             """👋 Привет! Это быстро и бесплатно.
-Чтобы начать пользоваться ботом, подпишись на наш канал Guiding Star — ты получишь доступ к боту и эксклюзивным материалам по финансам и ИИ.""",
+Чтобы начать пользоваться ботом, подпишись на наш канал Guiding Star — ты получишь доступ к бота и эксклюзивным материалам по финансам и ИИ.""",
             reply_markup=create_subscription_keyboard()
         )
         return
@@ -1108,7 +1020,6 @@ if __name__ == "__main__":
         check_experts_in_database(conn)
         assistants_config = load_assistants_config()
         setup_bot_commands()
-        setup_assistant_handlers()  # Вызов функции настройки обработчиков ассистентов
         bot.polling()
     finally:
         if conn:
