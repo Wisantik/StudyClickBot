@@ -413,35 +413,44 @@ def buy_subscription(callback):
     if not user_data:
         bot.send_message(callback.message.chat.id, "Ошибка: пользователь не найден.")
         return
-    if callback.data == "buy_trial":
-        if user_data['trial_used']:
-            bot.send_message(callback.message.chat.id, "Вы уже использовали пробную подписку.")
-            return
-        price = 1
-        period = "trial"
-        duration_days = 3
-    elif callback.data == "buy_week":
-        price = 149
-        period = "week"
-        duration_days = 7
-    elif callback.data == "buy_month":
-        price = 399
-        period = "month"
-        duration_days = 30
-    elif callback.data == "buy_year":
-        price = 2499
-        period = "year"
-        duration_days = 365
-    bot.send_invoice(
-        callback.message.chat.id,
-        title=f"Подписка Plus ({period})",
-        description=f"Подписка на {duration_days} дней",
-        invoice_payload=f"plus_{period}",
-        provider_token=pay_token,
-        currency="RUB",
-        start_parameter="test_bot",
-        prices=[types.LabeledPrice(label=f"Подписка Plus ({period})", amount=price * 100)]
-    )
+    try:
+        if callback.data == "buy_trial":
+            if user_data['trial_used']:
+                bot.send_message(callback.message.chat.id, "Вы уже использовали пробную подписку.")
+                return
+            price = 2  # Временно увеличим до 2 рублей для тестирования
+            period = "trial"
+            duration_days = 3
+        elif callback.data == "buy_week":
+            price = 149
+            period = "week"
+            duration_days = 7
+        elif callback.data == "buy_month":
+            price = 399
+            period = "month"
+            duration_days = 30
+        elif callback.data == "buy_year":
+            price = 2499
+            period = "year"
+            duration_days = 365
+        amount_in_kopecks = price * 100
+        print(f"[INFO] Отправка счёта для user_id={user_id}, period={period}, amount={amount_in_kopecks} копеек")
+        bot.send_invoice(
+            callback.message.chat.id,
+            title=f"Подписка Plus ({period})",
+            description=f"Подписка на {duration_days} дней",
+            invoice_payload=f"plus_{period}",
+            provider_token=pay_token,
+            currency="RUB",
+            start_parameter="test_bot",
+            prices=[types.LabeledPrice(label=f"Подписка Plus ({period})", amount=amount_in_kopecks)]
+        )
+    except telebot.apihelper.ApiTelegramException as e:
+        print(f"[ERROR] Ошибка отправки счёта: {e}")
+        bot.send_message(
+            callback.message.chat.id,
+            "Произошла ошибка при создании счёта. Пожалуйста, попробуйте позже или обратитесь в поддержку: https://t.me/mon_tti1"
+        )
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def process_pre_checkout_query(pre_checkout_query):
@@ -1068,10 +1077,12 @@ if __name__ == "__main__":
         check_experts_in_database(conn)
         assistants_config = load_assistants_config()
         setup_bot_commands()
-        bot.polling()
+        bot.polling(none_stop=True)  # Изменено для продолжения работы после ошибок
         while True:
             schedule.run_pending()
             time.sleep(60)
+    except Exception as e:
+        print(f"Ошибка в главном цикле: {e}")
     finally:
         if conn:
             conn.close()
