@@ -267,7 +267,8 @@ def check_and_create_columns(connection):
             subscription_start_date DATE,
             subscription_end_date DATE,
             trial_used BOOLEAN DEFAULT FALSE,
-            auto_renewal BOOLEAN DEFAULT TRUE
+            auto_renewal BOOLEAN DEFAULT TRUE,
+            web_search_enabled BOOLEAN DEFAULT FALSE
         );
         """
         try:
@@ -280,7 +281,8 @@ def check_and_create_columns(connection):
                 ADD COLUMN IF NOT EXISTS subscription_start_date DATE,
                 ADD COLUMN IF NOT EXISTS subscription_end_date DATE,
                 ADD COLUMN IF NOT EXISTS trial_used BOOLEAN DEFAULT FALSE,
-                ADD COLUMN IF NOT EXISTS auto_renewal BOOLEAN DEFAULT TRUE;
+                ADD COLUMN IF NOT EXISTS auto_renewal BOOLEAN DEFAULT TRUE,
+                ADD COLUMN IF NOT EXISTS web_search_enabled BOOLEAN DEFAULT FALSE;
             """)
             connection.commit()
             print("Таблицы созданы или уже существуют, столбцы проверены и добавлены при необходимости.")
@@ -324,15 +326,15 @@ def create_default_user(user_id: int, referrer_id: int = None):
                 user_id, daily_tokens, last_reset, total_spent,
                 referral_count, input_tokens, output_tokens,
                 invited_users, referrer_id, subscription_plan,
-                trial_used, auto_renewal
+                trial_used, auto_renewal, web_search_enabled
             ) VALUES (
                 %s, 30000, CURRENT_DATE, 0.0,
-                0, 0, 0, 0, %s, 'free', FALSE, TRUE
+                0, 0, 0, 0, %s, 'free', FALSE, TRUE, FALSE
             )
             RETURNING daily_tokens, last_reset, total_spent,
                       referral_count, input_tokens, output_tokens,
                       invited_users, referrer_id, subscription_plan,
-                      trial_used, auto_renewal
+                      trial_used, auto_renewal, web_search_enabled
         """, (user_id, referrer_id))
         user = cursor.fetchone()
         connection.commit()
@@ -350,7 +352,8 @@ def create_default_user(user_id: int, referrer_id: int = None):
             "referrer_id": user[7],
             "subscription_plan": user[8],
             "trial_used": user[9],
-            "auto_renewal": user[10]
+            "auto_renewal": user[10],
+            "web_search_enabled": user[11]
         }
     except Exception as e:
         print(f"Ошибка при создании пользователя: {e}")
@@ -365,7 +368,7 @@ def load_user_data(user_id: int):
             SELECT daily_tokens, last_reset, total_spent,
                    referral_count, input_tokens, output_tokens,
                    invited_users, referrer_id, subscription_plan,
-                   trial_used, auto_renewal,
+                   trial_used, auto_renewal, web_search_enabled,
                    subscription_start_date, subscription_end_date
             FROM users
             WHERE user_id = %s
@@ -385,8 +388,9 @@ def load_user_data(user_id: int):
                 "subscription_plan": user[8],
                 "trial_used": user[9],
                 "auto_renewal": user[10],
-                "subscription_start_date": user[11],
-                "subscription_end_date": user[12]
+                "web_search_enabled": user[11],
+                "subscription_start_date": user[12],
+                "subscription_end_date": user[13]
             }
         return None
     except Exception as e:
@@ -406,9 +410,9 @@ def save_user_data(user_data: dict):
                 user_id, daily_tokens, last_reset, total_spent,
                 referral_count, input_tokens, output_tokens,
                 invited_users, referrer_id, subscription_plan,
-                trial_used, auto_renewal,
+                trial_used, auto_renewal, web_search_enabled,
                 subscription_start_date, subscription_end_date
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (user_id) DO UPDATE SET
                 daily_tokens = EXCLUDED.daily_tokens,
                 last_reset = EXCLUDED.last_reset,
@@ -421,6 +425,7 @@ def save_user_data(user_data: dict):
                 subscription_plan = EXCLUDED.subscription_plan,
                 trial_used = EXCLUDED.trial_used,
                 auto_renewal = EXCLUDED.auto_renewal,
+                web_search_enabled = EXCLUDED.web_search_enabled,
                 subscription_start_date = EXCLUDED.subscription_start_date,
                 subscription_end_date = EXCLUDED.subscription_end_date
         """, (
@@ -436,6 +441,7 @@ def save_user_data(user_data: dict):
             user_data["subscription_plan"],
             user_data["trial_used"],
             user_data["auto_renewal"],
+            user_data["web_search_enabled"],
             user_data["subscription_start_date"],
             user_data["subscription_end_date"]
         ))
