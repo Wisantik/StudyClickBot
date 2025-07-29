@@ -418,7 +418,7 @@ def buy_subscription(callback):
             if user_data['trial_used']:
                 bot.send_message(callback.message.chat.id, "Вы уже использовали пробную подписку.")
                 return
-            price = 40  # Временно увеличим до 2 рублей для тестирования
+            price = 59  # Временно увеличим до 2 рублей для тестирования
             period = "trial"
             duration_days = 3
         elif callback.data == "buy_week":
