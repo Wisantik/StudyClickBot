@@ -292,7 +292,7 @@ def show_pay_menu_callback(call):
 Обработка запросов голосовыми
 
 ⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
-Покупая, вы соглашаетесь с <a href="https://telegra.ph/Moya-istoriya-09-16">офертой</a>
+Покупая, вы соглашаетесь с <a href="https://teletype.in/@st0ckholders_s/1X-lpJhx5rc">офертой</a>
 Отменить можно в любое время после оплаты
 По всем вопросам пишите сюда - <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
     bot.edit_message_text(
@@ -437,7 +437,7 @@ def get_pay(message):
 Обработка запросов голосовыми
 
 ⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
-Покупая, вы соглашаетесь с <a href="https://telegra.ph/Moya-istoriya-09-16">офертой</a>
+Покупая, вы соглашаетесь с <a href="https://teletype.in/@st0ckholders_s/1X-lpJhx5rc">офертой</a>
 Отменить можно в любое время после оплаты
 По всем вопросам пишите сюда - <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
     bot.send_message(
