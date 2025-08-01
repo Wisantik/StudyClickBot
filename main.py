@@ -112,6 +112,23 @@ def get_command_stats(period):
     conn.close()
     return stats
 
+def create_main_menu() -> types.ReplyKeyboardMarkup:
+    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    keyboard.add(
+        types.KeyboardButton("👤 Мой профиль"),
+        types.KeyboardButton("🌐 Выбрать язык"),
+        types.KeyboardButton("🤖 Ассистенты"),
+        types.KeyboardButton("👨‍💼 Эксперты"),
+        types.KeyboardButton("🔍 Интернет поиск"),
+        types.KeyboardButton("💳 Подписка"),
+        types.KeyboardButton("❌ Отмена подписки"),
+        types.KeyboardButton("🗑 Очистить историю чата"),
+        types.KeyboardButton("📞 Поддержка"),
+        types.KeyboardButton("🔗 Реферальная ссылка"),
+        types.KeyboardButton("🌍 Универсальный эксперт")
+    )
+    return keyboard
+
 def setup_bot_commands():
     commands = [
         BotCommand("profile", "👤 Мой профиль"),
@@ -253,7 +270,8 @@ def subscription_check_callback(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="Спасибо за подписку! Теперь вы можете использовать бота с универсальным экспертом."
+            text="Спасибо за подписку! Теперь вы можете использовать бота с универсальным экспертом.",
+            reply_markup=create_main_menu()
         )
     else:
         bot.answer_callback_query(
@@ -286,7 +304,7 @@ def show_pay_menu_callback(call):
     )
 
 @bot.message_handler(commands=['assistants'])
-@bot.message_handler(func=lambda message: message.text == "Ассистенты")
+@bot.message_handler(func=lambda message: message.text == "🤖 Ассистенты")
 def assistants_button_handler(message):
     log_command(message.from_user.id, "assistants")
     bot.send_message(
@@ -317,7 +335,7 @@ def assistant_callback_handler(call):
         bot.answer_callback_query(call.id, "Ассистент не найден")
 
 @bot.message_handler(commands=['experts'])
-@bot.message_handler(func=lambda message: message.text == "Эксперты")
+@bot.message_handler(func=lambda message: message.text == "👨‍💼 Эксперты")
 def experts_button_handler(message):
     log_command(message.from_user.id, "experts")
     bot.send_message(
@@ -381,6 +399,7 @@ def expert_callback_handler(call):
         bot.answer_callback_query(call.id, "Ошибка при выборе эксперта")
 
 @bot.message_handler(commands=['universal'])
+@bot.message_handler(func=lambda message: message.text == "🌍 Универсальный эксперт")
 def universal_assistant_handler(message):
     log_command(message.from_user.id, "universal")
     set_user_assistant(message.from_user.id, 'universal_expert')
@@ -395,13 +414,13 @@ def back_button_handler(message):
         reply_markup=create_main_menu()
     )
 
-@bot.message_handler(func=lambda message: message.text == "Мой профиль")
+@bot.message_handler(func=lambda message: message.text == "👤 Мой профиль")
 def profile_button_handler(message):
     log_command(message.from_user.id, "Мой профиль")
     show_profile(message)
 
 @bot.message_handler(commands=["pay"])
-@bot.message_handler(func=lambda message: message.text == "Подписка")
+@bot.message_handler(func=lambda message: message.text == "💳 Подписка")
 def get_pay(message):
     log_command(message.from_user.id, "pay")
     bot.send_message(
@@ -648,9 +667,9 @@ def check_auto_renewal():
         #             subscription_end_date = %s
         #         WHERE user_id = %s
         #     """, (start_date, end_date, user_id))
-        #     bot.send_message(user_id, "Ваша пробная подписка продлена на месяц за 399₽.")
+        #     bot.send_message(user_id, "Ваша пробная подписка продлена на месяц за 399₽.", reply_markup=create_main_menu())
         # else:
-        #     bot.send_message(user_id, "Не удалось продлить подписку. Пожалуйста, обновите платёжные данные.")
+        #     bot.send_message(user_id, "Не удалось продлить подписку. Пожалуйста, обновите платёжные данные.", reply_markup=create_main_menu())
     conn.commit()
     cur.close()
     conn.close()
@@ -658,7 +677,7 @@ def check_auto_renewal():
 schedule.every().day.at("00:00").do(check_auto_renewal)
 
 @bot.message_handler(commands=['new'])
-@bot.message_handler(func=lambda message: message.text == "Очистить историю чата")
+@bot.message_handler(func=lambda message: message.text == "🗑 Очистить историю чата")
 def clear_chat_history(message):
     log_command(message.from_user.id, "new")
     chat_id = message.chat.id
@@ -696,7 +715,7 @@ def create_language_menu():
     return keyboard
 
 @bot.message_handler(commands=['language'])
-@bot.message_handler(func=lambda message: message.text == "Выбрать язык")
+@bot.message_handler(func=lambda message: message.text == "🌐 Выбрать язык")
 def language_handler(message):
     log_command(message.from_user.id, "language")
     bot.send_message(
@@ -733,7 +752,7 @@ def language_callback_handler(call):
     bot.answer_callback_query(call.id)
 
 @bot.message_handler(commands=['search'])
-@bot.message_handler(func=lambda message: message.text == "Интернет поиск")
+@bot.message_handler(func=lambda message: message.text == "🔍 Интернет поиск")
 def search_handler(message):
     user_id = message.from_user.id
     user_data = load_user_data(user_id)
@@ -756,13 +775,13 @@ def search_handler(message):
     bot.reply_to(message, f"Веб-поиск {status_text}.", reply_markup=create_main_menu())
 
 @bot.message_handler(commands=['support'])
-@bot.message_handler(func=lambda message: message.text == "Поддержка")
+@bot.message_handler(func=lambda message: message.text == "📞 Поддержка")
 def support_handler(message):
     log_command(message.from_user.id, "support")
     bot.reply_to(message, "Напишите сюда - https://t.me/mon_tti1", reply_markup=create_main_menu())
 
 @bot.message_handler(commands=['cancel_subscription'])
-@bot.message_handler(func=lambda message: message.text == "Отмена подписки")
+@bot.message_handler(func=lambda message: message.text == "❌ Отмена подписки")
 def cancel_subscription_handler(message):
     user_id = message.from_user.id
     user_data = load_user_data(user_id)
@@ -841,6 +860,7 @@ def check_and_update_tokens(user_id):
     conn.close()
 
 @bot.message_handler(commands=['profile'])
+@bot.message_handler(func=lambda message: message.text == "👤 Мой профиль")
 def show_profile(message):
     log_command(message.from_user.id, "profile")
     user_id = message.from_user.id
@@ -893,7 +913,7 @@ ADMIN_IDS = [998107476, 741831495]
 @bot.message_handler(commands=['statsadmin12'])
 def show_stats_admin(message):
     if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "У вас нет прав для просмотра статистики.")
+        bot.reply_to(message, "У вас нет прав для просмотра статистики.", reply_markup=create_main_menu())
         return
     log_command(message.from_user.id, "statsadmin12")
     week_stats = get_command_stats('week')
@@ -937,10 +957,10 @@ def show_stats_admin(message):
         stats_text += f"🔹 {display_name}: {count} раз\n"
     stats_text += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     try:
-        bot.reply_to(message, stats_text, parse_mode="Markdown")
+        bot.reply_to(message, stats_text, parse_mode="Markdown", reply_markup=create_main_menu())
     except Exception as e:
         stats_text_plain = stats_text.replace("*", "").replace("_", "")
-        bot.reply_to(message, stats_text_plain)
+        bot.reply_to(message, stats_text_plain, reply_markup=create_main_menu())
 
 @bot.message_handler(func=lambda message: message.text == "Отменить")
 def cancel_subscription(message):
@@ -956,7 +976,7 @@ def send_welcome(message):
     user_data = load_user_data(user_id)
     if user_data:
         if referrer_id:
-            bot.reply_to(message, "Вы уже зарегистрированы. Нельзя использовать реферальную ссылку.")
+            bot.reply_to(message, "Вы уже зарегистрированы. Нельзя использовать реферальную ссылку.", reply_markup=create_main_menu())
         else:
             bot.send_message(message.chat.id, "Добро пожаловать обратно!", reply_markup=create_main_menu())
     else:
@@ -992,6 +1012,7 @@ def send_welcome(message):
 💬 Хочешь пообщаться с нашими экспертами? Легко! Просто открой меню, выбери нужную тему и получи профессиональную консультацию.""", reply_markup=create_main_menu())
 
 @bot.message_handler(commands=['referral'])
+@bot.message_handler(func=lambda message: message.text == "🔗 Реферальная ссылка")
 def send_referral_link(message):
     log_command(message.from_user.id, "referral")
     user_id = message.from_user.id
@@ -1030,10 +1051,10 @@ def send_broadcast(message_content, photo=None):
 @bot.message_handler(commands=["broadcast"])
 def broadcast(message):
     if message.from_user.id == 998107476:
-        msg = bot.reply_to(message, "Отправьте изображение с подписью или текст для рассылки:")
+        msg = bot.reply_to(message, "Отправьте изображение с подписью или текст для рассылки:", reply_markup=create_main_menu())
         bot.register_next_step_handler(msg, process_broadcast)
     else:
-        bot.reply_to(message, "У вас нет прав на отправку рассылки.")
+        bot.reply_to(message, "У вас нет прав на отправку рассылки.", reply_markup=create_main_menu())
 
 def process_broadcast(message):
     if message.content_type == 'photo':
@@ -1042,7 +1063,7 @@ def process_broadcast(message):
         send_broadcast(caption, photo=photo)
     else:
         send_broadcast(message.text)
-    bot.reply_to(message, "Рассылка успешно завершена!")
+    bot.reply_to(message, "Рассылка успешно завершена!", reply_markup=create_main_menu())
 
 @bot.message_handler(content_types=['photo'])
 def handle_broadcast_photo(message):
@@ -1050,7 +1071,7 @@ def handle_broadcast_photo(message):
         photo = message.photo[-1].file_id
         caption = message.caption.replace('/broadcast', '').strip()
         send_broadcast(caption, photo=photo)
-        bot.reply_to(message, "Рассылка с изображением успешно завершена!")
+        bot.reply_to(message, "Рассылка с изображением успешно завершена!", reply_markup=create_main_menu())
 
 def perform_web_search(query: str) -> str:
     endpoint = "https://api.bing.microsoft.com/v7.0/search"
