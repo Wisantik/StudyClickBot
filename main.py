@@ -283,10 +283,7 @@ def subscription_check_callback(call):
 @bot.callback_query_handler(func=lambda call: call.data == "show_pay_menu")
 def show_pay_menu_callback(call):
     log_command(call.from_user.id, "show_pay_menu")
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text="""Подписка Plus
+    subscription_text = """Подписка Plus
 
 Доступ к GPT 40 - безлимит
 Чтение PDF файлов - безлимит
@@ -295,10 +292,14 @@ def show_pay_menu_callback(call):
 Обработка запросов голосовыми
 
 ⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
-Покупая, вы соглашаетесь с [офертой](https://teletype.in/@st0ckholders_s/1X-lpJhx5rc)
+Покупая, вы соглашаетесь с <a href="https://telegra.ph/Moya-istoriya-09-16">офертой</a>
 Отменить можно в любое время после оплаты
-По всем вопросам пишите сюда - https://t.me/mon_tti1""",
-        parse_mode="Markdown",
+По всем вопросам пишите сюда - <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=subscription_text,
+        parse_mode="HTML",
         reply_markup=create_price_menu()
     )
 
@@ -365,9 +366,9 @@ def expert_callback_handler(call):
         keyboard.add(
             types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
         )
-        message_text = f"*{name}*\n_{specialization}_\n\n{description}\n\n"
+        message_text = f"<b>{name}</b>\n<i>{specialization}</i>\n\n{description}\n\n"
         if contact_info:
-            message_text += f"*Контактная информация:*\n{contact_info}"
+            message_text += f"<b>Контактная информация:</b>\n{contact_info}"
         if photo_url:
             try:
                 bot.edit_message_media(
@@ -376,7 +377,7 @@ def expert_callback_handler(call):
                     media=types.InputMediaPhoto(
                         media=photo_url,
                         caption=message_text,
-                        parse_mode="Markdown"
+                        parse_mode="HTML"
                     ),
                     reply_markup=keyboard
                 )
@@ -386,7 +387,7 @@ def expert_callback_handler(call):
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
                     text=message_text,
-                    parse_mode="Markdown",
+                    parse_mode="HTML",
                     reply_markup=keyboard
                 )
         else:
@@ -394,7 +395,7 @@ def expert_callback_handler(call):
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
                 text=message_text,
-                parse_mode="Markdown",
+                parse_mode="HTML",
                 reply_markup=keyboard
             )
         bot.answer_callback_query(call.id)
@@ -427,9 +428,7 @@ def profile_button_handler(message):
 @bot.message_handler(func=lambda message: message.text == "💳 Подписка")
 def get_pay(message):
     log_command(message.from_user.id, "pay")
-    bot.send_message(
-        message.chat.id,
-        """Подписка Plus
+    subscription_text = """Подписка Plus
 
 Доступ к GPT 40 - безлимит
 Чтение PDF файлов - безлимит
@@ -438,10 +437,13 @@ def get_pay(message):
 Обработка запросов голосовыми
 
 ⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
-Покупая, вы соглашаетесь с [офертой](https://teletype.in/@st0ckholders_s/1X-lpJhx5rc)
+Покупая, вы соглашаетесь с <a href="https://telegra.ph/Moya-istoriya-09-16">офертой</a>
 Отменить можно в любое время после оплаты
-По всем вопросам пишите сюда - https://t.me/mon_tti1""",
-        parse_mode="Markdown",
+По всем вопросам пишите сюда - <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
+    bot.send_message(
+        message.chat.id,
+        subscription_text,
+        parse_mode="HTML",
         reply_markup=create_price_menu()
     )
 
@@ -531,6 +533,17 @@ def successful_pay(message):
 @bot.callback_query_handler(func=lambda call: call.data in ["show_assistants", "show_experts", "show_support", "cancel_subscription", "back_to_profile"])
 def profile_menu_callback_handler(call):
     log_command(call.from_user.id, call.data)
+    user_id = call.from_user.id
+    user_data = load_user_data(user_id)
+    if not user_data:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.",
+            reply_markup=create_main_menu()
+        )
+        bot.answer_callback_query(call.id)
+        return
     if call.data == "show_assistants":
         bot.edit_message_text(
             chat_id=call.message.chat.id,
@@ -549,14 +562,13 @@ def profile_menu_callback_handler(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="Напишите в поддержку: https://t.me/mon_tti1",
+            text="Напишите в поддержку: <a href='https://t.me/mon_tti1'>t.me/mon_tti1</a>",
+            parse_mode="HTML",
             reply_markup=types.InlineKeyboardMarkup().add(
                 types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
             )
         )
     elif call.data == "cancel_subscription":
-        user_id = call.from_user.id
-        user_data = load_user_data(user_id)
         if not user_data or user_data['subscription_plan'] == 'free':
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
@@ -589,15 +601,6 @@ def profile_menu_callback_handler(call):
                 )
             )
     elif call.data == "back_to_profile":
-        user_id = call.from_user.id
-        user_data = load_user_data(user_id)
-        if not user_data:
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text="Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
-            )
-            return
         subscription_end_date = user_data.get('subscription_end_date')
         remaining_days = None
         if user_data['subscription_plan'] != 'free' and subscription_end_date:
@@ -636,12 +639,44 @@ GPT-4o: {user_data['daily_tokens']} символов
 {'👤 Вы были приглашены пользователем с ID: ' + str(user_data['referrer_id']) if user_data['referrer_id'] else 'Вы не были приглашены никем.'}
 Чтобы пригласить пользователя, отправьте ему ссылку: {generate_referral_link(user_id)}
 """
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text=profile_text,
-            reply_markup=create_profile_menu()
-        )
+        try:
+            # Проверяем, является ли сообщение медиа-сообщением
+            try:
+                message = bot.get_chat_message(call.message.chat.id, call.message.message_id)
+                if message.content_type == 'photo':
+                    bot.edit_message_media(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        media=types.InputMediaPhoto(
+                            media="https://via.placeholder.com/150",  # Заглушка, так как профиль текстовый
+                            caption=profile_text
+                        ),
+                        reply_markup=create_profile_menu()
+                    )
+                else:
+                    bot.edit_message_text(
+                        chat_id=call.message.chat.id,
+                        message_id=call.message.message_id,
+                        text=profile_text,
+                        reply_markup=create_profile_menu()
+                    )
+            except telebot.apihelper.ApiTelegramException as e:
+                print(f"[ERROR] Ошибка проверки типа сообщения: {e}")
+                # Если не удалось проверить тип, пробуем редактировать как текст
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=profile_text,
+                    reply_markup=create_profile_menu()
+                )
+        except telebot.apihelper.ApiTelegramException as e:
+            print(f"[ERROR] Ошибка редактирования сообщения в back_to_profile: {e}")
+            # Если редактирование не удалось, отправляем новое сообщение
+            bot.send_message(
+                chat_id=call.message.chat.id,
+                text=profile_text,
+                reply_markup=create_profile_menu()
+            )
     bot.answer_callback_query(call.id)
 
 def check_auto_renewal():
@@ -781,7 +816,7 @@ def search_handler(message):
 @bot.message_handler(func=lambda message: message.text == "📞 Поддержка")
 def support_handler(message):
     log_command(message.from_user.id, "support")
-    bot.reply_to(message, "Напишите сюда - https://t.me/mon_tti1", reply_markup=create_main_menu())
+    bot.reply_to(message, "Напишите сюда - <a href='https://t.me/mon_tti1'>t.me/mon_tti1</a>", parse_mode="HTML", reply_markup=create_main_menu())
 
 @bot.message_handler(commands=['cancel_subscription'])
 @bot.message_handler(func=lambda message: message.text == "❌ Отмена подписки")
