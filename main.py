@@ -640,46 +640,15 @@ GPT-4o: {user_data['daily_tokens']} символов
 Чтобы пригласить пользователя, отправьте ему ссылку: {generate_referral_link(user_id)}
 """
         try:
-            # Сначала пробуем редактировать как текстовое сообщение
-            try:
-                bot.edit_message_text(
-                    chat_id=call.message.chat.id,
-                    message_id=call.message.message_id,
-                    text=profile_text,
-                    reply_markup=create_profile_menu()
-                )
-            except telebot.apihelper.ApiTelegramException as e:
-                if "there is no text in the message to edit" in str(e):
-                    # Если сообщение содержит медиа, пробуем редактировать как медиа
-                    try:
-                        bot.edit_message_media(
-                            chat_id=call.message.chat.id,
-                            message_id=call.message.message_id,
-                            media=types.InputMediaPhoto(
-                                media="https://via.placeholder.com/150",
-                                caption=profile_text
-                            ),
-                            reply_markup=create_profile_menu()
-                        )
-                    except telebot.apihelper.ApiTelegramException as e:
-                        print(f"[ERROR] Ошибка редактирования медиа-сообщения: {e}")
-                        # Если редактирование медиа тоже не удалось, отправляем новое сообщение
-                        bot.send_message(
-                            chat_id=call.message.chat.id,
-                            text=profile_text,
-                            reply_markup=create_profile_menu()
-                        )
-                else:
-                    print(f"[ERROR] Ошибка редактирования текстового сообщения: {e}")
-                    # Если другая ошибка, отправляем новое сообщение
-                    bot.send_message(
-                        chat_id=call.message.chat.id,
-                        text=profile_text,
-                        reply_markup=create_profile_menu()
-                    )
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=profile_text,
+                reply_markup=create_profile_menu()
+            )
         except telebot.apihelper.ApiTelegramException as e:
-            print(f"[ERROR] Общая ошибка редактирования в back_to_profile: {e}")
-            # Если редактирование не удалось, отправляем новое сообщение
+            print(f"[ERROR] Ошибка редактирования сообщения в back_to_profile: {e}")
+            # Вместо попытки редактирования медиа отправляем новое текстовое сообщение
             bot.send_message(
                 chat_id=call.message.chat.id,
                 text=profile_text,
@@ -698,8 +667,8 @@ def check_auto_renewal():
         AND auto_renewal = TRUE
     """, (today,))
     users = cur.fetchall()
-    for user_id in users:
-        user_id = user_id[0]
+    for user in users:
+        user_id = user[0]
         # Здесь должна быть интеграция с YooKassa для автоматической оплаты 399 рублей
         # Примерный код (нужна реализация через API YooKassa):
         # payment_result = make_payment(user_id, amount=399)
@@ -1340,7 +1309,7 @@ def main():
         check_experts_in_database(conn)
         assistants_config = load_assistants_config()
         setup_bot_commands()
-        bot.polling(none_stop=True)
+        bot.polling(non_stop=True)
         while True:
             schedule.run_pending()
             time.sleep(60)
