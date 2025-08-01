@@ -147,6 +147,11 @@ def create_price_menu() -> types.InlineKeyboardMarkup:
                     callback_data="buy_month"
                 )
             ],
+            [
+                types.InlineKeyboardButton(
+                    text="⬅️ Назад", callback_data="back_to_profile"
+                )
+            ]
         ]
     )
     return markup
@@ -162,15 +167,50 @@ def create_subscription_required_keyboard():
 def create_profile_menu() -> types.InlineKeyboardMarkup:
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        types.InlineKeyboardButton(text="Ассистенты", callback_data="show_assistants"),
-        types.InlineKeyboardButton(text="Эксперты", callback_data="show_experts")
+        types.InlineKeyboardButton(text="🤖 Ассистенты", callback_data="show_assistants"),
+        types.InlineKeyboardButton(text="👨‍💼 Эксперты", callback_data="show_experts")
     )
     keyboard.add(
-        types.InlineKeyboardButton(text="Подписка", callback_data="show_pay_menu"),
-        types.InlineKeyboardButton(text="Отписка", callback_data="cancel_subscription")
+        types.InlineKeyboardButton(text="💳 Подписка", callback_data="show_pay_menu"),
+        types.InlineKeyboardButton(text="❌ Отписка", callback_data="cancel_subscription")
     )
     keyboard.add(
-        types.InlineKeyboardButton(text="Поддержка", callback_data="show_support")
+        types.InlineKeyboardButton(text="📞 Поддержка", callback_data="show_support")
+    )
+    return keyboard
+
+def create_assistants_menu() -> types.InlineKeyboardMarkup:
+    config = load_assistants_config()
+    assistants = config.get("assistants", {})
+    print(f"[DEBUG] Формирование меню ассистентов: {assistants.keys()}")
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    for assistant_id, assistant_info in assistants.items():
+        callback_data = f"select_assistant_{assistant_id}"
+        print(f"[DEBUG] Создание кнопки: text={assistant_info['name']}, callback_data={callback_data}")
+        keyboard.add(
+            types.InlineKeyboardButton(
+                text=assistant_info['name'],
+                callback_data=callback_data
+            )
+        )
+    keyboard.add(
+        types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
+    )
+    return keyboard
+
+def create_experts_menu() -> types.InlineKeyboardMarkup:
+    conn = connect_to_db()
+    experts = get_all_experts(conn)
+    conn.close()
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    for expert in experts:
+        expert_id, name, specialization, *_ = expert
+        keyboard.add(types.InlineKeyboardButton(
+            text=f"{name} - {specialization}",
+            callback_data=f"expert_{expert_id}"
+        ))
+    keyboard.add(
+        types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
     )
     return keyboard
 
@@ -245,53 +285,6 @@ def show_pay_menu_callback(call):
         reply_markup=create_price_menu()
     )
 
-def create_main_menu():
-    keyboard = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    profile_btn = types.KeyboardButton("Мой профиль")
-    language_btn = types.KeyboardButton("Выбрать язык")
-    assistants_btn = types.KeyboardButton("Ассистенты")
-    experts_btn = types.KeyboardButton("Эксперты")
-    search_btn = types.KeyboardButton("Интернет поиск")
-    pay_btn = types.KeyboardButton("Подписка")
-    cancel_subscription_btn = types.KeyboardButton("Отмена подписки")
-    new_btn = types.KeyboardButton("Очистить историю чата")
-    support_btn = types.KeyboardButton("Поддержка")
-    keyboard.add(profile_btn, language_btn)
-    keyboard.add(assistants_btn, experts_btn)
-    keyboard.add(search_btn, pay_btn)
-    keyboard.add(cancel_subscription_btn, new_btn)
-    keyboard.add(support_btn)
-    return keyboard
-
-def create_assistants_menu():
-    config = load_assistants_config()
-    assistants = config.get("assistants", {})
-    print(f"[DEBUG] Формирование меню ассистентов: {assistants.keys()}")
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    for assistant_id, assistant_info in assistants.items():
-        callback_data = f"select_assistant_{assistant_id}"
-        print(f"[DEBUG] Создание кнопки: text={assistant_info['name']}, callback_data={callback_data}")
-        keyboard.add(
-            types.InlineKeyboardButton(
-                text=assistant_info['name'],
-                callback_data=callback_data
-            )
-        )
-    return keyboard
-
-def create_experts_menu():
-    conn = connect_to_db()
-    experts = get_all_experts(conn)
-    conn.close()
-    keyboard = types.InlineKeyboardMarkup(row_width=1)
-    for expert in experts:
-        expert_id, name, specialization, *_ = expert
-        keyboard.add(types.InlineKeyboardButton(
-            text=f"{name} - {specialization}",
-            callback_data=f"expert_{expert_id}"
-        ))
-    return keyboard
-
 @bot.message_handler(commands=['assistants'])
 @bot.message_handler(func=lambda message: message.text == "Ассистенты")
 def assistants_button_handler(message):
@@ -314,7 +307,10 @@ def assistant_callback_handler(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=f"Выбран ассистент: {config['assistants'][assistant_id]['name']}"
+            text=f"Выбран ассистент: {config['assistants'][assistant_id]['name']}",
+            reply_markup=types.InlineKeyboardMarkup().add(
+                types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
+            )
         )
     else:
         print(f"[ERROR] Ассистент {assistant_id} не найден в конфигурации")
@@ -349,6 +345,9 @@ def expert_callback_handler(call):
                 text="Написать эксперту",
                 url=f"https://t.me/{telegram_username.replace('@', '')}"
             ))
+        keyboard.add(
+            types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
+        )
         message_text = f"*{name}*\n_{specialization}_\n\n{description}\n\n"
         if contact_info:
             message_text += f"*Контактная информация:*\n{contact_info}"
@@ -385,7 +384,7 @@ def expert_callback_handler(call):
 def universal_assistant_handler(message):
     log_command(message.from_user.id, "universal")
     set_user_assistant(message.from_user.id, 'universal_expert')
-    bot.reply_to(message, "Универсальный эксперт выбран!")
+    bot.reply_to(message, "Универсальный эксперт выбран!", reply_markup=create_main_menu())
 
 @bot.message_handler(func=lambda message: message.text == "Назад")
 def back_button_handler(message):
@@ -429,12 +428,12 @@ def buy_subscription(callback):
     user_id = callback.from_user.id
     user_data = load_user_data(user_id)
     if not user_data:
-        bot.send_message(callback.message.chat.id, "Ошибка: пользователь не найден.")
+        bot.send_message(callback.message.chat.id, "Ошибка: пользователь не найден.", reply_markup=create_main_menu())
         return
     try:
         if callback.data == "buy_trial":
             if user_data['trial_used']:
-                bot.send_message(callback.message.chat.id, "Вы уже использовали пробную подписку.")
+                bot.send_message(callback.message.chat.id, "Вы уже использовали пробную подписку.", reply_markup=create_main_menu())
                 return
             price = 99
             period = "trial"
@@ -459,7 +458,8 @@ def buy_subscription(callback):
         print(f"[ERROR] Ошибка отправки счёта: {e}")
         bot.send_message(
             callback.message.chat.id,
-            "Произошла ошибка при создании счёта. Пожалуйста, попробуйте позже или обратитесь в поддержку: https://t.me/mon_tti1"
+            "Произошла ошибка при создании счёта. Пожалуйста, попробуйте позже или обратитесь в поддержку: https://t.me/mon_tti1",
+            reply_markup=create_main_menu()
         )
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
@@ -480,7 +480,7 @@ def successful_pay(message):
         elif period == "month":
             duration_days = 30
         else:
-            bot.send_message(message.chat.id, "Неизвестный тип подписки.")
+            bot.send_message(message.chat.id, "Неизвестный тип подписки.", reply_markup=create_main_menu())
             return
         start_date = datetime.datetime.now().date()
         end_date = start_date + datetime.timedelta(days=duration_days)
@@ -500,12 +500,13 @@ def successful_pay(message):
             message.chat.id, 
             f'Оплата прошла успешно!\nПодписка Plus ({period}) активирована до {end_date.strftime("%d.%m.%Y")}\n'
             f'Веб-поиск: включён\n'
-            f'Автопродление: {"включено" if period == "trial" else "выключено"}'
+            f'Автопродление: {"включено" if period == "trial" else "выключено"}',
+            reply_markup=create_main_menu()
         )
     else:
-        bot.send_message(message.chat.id, "Неизвестный тип подписки.")
+        bot.send_message(message.chat.id, "Неизвестный тип подписки.", reply_markup=create_main_menu())
 
-@bot.callback_query_handler(func=lambda call: call.data in ["show_assistants", "show_experts", "show_support", "cancel_subscription"])
+@bot.callback_query_handler(func=lambda call: call.data in ["show_assistants", "show_experts", "show_support", "cancel_subscription", "back_to_profile"])
 def profile_menu_callback_handler(call):
     log_command(call.from_user.id, call.data)
     if call.data == "show_assistants":
@@ -526,7 +527,10 @@ def profile_menu_callback_handler(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="Напишите в поддержку: https://t.me/mon_tti1"
+            text="Напишите в поддержку: https://t.me/mon_tti1",
+            reply_markup=types.InlineKeyboardMarkup().add(
+                types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
+            )
         )
     elif call.data == "cancel_subscription":
         user_id = call.from_user.id
@@ -535,7 +539,10 @@ def profile_menu_callback_handler(call):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="У вас нет активной подписки для отмены."
+                text="У вас нет активной подписки для отмены.",
+                reply_markup=types.InlineKeyboardMarkup().add(
+                    types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
+                )
             )
         else:
             conn = connect_to_db()
@@ -554,8 +561,65 @@ def profile_menu_callback_handler(call):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="Подписка отменена. Автопродление отключено."
+                text="Подписка отменена. Автопродление отключено.",
+                reply_markup=types.InlineKeyboardMarkup().add(
+                    types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
+                )
             )
+    elif call.data == "back_to_profile":
+        user_id = call.from_user.id
+        user_data = load_user_data(user_id)
+        if not user_data:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
+            )
+            return
+        subscription_end_date = user_data.get('subscription_end_date')
+        remaining_days = None
+        if user_data['subscription_plan'] != 'free' and subscription_end_date:
+            today = datetime.datetime.now().date()
+            remaining_days = (subscription_end_date - today).days
+            if remaining_days < 0:
+                remaining_days = 0
+        invited_users = user_data['invited_users']
+        referral_text = (
+            "🙁 Вы пока не пригласили ни одного друга."
+            if invited_users == 0
+            else f"🎉 Вы пригласили: {invited_users} друзей"
+        )
+        web_search_status = "включён" if user_data['web_search_enabled'] else "выключен" if user_data['subscription_plan'].startswith('plus_') else "недоступен (требуется подписка Plus)"
+        profile_text = f"""
+ID: {user_id}
+
+Ваш текущий тариф: {user_data['subscription_plan'].capitalize()}
+"""
+        if user_data['subscription_plan'] != 'free' and remaining_days is not None:
+            profile_text += f"Подписка активна еще {remaining_days} дней\n"
+        profile_text += f"""
+Веб-поиск: {web_search_status}
+
+Оставшаяся квота:
+GPT-4o: {user_data['daily_tokens']} символов
+
+🏷 Детали расходов:
+💰 Общая сумма: ${user_data['total_spent']:.4f}
+
+📝 Входные токены: {user_data['input_tokens']}
+📝 Выходные токены: {user_data['output_tokens']}
+👥 Реферальная программа:
+Количество приглашенных пользователей: {invited_users}
+{referral_text}
+{'👤 Вы были приглашены пользователем с ID: ' + str(user_data['referrer_id']) if user_data['referrer_id'] else 'Вы не были приглашены никем.'}
+Чтобы пригласить пользователя, отправьте ему ссылку: {generate_referral_link(user_id)}
+"""
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=profile_text,
+            reply_markup=create_profile_menu()
+        )
     bot.answer_callback_query(call.id)
 
 def check_auto_renewal():
@@ -605,7 +669,7 @@ def clear_chat_history(message):
     cur.close()
     conn.close()
     set_user_assistant(message.from_user.id, 'universal_expert')
-    bot.reply_to(message, "История чата очищена! Можете начать новый диалог с универсальным экспертом.")
+    bot.reply_to(message, "История чата очищена! Можете начать новый диалог с универсальным экспертом.", reply_markup=create_main_menu())
 
 def create_language_menu():
     keyboard = types.InlineKeyboardMarkup(row_width=3)
@@ -626,6 +690,9 @@ def create_language_menu():
             text=f"{emoji} {lang_name}",
             callback_data=f"lang_{lang_code}"
         ))
+    keyboard.add(
+        types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
+    )
     return keyboard
 
 @bot.message_handler(commands=['language'])
@@ -649,13 +716,19 @@ def language_callback_handler(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text=f"Выбран язык: {lang_code.upper()}"
+            text=f"Выбран язык: {lang_code.upper()}",
+            reply_markup=types.InlineKeyboardMarkup().add(
+                types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
+            )
         )
     else:
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="Ошибка: пользователь не найден."
+            text="Ошибка: пользователь не найден.",
+            reply_markup=types.InlineKeyboardMarkup().add(
+                types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
+            )
         )
     bot.answer_callback_query(call.id)
 
@@ -665,7 +738,7 @@ def search_handler(message):
     user_id = message.from_user.id
     user_data = load_user_data(user_id)
     if not user_data:
-        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.")
+        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.", reply_markup=create_main_menu())
         return
     if user_data['subscription_plan'] == 'free':
         bot.reply_to(
@@ -680,13 +753,13 @@ def search_handler(message):
     save_user_data(user_data)
     log_command(user_id, f"search_{'on' if new_state else 'off'}")
     status_text = "включён" if new_state else "выключен"
-    bot.reply_to(message, f"Веб-поиск {status_text}.")
+    bot.reply_to(message, f"Веб-поиск {status_text}.", reply_markup=create_main_menu())
 
 @bot.message_handler(commands=['support'])
 @bot.message_handler(func=lambda message: message.text == "Поддержка")
 def support_handler(message):
     log_command(message.from_user.id, "support")
-    bot.reply_to(message, "Напишите сюда - https://t.me/mon_tti1")
+    bot.reply_to(message, "Напишите сюда - https://t.me/mon_tti1", reply_markup=create_main_menu())
 
 @bot.message_handler(commands=['cancel_subscription'])
 @bot.message_handler(func=lambda message: message.text == "Отмена подписки")
@@ -694,7 +767,7 @@ def cancel_subscription_handler(message):
     user_id = message.from_user.id
     user_data = load_user_data(user_id)
     if not user_data or user_data['subscription_plan'] == 'free':
-        bot.reply_to(message, "У вас нет активной подписки для отмены.")
+        bot.reply_to(message, "У вас нет активной подписки для отмены.", reply_markup=create_main_menu())
         return
     conn = connect_to_db()
     cur = conn.cursor()
@@ -709,7 +782,7 @@ def cancel_subscription_handler(message):
     conn.commit()
     cur.close()
     conn.close()
-    bot.reply_to(message, "Подписка отменена. Автопродление отключено.")
+    bot.reply_to(message, "Подписка отменена. Автопродление отключено.", reply_markup=create_main_menu())
 
 def check_and_update_tokens(user_id):
     conn = connect_to_db()
@@ -744,7 +817,8 @@ def check_and_update_tokens(user_id):
         try:
             bot.send_message(
                 user_id,
-                "Ваша подписка истекла. Вы переведены на бесплатный тариф. Веб-поиск отключён. Пожалуйста, выберите новый тариф: /pay"
+                "Ваша подписка истекла. Вы переведены на бесплатный тариф. Веб-поиск отключён. Пожалуйста, выберите новый тариф: /pay",
+                reply_markup=create_main_menu()
             )
         except telebot.apihelper.ApiTelegramException as e:
             if e.error_code == 403:
@@ -772,7 +846,7 @@ def show_profile(message):
     user_id = message.from_user.id
     user_data = load_user_data(user_id)
     if not user_data:
-        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.")
+        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.", reply_markup=create_main_menu())
         return
     subscription_end_date = user_data.get('subscription_end_date')
     remaining_days = None
@@ -842,7 +916,8 @@ def show_stats_admin(message):
         'show_pay_menu': 'Открытие меню подписки',
         'show_assistants': 'Ассистенты (из профиля)',
         'show_experts': 'Эксперты (из профиля)',
-        'show_support': 'Поддержка (из профиля)'
+        'show_support': 'Поддержка (из профиля)',
+        'back_to_profile': 'Назад к профилю'
     }
     stats_text = "📊 *Статистика использования команд* 📊\n\n"
     stats_text += "📅 *За неделю:*\n"
@@ -870,7 +945,7 @@ def show_stats_admin(message):
 @bot.message_handler(func=lambda message: message.text == "Отменить")
 def cancel_subscription(message):
     log_command(message.from_user.id, "Отменить")
-    bot.send_message(message.chat.id, "Вы отменили выбор тарифного плана.", reply_markup=types.ReplyKeyboardRemove())
+    bot.send_message(message.chat.id, "Вы отменили выбор тарифного плана.", reply_markup=create_main_menu())
 
 @bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
@@ -883,7 +958,7 @@ def send_welcome(message):
         if referrer_id:
             bot.reply_to(message, "Вы уже зарегистрированы. Нельзя использовать реферальную ссылку.")
         else:
-            bot.send_message(message.chat.id, "Добро пожаловать обратно!")
+            bot.send_message(message.chat.id, "Добро пожаловать обратно!", reply_markup=create_main_menu())
     else:
         if referrer_id:
             try:
@@ -896,7 +971,7 @@ def send_welcome(message):
             except ValueError:
                 print("Invalid referrer ID format")
         user_data = create_default_user(user_id, referrer_id)
-        bot.send_message(message.chat.id, "Вы успешно зарегистрированы!")
+        bot.send_message(message.chat.id, "Вы успешно зарегистрированы!", reply_markup=create_main_menu())
     set_user_assistant(user_id, 'universal_expert')
     if not check_user_subscription(user_id):
         bot.send_message(
@@ -921,7 +996,7 @@ def send_referral_link(message):
     log_command(message.from_user.id, "referral")
     user_id = message.from_user.id
     referral_link = generate_referral_link(user_id)
-    bot.reply_to(message, f"Ваша реферальная ссылка: {referral_link}")
+    bot.reply_to(message, f"Ваша реферальная ссылка: {referral_link}", reply_markup=create_main_menu())
 
 def typing(chat_id):
     while True:
@@ -936,9 +1011,9 @@ def send_broadcast(message_content, photo=None):
     for user in users:
         try:
             if photo:
-                bot.send_photo(user[0], photo, caption=message_content)
+                bot.send_photo(user[0], photo, caption=message_content, reply_markup=create_main_menu())
             else:
-                bot.send_message(user[0], message_content)
+                bot.send_message(user[0], message_content, reply_markup=create_main_menu())
         except telebot.apihelper.ApiTelegramException as e:
             if e.error_code == 403:
                 print(f"Пользователь {user[0]} заблокировал бота.")
@@ -1011,15 +1086,15 @@ def echo_message(message):
     try:
         text = message.text
         ai_response = process_text_message(text, message.chat.id)
-        bot.reply_to(message, ai_response)
+        bot.reply_to(message, ai_response, reply_markup=create_main_menu())
     except Exception as e:
-        bot.reply_to(message, f"Произошла ошибка, попробуйте позже! {e}")
+        bot.reply_to(message, f"Произошла ошибка, попробуйте позже! {e}", reply_markup=create_main_menu())
 
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
     user_data = load_user_data(message.from_user.id)
     if user_data['subscription_plan'] == 'free':
-        bot.reply_to(message, "Для чтения документов требуется подписка Plus. Выберите тариф: /pay")
+        bot.reply_to(message, "Для чтения документов требуется подписка Plus. Выберите тариф: /pay", reply_markup=create_main_menu())
         return
     file_info = bot.get_file(message.document.file_id)
     downloaded_file = bot.download_file(file_info.file_path)
@@ -1027,19 +1102,19 @@ def handle_document(message):
     try:
         if file_extension == 'txt':
             content = downloaded_file.decode('utf-8')
-            bot.reply_to(message, process_text_message(content, message.chat.id))
+            bot.reply_to(message, process_text_message(content, message.chat.id), reply_markup=create_main_menu())
         elif file_extension == 'pdf':
             with io.BytesIO(downloaded_file) as pdf_file:
                 content = read_pdf(pdf_file)
-                bot.reply_to(message, process_text_message(content, message.chat.id))
+                bot.reply_to(message, process_text_message(content, message.chat.id), reply_markup=create_main_menu())
         elif file_extension == 'docx':
             with io.BytesIO(downloaded_file) as docx_file:
                 content = read_docx(docx_file)
-                bot.reply_to(message, process_text_message(content, message.chat.id))
+                bot.reply_to(message, process_text_message(content, message.chat.id), reply_markup=create_main_menu())
         else:
-            bot.reply_to(message, "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx.")
+            bot.reply_to(message, "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx.", reply_markup=create_main_menu())
     except Exception as e:
-        bot.reply_to(message, f"Ошибка при чтении файла: {e}")
+        bot.reply_to(message, f"Ошибка при чтении файла: {e}", reply_markup=create_main_menu())
 
 def read_pdf(file):
     content = []
@@ -1125,7 +1200,7 @@ from pydub import AudioSegment
 def voice(message):
     user_data = load_user_data(message.from_user.id)
     if user_data['subscription_plan'] == 'free':
-        bot.reply_to(message, "Для обработки голосовых сообщений требуется подписка Plus. Выберите тариф: /pay")
+        bot.reply_to(message, "Для обработки голосовых сообщений требуется подписка Plus. Выберите тариф: /pay", reply_markup=create_main_menu())
         return
     try:
         file_info = bot.get_file(message.voice.file_id)
@@ -1143,16 +1218,16 @@ def voice(message):
                 )
         recognized_text = response['text'].strip()
         if len(recognized_text) > 1000000:
-            bot.reply_to(message, "Текст слишком длинный, сократите его.")
+            bot.reply_to(message, "Текст слишком длинный, сократите его.", reply_markup=create_main_menu())
             return
         if not recognized_text:
-            bot.reply_to(message, "Текст неразборчив. Попробуйте снова.")
+            bot.reply_to(message, "Текст неразборчив. Попробуйте снова.", reply_markup=create_main_menu())
             return
         ai_response = process_text_message(recognized_text, message.chat.id)
-        bot.reply_to(message, ai_response)
+        bot.reply_to(message, ai_response, reply_markup=create_main_menu())
     except Exception as e:
         logging.error(f"Ошибка обработки голосового сообщения: {e}")
-        bot.reply_to(message, "Произошла ошибка, попробуйте позже!")
+        bot.reply_to(message, "Произошла ошибка, попробуйте позже!", reply_markup=create_main_menu())
 
 def handler(event, context):
     message = json.loads(event["body"])
