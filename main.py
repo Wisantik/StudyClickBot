@@ -143,20 +143,8 @@ def create_price_menu() -> types.InlineKeyboardMarkup:
             ],
             [
                 types.InlineKeyboardButton(
-                    text="Недельная - 149₽",
-                    callback_data="buy_week"
-                )
-            ],
-            [
-                types.InlineKeyboardButton(
                     text="Месячная - 399₽",
                     callback_data="buy_month"
-                )
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="Годовая - 2499₽",
-                    callback_data="buy_year"
                 )
             ],
         ]
@@ -169,6 +157,21 @@ def create_subscription_required_keyboard():
         text="Купить подписку",
         callback_data="show_pay_menu"
     ))
+    return keyboard
+
+def create_profile_menu() -> types.InlineKeyboardMarkup:
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        types.InlineKeyboardButton(text="Ассистенты", callback_data="show_assistants"),
+        types.InlineKeyboardButton(text="Эксперты", callback_data="show_experts")
+    )
+    keyboard.add(
+        types.InlineKeyboardButton(text="Подписка", callback_data="show_pay_menu"),
+        types.InlineKeyboardButton(text="Отписка", callback_data="cancel_subscription")
+    )
+    keyboard.add(
+        types.InlineKeyboardButton(text="Поддержка", callback_data="show_support")
+    )
     return keyboard
 
 load_assistants_config()
@@ -236,9 +239,7 @@ def show_pay_menu_callback(call):
 
 Варианты подписки:
 - Пробная: 3 дня за 99₽
-- Недельная: 149₽
 - Месячная: 399₽
-- Годовая: 2499₽
 
 По вопросам: https://t.me/mon_tti1""",
         reply_markup=create_price_menu()
@@ -417,15 +418,13 @@ def get_pay(message):
 
 Варианты подписки:
 - Пробная: 3 дня за 99₽
-- Недельная: 149₽
 - Месячная: 399₽
-- Годовая: 2499₽
 
 По вопросам: https://t.me/mon_tti1""",
         reply_markup=create_price_menu()
     )
 
-@bot.callback_query_handler(func=lambda callback: callback.data in ["buy_trial", "buy_week", "buy_month", "buy_year"])
+@bot.callback_query_handler(func=lambda callback: callback.data in ["buy_trial", "buy_month"])
 def buy_subscription(callback):
     user_id = callback.from_user.id
     user_data = load_user_data(user_id)
@@ -440,18 +439,10 @@ def buy_subscription(callback):
             price = 99
             period = "trial"
             duration_days = 3
-        elif callback.data == "buy_week":
-            price = 149
-            period = "week"
-            duration_days = 7
         elif callback.data == "buy_month":
             price = 399
             period = "month"
             duration_days = 30
-        elif callback.data == "buy_year":
-            price = 2499
-            period = "year"
-            duration_days = 365
         amount_in_kopecks = price * 100
         print(f"[INFO] Отправка счёта для user_id={user_id}, period={period}, amount={amount_in_kopecks} копеек")
         bot.send_invoice(
@@ -486,12 +477,11 @@ def successful_pay(message):
         if period == "trial":
             duration_days = 3
             cur.execute("UPDATE users SET trial_used = TRUE WHERE user_id = %s", (user_id,))
-        elif period == "week":
-            duration_days = 7
         elif period == "month":
             duration_days = 30
-        elif period == "year":
-            duration_days = 365
+        else:
+            bot.send_message(message.chat.id, "Неизвестный тип подписки.")
+            return
         start_date = datetime.datetime.now().date()
         end_date = start_date + datetime.timedelta(days=duration_days)
         cur.execute("""
@@ -514,6 +504,59 @@ def successful_pay(message):
         )
     else:
         bot.send_message(message.chat.id, "Неизвестный тип подписки.")
+
+@bot.callback_query_handler(func=lambda call: call.data in ["show_assistants", "show_experts", "show_support", "cancel_subscription"])
+def profile_menu_callback_handler(call):
+    log_command(call.from_user.id, call.data)
+    if call.data == "show_assistants":
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Выберите ассистента:",
+            reply_markup=create_assistants_menu()
+        )
+    elif call.data == "show_experts":
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Выберите эксперта:",
+            reply_markup=create_experts_menu()
+        )
+    elif call.data == "show_support":
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="Напишите в поддержку: https://t.me/mon_tti1"
+        )
+    elif call.data == "cancel_subscription":
+        user_id = call.from_user.id
+        user_data = load_user_data(user_id)
+        if not user_data or user_data['subscription_plan'] == 'free':
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="У вас нет активной подписки для отмены."
+            )
+        else:
+            conn = connect_to_db()
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE users 
+                SET auto_renewal = FALSE,
+                    subscription_plan = 'free',
+                    subscription_end_date = NULL,
+                    web_search_enabled = FALSE
+                WHERE user_id = %s
+            """, (user_id,))
+            conn.commit()
+            cur.close()
+            conn.close()
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Подписка отменена. Автопродление отключено."
+            )
+    bot.answer_callback_query(call.id)
 
 def check_auto_renewal():
     conn = connect_to_db()
@@ -768,9 +811,8 @@ GPT-4o: {user_data['daily_tokens']} символов
 {referral_text}
 {'👤 Вы были приглашены пользователем с ID: ' + str(user_data['referrer_id']) if user_data['referrer_id'] else 'Вы не были приглашены никем.'}
 Чтобы пригласить пользователя, отправьте ему ссылку: {generate_referral_link(user_id)}
-Чтобы добавить подписку нажмите /pay
 """
-    bot.send_message(message.chat.id, profile_text)
+    bot.send_message(message.chat.id, profile_text, reply_markup=create_profile_menu())
 
 ADMIN_IDS = [998107476, 741831495]
 
@@ -797,7 +839,10 @@ def show_stats_admin(message):
         'support': 'Поддержка',
         'statsadmin12': 'Статистика (админ)',
         'check_subscription': '✅ Нажатие "Я подписался"',
-        'show_pay_menu': 'Открытие меню подписки'
+        'show_pay_menu': 'Открытие меню подписки',
+        'show_assistants': 'Ассистенты (из профиля)',
+        'show_experts': 'Эксперты (из профиля)',
+        'show_support': 'Поддержка (из профиля)'
     }
     stats_text = "📊 *Статистика использования команд* 📊\n\n"
     stats_text += "📅 *За неделю:*\n"
