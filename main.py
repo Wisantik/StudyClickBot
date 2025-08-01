@@ -286,20 +286,19 @@ def show_pay_menu_callback(call):
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
-        text="""Подписка Plus предоставляет безлимитный доступ к:
-- GPT-4.0
-- Чтение PDF файлов
-- Чтение ссылок
-- Интернет-поиск
-- Обработка голосовых запросов
+        text="""Подписка Plus
 
-⚠️ Пробная подписка (3 дня за 99₽) включает автопродление на месяц за 399₽. Отменить можно в любое время после оплаты.
+Доступ к GPT 40 - безлимит
+Чтение PDF файлов - безлимит
+Чтение ссылок - безлимит
+Интернет поиск - безлимит
+Обработка запросов голосовыми
 
-Варианты подписки:
-- Пробная: 3 дня за 99₽
-- Месячная: 399₽
-
-По вопросам: https://t.me/mon_tti1""",
+⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
+Покупая, вы соглашаетесь с [офертой](https://teletype.in/@st0ckholders_s/1X-lpJhx5rc)
+Отменить можно в любое время после оплаты
+По всем вопросам пишите сюда - https://t.me/mon_tti1""",
+        parse_mode="Markdown",
         reply_markup=create_price_menu()
     )
 
@@ -371,25 +370,30 @@ def expert_callback_handler(call):
             message_text += f"*Контактная информация:*\n{contact_info}"
         if photo_url:
             try:
-                bot.send_photo(
-                    call.message.chat.id,
-                    photo=photo_url,
-                    caption=message_text,
-                    parse_mode="Markdown",
+                bot.edit_message_media(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    media=types.InputMediaPhoto(
+                        media=photo_url,
+                        caption=message_text,
+                        parse_mode="Markdown"
+                    ),
                     reply_markup=keyboard
                 )
             except Exception as e:
-                print(f"Ошибка отправки фото эксперта: {e}")
-                bot.send_message(
-                    call.message.chat.id,
-                    message_text,
+                print(f"Ошибка редактирования сообщения с фото эксперта: {e}")
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=message_text,
                     parse_mode="Markdown",
                     reply_markup=keyboard
                 )
         else:
-            bot.send_message(
-                call.message.chat.id,
-                message_text,
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text=message_text,
                 parse_mode="Markdown",
                 reply_markup=keyboard
             )
@@ -425,20 +429,19 @@ def get_pay(message):
     log_command(message.from_user.id, "pay")
     bot.send_message(
         message.chat.id,
-        """Подписка Plus предоставляет безлимитный доступ к:
-- GPT-4.0
-- Чтение PDF файлов
-- Чтение ссылок
-- Интернет-поиск
-- Обработка голосовых запросов
+        """Подписка Plus
 
-⚠️ Пробная подписка (3 дня за 99₽) включает автопродление на месяц за 399₽. Отменить можно в любое время после оплаты.
+Доступ к GPT 40 - безлимит
+Чтение PDF файлов - безлимит
+Чтение ссылок - безлимит
+Интернет поиск - безлимит
+Обработка запросов голосовыми
 
-Варианты подписки:
-- Пробная: 3 дня за 99₽
-- Месячная: 399₽
-
-По вопросам: https://t.me/mon_tti1""",
+⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
+Покупая, вы соглашаетесь с [офертой](https://teletype.in/@st0ckholders_s/1X-lpJhx5rc)
+Отменить можно в любое время после оплаты
+По всем вопросам пишите сюда - https://t.me/mon_tti1""",
+        parse_mode="Markdown",
         reply_markup=create_price_menu()
     )
 
