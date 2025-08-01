@@ -640,37 +640,45 @@ GPT-4o: {user_data['daily_tokens']} символов
 Чтобы пригласить пользователя, отправьте ему ссылку: {generate_referral_link(user_id)}
 """
         try:
-            # Проверяем, является ли сообщение медиа-сообщением
+            # Сначала пробуем редактировать как текстовое сообщение
             try:
-                message = bot.get_chat_message(call.message.chat.id, call.message.message_id)
-                if message.content_type == 'photo':
-                    bot.edit_message_media(
-                        chat_id=call.message.chat.id,
-                        message_id=call.message.message_id,
-                        media=types.InputMediaPhoto(
-                            media="https://via.placeholder.com/150",  # Заглушка, так как профиль текстовый
-                            caption=profile_text
-                        ),
-                        reply_markup=create_profile_menu()
-                    )
-                else:
-                    bot.edit_message_text(
-                        chat_id=call.message.chat.id,
-                        message_id=call.message.message_id,
-                        text=profile_text,
-                        reply_markup=create_profile_menu()
-                    )
-            except telebot.apihelper.ApiTelegramException as e:
-                print(f"[ERROR] Ошибка проверки типа сообщения: {e}")
-                # Если не удалось проверить тип, пробуем редактировать как текст
                 bot.edit_message_text(
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
                     text=profile_text,
                     reply_markup=create_profile_menu()
                 )
+            except telebot.apihelper.ApiTelegramException as e:
+                if "there is no text in the message to edit" in str(e):
+                    # Если сообщение содержит медиа, пробуем редактировать как медиа
+                    try:
+                        bot.edit_message_media(
+                            chat_id=call.message.chat.id,
+                            message_id=call.message.message_id,
+                            media=types.InputMediaPhoto(
+                                media="https://via.placeholder.com/150",
+                                caption=profile_text
+                            ),
+                            reply_markup=create_profile_menu()
+                        )
+                    except telebot.apihelper.ApiTelegramException as e:
+                        print(f"[ERROR] Ошибка редактирования медиа-сообщения: {e}")
+                        # Если редактирование медиа тоже не удалось, отправляем новое сообщение
+                        bot.send_message(
+                            chat_id=call.message.chat.id,
+                            text=profile_text,
+                            reply_markup=create_profile_menu()
+                        )
+                else:
+                    print(f"[ERROR] Ошибка редактирования текстового сообщения: {e}")
+                    # Если другая ошибка, отправляем новое сообщение
+                    bot.send_message(
+                        chat_id=call.message.chat.id,
+                        text=profile_text,
+                        reply_markup=create_profile_menu()
+                    )
         except telebot.apihelper.ApiTelegramException as e:
-            print(f"[ERROR] Ошибка редактирования сообщения в back_to_profile: {e}")
+            print(f"[ERROR] Общая ошибка редактирования в back_to_profile: {e}")
             # Если редактирование не удалось, отправляем новое сообщение
             bot.send_message(
                 chat_id=call.message.chat.id,
