@@ -125,7 +125,6 @@ def create_main_menu() -> types.ReplyKeyboardMarkup:
         types.KeyboardButton("🗑 Очистить историю чата"),
         types.KeyboardButton("📞 Поддержка"),
         types.KeyboardButton("🔗 Реферальная ссылка"),
-        types.KeyboardButton("🌍 Универсальный эксперт")
     )
     return keyboard
 
@@ -141,7 +140,7 @@ def setup_bot_commands():
         BotCommand("new", "🗑 Очистить историю чата"),
         BotCommand("support", "📞 Поддержка"),
         BotCommand("referral", "🔗 Реферальная ссылка"),
-        BotCommand("universal", "🌍 Универсальный эксперт"),
+        BotCommand("universal", "🌍 Универсальный ассистент"),
     ]
     try:
         bot.set_my_commands(commands)
@@ -404,11 +403,11 @@ def expert_callback_handler(call):
         bot.answer_callback_query(call.id, "Ошибка при выборе эксперта")
 
 @bot.message_handler(commands=['universal'])
-@bot.message_handler(func=lambda message: message.text == "🌍 Универсальный эксперт")
+@bot.message_handler(func=lambda message: message.text == "🌍 Универсальный ассистент")
 def universal_assistant_handler(message):
     log_command(message.from_user.id, "universal")
     set_user_assistant(message.from_user.id, 'universal_expert')
-    bot.reply_to(message, "Универсальный эксперт выбран!", reply_markup=create_main_menu())
+    bot.reply_to(message, "Универсальный ассистент выбран!", reply_markup=create_main_menu())
 
 @bot.message_handler(func=lambda message: message.text == "Назад")
 def back_button_handler(message):
