@@ -14,7 +14,12 @@ import datetime
 import requests
 from database import *
 import schedule
+from yookassa import Configuration, Payment
+import uuid
+import tempfile
+from pydub import AudioSegment
 
+# Настройка логирования и окружения
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 connect_to_db()
 
@@ -26,8 +31,11 @@ telebot.logger.setLevel(logging.INFO)
 pay_token = os.getenv('PAY_TOKEN')
 bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
 openai.api_key = os.getenv('OPENAI_API_KEY')
-
 BING_API_KEY = os.getenv('BING_API_KEY', "yLtkhrR3H6UjzBm3naReSJQ8G81ct409iLrcmQTeIAH338TwBZNEvSLQJ8og")
+
+# Настройка ЮKassa
+Configuration.account_id = "1001094"  # Ваш ShopID
+Configuration.secret_key = os.getenv('YOOKASSA_SECRET_KEY')
 
 class ExceptionHandler:
     def handle(self, exception):
@@ -140,7 +148,6 @@ def setup_bot_commands():
         BotCommand("new", "🗑 Очистить историю чата"),
         BotCommand("support", "📞 Поддержка"),
         BotCommand("referral", "🔗 Реферальная ссылка"),
-        BotCommand("universal", "🌍 Универсальный ассистент"),
     ]
     try:
         bot.set_my_commands(commands)
@@ -148,29 +155,27 @@ def setup_bot_commands():
     except Exception as e:
         print(f"Ошибка при настройке команд: {e}")
 
-def create_price_menu() -> types.InlineKeyboardMarkup:
-    markup = types.InlineKeyboardMarkup(
-        keyboard=[
-            [
-                types.InlineKeyboardButton(
-                    text="Пробная (3 дня за 99₽)",
-                    callback_data="buy_trial"
-                )
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="Месячная - 399₽",
-                    callback_data="buy_month"
-                )
-            ],
-            [
-                types.InlineKeyboardButton(
-                    text="⬅️ Назад", callback_data="back_to_profile"
-                )
-            ]
-        ]
-    )
-    return markup
+def create_price_menu(user_data) -> types.InlineKeyboardMarkup:
+    buttons = []
+    if not user_data.get('trial_used'):
+        buttons.append([
+            types.InlineKeyboardButton(
+                text="Пробная (3 дня за 99₽)",
+                callback_data="buy_trial"
+            )
+        ])
+    buttons.append([
+        types.InlineKeyboardButton(
+            text="Месячная - 399₽",
+            callback_data="buy_month"
+        )
+    ])
+    buttons.append([
+        types.InlineKeyboardButton(
+            text="⬅️ Назад", callback_data="back_to_profile"
+        )
+    ])
+    return types.InlineKeyboardMarkup(keyboard=buttons)
 
 def create_subscription_required_keyboard():
     keyboard = types.InlineKeyboardMarkup()
@@ -294,12 +299,14 @@ def show_pay_menu_callback(call):
 Покупая, вы соглашаетесь с <a href="https://teletype.in/@st0ckholders_s/1X-lpJhx5rc">офертой</a>
 Отменить можно в любое время после оплаты
 По всем вопросам пишите сюда - <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
+    
+    user_data = load_user_data(call.from_user.id)
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         text=subscription_text,
         parse_mode="HTML",
-        reply_markup=create_price_menu()
+        reply_markup=create_price_menu(user_data)
     )
 
 @bot.message_handler(commands=['assistants'])
@@ -439,11 +446,13 @@ def get_pay(message):
 Покупая, вы соглашаетесь с <a href="https://teletype.in/@st0ckholders_s/1X-lpJhx5rc">офертой</a>
 Отменить можно в любое время после оплаты
 По всем вопросам пишите сюда - <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
+    
+    user_data = load_user_data(message.from_user.id)
     bot.send_message(
         message.chat.id,
         subscription_text,
         parse_mode="HTML",
-        reply_markup=create_price_menu()
+        reply_markup=create_price_menu(user_data)
     )
 
 @bot.callback_query_handler(func=lambda callback: callback.data in ["buy_trial", "buy_month"])
@@ -452,82 +461,170 @@ def buy_subscription(callback):
     user_data = load_user_data(user_id)
     if not user_data:
         bot.send_message(callback.message.chat.id, "Ошибка: пользователь не найден.", reply_markup=create_main_menu())
+        bot.answer_callback_query(callback.id)
         return
     try:
         if callback.data == "buy_trial":
             if user_data['trial_used']:
                 bot.send_message(callback.message.chat.id, "Вы уже использовали пробную подписку.", reply_markup=create_main_menu())
+                bot.answer_callback_query(callback.id)
                 return
-            price = 99
-            period = "trial"
-            duration_days = 3
+            price = "99.00"
+# В buy_subscription (для buy_trial):
+            payment = Payment.create({
+                "amount": {"value": price, "currency": "RUB"},
+                "capture": True,
+                "confirmation": {
+                    "type": "redirect",
+                    "return_url": "https://t.me/fiinny_bot"
+                },
+                "save_payment_method": True,
+                "description": f"Пробная подписка Plus для {user_id}",
+                "receipt": {
+                    "items": [{
+                        "description": "Пробная подписка Plus (3 дня)",
+                        "quantity": 1,
+                        "amount": {"value": price, "currency": "RUB"},
+                        "vat_code": 1
+                    }]
+                }
+            }, idempotence_key=str(uuid.uuid4()))
+            save_payment_id_for_user(user_id, payment.id)
+            bot.send_message(
+                callback.message.chat.id,
+                f"Оплатите по ссылке: {payment.confirmation.confirmation_url}",
+                reply_markup=types.InlineKeyboardMarkup([
+                    [types.InlineKeyboardButton("Отменить подписку", callback_data="cancel_subscription")]
+                ])
+            )
         elif callback.data == "buy_month":
-            price = 399
-            period = "month"
-            duration_days = 30
-        amount_in_kopecks = price * 100
-        print(f"[INFO] Отправка счёта для user_id={user_id}, period={period}, amount={amount_in_kopecks} копеек")
-        bot.send_invoice(
-            callback.message.chat.id,
-            title=f"Подписка Plus ({period})",
-            description=f"Подписка на {duration_days} дней",
-            invoice_payload=f"plus_{period}",
-            provider_token=pay_token,
-            currency="RUB",
-            start_parameter="test_bot",
-            prices=[types.LabeledPrice(label=f"Подписка Plus ({period})", amount=amount_in_kopecks)]
-        )
-    except telebot.apihelper.ApiTelegramException as e:
-        print(f"[ERROR] Ошибка отправки счёта: {e}")
+            bot.send_invoice(
+                chat_id=callback.message.chat.id,
+                title="Подписка Plus (месяц)",
+                description="Месячная подписка Plus: безлимитный доступ к GPT-4o, веб-поиск, обработка PDF и голосовых сообщений.",
+                invoice_payload=f"month_subscription_{user_id}",
+                provider_token=pay_token,
+                currency="RUB",
+                prices=[types.LabeledPrice(label="Подписка Plus (месяц)", amount=39900)],  # 399₽
+                start_parameter=f"month_{user_id}",
+            )
+        bot.answer_callback_query(callback.id)
+    except Exception as e:
+        print(f"[ERROR] Ошибка при создании платежа: {e}")
         bot.send_message(
             callback.message.chat.id,
-            "Произошла ошибка при создании счёта. Пожалуйста, попробуйте позже или обратитесь в поддержку: https://t.me/mon_tti1",
+            f"Произошла ошибка при создании платежа. Пожалуйста, попробуйте позже или обратитесь в поддержку: https://t.me/mon_tti1",
             reply_markup=create_main_menu()
         )
+        bot.answer_callback_query(callback.id)
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
-def process_pre_checkout_query(pre_checkout_query):
+def pre_checkout_query_handler(pre_checkout_query):
     bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
 @bot.message_handler(content_types=['successful_payment'])
-def successful_pay(message):
-    payload = message.successful_payment.invoice_payload
+def successful_payment_handler(message):
     user_id = message.from_user.id
-    conn = connect_to_db()
-    cur = conn.cursor()
-    if payload.startswith("plus_"):
-        period = payload.split("_")[1]
-        if period == "trial":
-            duration_days = 3
-            cur.execute("UPDATE users SET trial_used = TRUE WHERE user_id = %s", (user_id,))
-        elif period == "month":
-            duration_days = 30
-        else:
-            bot.send_message(message.chat.id, "Неизвестный тип подписки.", reply_markup=create_main_menu())
-            return
-        start_date = datetime.datetime.now().date()
-        end_date = start_date + datetime.timedelta(days=duration_days)
-        cur.execute("""
-            UPDATE users 
-            SET subscription_plan = %s,
-                subscription_start_date = %s,
-                subscription_end_date = %s,
-                web_search_enabled = TRUE,
-                auto_renewal = %s
-            WHERE user_id = %s
-        """, (f"plus_{period}", start_date, end_date, period == "trial", user_id))
-        conn.commit()
-        cur.close()
-        conn.close()
+    payload = message.successful_payment.invoice_payload
+    if payload.startswith("month_subscription_"):
+        set_user_subscription(user_id, "plus_month")
         bot.send_message(
-            message.chat.id, 
-            f'Оплата прошла успешно!\nПодписка Plus ({period}) активирована до {end_date.strftime("%d.%m.%Y")}\n'
-            f'Веб-поиск: включён\n'
-            f'Автопродление: {"включено" if period == "trial" else "выключено"}',
+            message.chat.id,
+            "✅ Месячная подписка Plus активирована на 30 дней!",
             reply_markup=create_main_menu()
         )
     else:
-        bot.send_message(message.chat.id, "Неизвестный тип подписки.", reply_markup=create_main_menu())
+        bot.send_message(
+            message.chat.id,
+            "Ошибка: неизвестный тип платежа.",
+            reply_markup=create_main_menu()
+        )
+
+def check_pending_payments():
+    conn = connect_to_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT user_id, payment_id FROM payments WHERE status = 'pending'")
+            payments = cursor.fetchall()
+            for user_id, payment_id in payments:
+                try:
+                    payment = Payment.find_one(payment_id)
+                    if payment.status == "succeeded":
+                        save_payment_method_for_user(user_id, payment.payment_method.id)
+                        set_user_subscription(user_id, "plus_trial")
+                        bot.send_message(
+                            user_id,
+                            "✅ Пробная подписка Plus активирована на 3 дня!",
+                            reply_markup=create_main_menu()
+                        )
+                        cursor.execute("UPDATE payments SET status = 'succeeded' WHERE payment_id = %s", (payment_id,))
+                    elif payment.status in ["canceled", "failed"]:
+                        cursor.execute("UPDATE payments SET status = %s WHERE payment_id = %s", (payment.status, payment_id))
+                except Exception as e:
+                    print(f"[ERROR] Ошибка проверки платежа {payment_id} для user_id={user_id}: {e}")
+            conn.commit()
+    except Exception as e:
+        print(f"[ERROR] Ошибка при проверке платежей: {e}")
+    finally:
+        conn.close()
+
+def check_auto_renewal():
+    conn = connect_to_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT user_id FROM users 
+                WHERE subscription_plan = 'plus_trial' 
+                AND subscription_end_date <= %s
+                AND auto_renewal = TRUE
+            """, (datetime.datetime.now().date(),))
+            users = cursor.fetchall()
+            for user in users:
+                user_id = user[0]
+                method_id = get_payment_method_for_user(user_id)
+                if method_id:
+                    try:
+                        payment = Payment.create({
+                            "amount": {"value": "399.00", "currency": "RUB"},
+                            "capture": True,
+                            "payment_method_id": method_id,
+                            "description": f"Автопродление подписки для {user_id}",
+                            "receipt": {
+                                "items": [{
+                                    "description": "Подписка Plus (месяц)",
+                                    "quantity": 1,
+                                    "amount": {"value": "399.00", "currency": "RUB"},
+                                    "vat_code": 1
+                                }]
+                            }
+                        }, idempotence_key=str(uuid.uuid4()))
+                        if payment.status == "succeeded":
+                            set_user_subscription(user_id, "plus_month")
+                            bot.send_message(
+                                user_id,
+                                "✅ Ваша подписка продлена на месяц за 399₽!",
+                                reply_markup=create_main_menu()
+                            )
+                        else:
+                            bot.send_message(
+                                user_id,
+                                "❌ Не удалось продлить подписку. Пожалуйста, оплатите вручную: /pay",
+                                reply_markup=create_main_menu()
+                            )
+                    except Exception as e:
+                        print(f"[ERROR] Ошибка автопродления для user_id={user_id}: {e}")
+                        bot.send_message(
+                            user_id,
+                            f"❌ Ошибка при автопродлении: {e}. Пожалуйста, оплатите вручную: /pay",
+                            reply_markup=create_main_menu()
+                        )
+    except Exception as e:
+        print(f"[ERROR] Ошибка при проверке автопродления: {e}")
+    finally:
+        conn.close()
+
+schedule.every(5).minutes.do(check_pending_payments)
+schedule.every().day.at("00:00").do(check_auto_renewal)
 
 @bot.callback_query_handler(func=lambda call: call.data in ["show_assistants", "show_experts", "show_support", "cancel_subscription", "back_to_profile"])
 def profile_menu_callback_handler(call):
@@ -647,48 +744,12 @@ GPT-4o: {user_data['daily_tokens']} символов
             )
         except telebot.apihelper.ApiTelegramException as e:
             print(f"[ERROR] Ошибка редактирования сообщения в back_to_profile: {e}")
-            # Вместо попытки редактирования медиа отправляем новое текстовое сообщение
             bot.send_message(
                 chat_id=call.message.chat.id,
                 text=profile_text,
                 reply_markup=create_profile_menu()
             )
     bot.answer_callback_query(call.id)
-
-def check_auto_renewal():
-    conn = connect_to_db()
-    cur = conn.cursor()
-    today = datetime.datetime.now().date()
-    cur.execute("""
-        SELECT user_id FROM users 
-        WHERE subscription_plan = 'plus_trial' 
-        AND subscription_end_date <= %s
-        AND auto_renewal = TRUE
-    """, (today,))
-    users = cur.fetchall()
-    for user in users:
-        user_id = user[0]
-        # Здесь должна быть интеграция с YooKassa для автоматической оплаты 399 рублей
-        # Примерный код (нужна реализация через API YooKassa):
-        # payment_result = make_payment(user_id, amount=399)
-        # if payment_result:
-        #     start_date = today
-        #     end_date = start_date + datetime.timedelta(days=30)
-        #     cur.execute("""
-        #         UPDATE users 
-        #         SET subscription_plan = 'plus_month',
-        #             subscription_start_date = %s,
-        #             subscription_end_date = %s
-        #         WHERE user_id = %s
-        #     """, (start_date, end_date, user_id))
-        #     bot.send_message(user_id, "Ваша пробная подписка продлена на месяц за 399₽.", reply_markup=create_main_menu())
-        # else:
-        #     bot.send_message(user_id, "Не удалось продлить подписку. Пожалуйста, обновите платёжные данные.", reply_markup=create_main_menu())
-    conn.commit()
-    cur.close()
-    conn.close()
-
-schedule.every().day.at("00:00").do(check_auto_renewal)
 
 @bot.message_handler(commands=['new'])
 @bot.message_handler(func=lambda message: message.text == "🗑 Очистить историю чата")
@@ -1228,9 +1289,6 @@ def process_text_message(text, chat_id) -> str:
     except Exception as e:
         return f"Произошла ошибка: {str(e)}"
 
-import tempfile
-from pydub import AudioSegment
-
 @bot.message_handler(content_types=["voice"])
 def voice(message):
     user_data = load_user_data(message.from_user.id)
@@ -1297,6 +1355,7 @@ def main():
     try:
         create_command_logs_table()
         check_and_create_columns(conn)
+        create_subscription_tables(conn)
         with conn.cursor() as cursor:
             cursor.execute("SELECT COUNT(*) FROM assistants;")
             count = cursor.fetchone()[0]
