@@ -470,7 +470,6 @@ def buy_subscription(callback):
                 bot.answer_callback_query(callback.id)
                 return
             price = "99.00"
-# В buy_subscription (для buy_trial):
             payment = Payment.create({
                 "amount": {"value": price, "currency": "RUB"},
                 "capture": True,
@@ -487,8 +486,9 @@ def buy_subscription(callback):
                         "amount": {"value": price, "currency": "RUB"},
                         "vat_code": 1
                     }]
-                }
-            }, idempotence_key=str(uuid.uuid4()))
+                },
+                "idempotency_key": str(uuid.uuid4())  # Ключ идемпотентности в параметрах
+            })
             save_payment_id_for_user(user_id, payment.id)
             bot.send_message(
                 callback.message.chat.id,
@@ -596,8 +596,9 @@ def check_auto_renewal():
                                     "amount": {"value": "399.00", "currency": "RUB"},
                                     "vat_code": 1
                                 }]
-                            }
-                        }, idempotence_key=str(uuid.uuid4()))
+                            },
+                            "idempotency_key": str(uuid.uuid4())  # Ключ идемпотентности в параметрах
+                        })
                         if payment.status == "succeeded":
                             set_user_subscription(user_id, "plus_month")
                             bot.send_message(
