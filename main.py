@@ -455,6 +455,8 @@ def get_pay(message):
         reply_markup=create_price_menu(user_data)
     )
 
+# ... (остальной код остаётся без изменений)
+
 @bot.callback_query_handler(func=lambda callback: callback.data in ["buy_trial", "buy_month"])
 def buy_subscription(callback):
     user_id = callback.from_user.id
@@ -480,6 +482,7 @@ def buy_subscription(callback):
                 "save_payment_method": True,
                 "description": f"Пробная подписка Plus для {user_id}",
                 "receipt": {
+                    "customer": {"email": "no-reply@yourdomain.com"},  # Фиктивный email
                     "items": [{
                         "description": "Пробная подписка Plus (3 дня)",
                         "quantity": 1,
@@ -487,7 +490,7 @@ def buy_subscription(callback):
                         "vat_code": 1
                     }]
                 },
-                "idempotency_key": str(uuid.uuid4())  # Ключ идемпотентности в параметрах
+                "idempotency_key": str(uuid.uuid4())
             })
             save_payment_id_for_user(user_id, payment.id)
             bot.send_message(
@@ -590,6 +593,7 @@ def check_auto_renewal():
                             "payment_method_id": method_id,
                             "description": f"Автопродление подписки для {user_id}",
                             "receipt": {
+                                "customer": {"email": "no-reply@yourdomain.com"},  # Фиктивный email
                                 "items": [{
                                     "description": "Подписка Plus (месяц)",
                                     "quantity": 1,
@@ -597,7 +601,7 @@ def check_auto_renewal():
                                     "vat_code": 1
                                 }]
                             },
-                            "idempotency_key": str(uuid.uuid4())  # Ключ идемпотентности в параметрах
+                            "idempotency_key": str(uuid.uuid4())
                         })
                         if payment.status == "succeeded":
                             set_user_subscription(user_id, "plus_month")
