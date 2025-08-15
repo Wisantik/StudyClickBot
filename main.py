@@ -1367,7 +1367,7 @@ def check_experts_in_database(connection):
         cursor.execute("SELECT expert_id, name, specialization FROM experts;")
 
 def main():
-    print("Bot started")
+    logger.info("Bot started")
     conn = None
     max_retries = 5
     for attempt in range(max_retries):
@@ -1380,31 +1380,38 @@ def main():
                 cursor.execute("SELECT COUNT(*) FROM assistants;")
                 count = cursor.fetchone()[0]
             if count == 0:
-                print("Таблица 'assistants' пуста. Вставляем данные.")
+                logger.info("Таблица 'assistants' пуста. Вставляем данные.")
                 insert_initial_data(conn)
-            print("Обновляем список экспертов...")
+            logger.info("Обновляем список экспертов...")
             insert_initial_experts(conn)
             check_experts_in_database(conn)
             assistants_config = load_assistants_config()
             setup_bot_commands()
-            break  # Выход из цикла при успешном подключении
+            break
         except Exception as e:
-            print(f"[ERROR] Ошибка при инициализации бота (попытка {attempt + 1}/{max_retries}): {e}")
+            logger.error(f"Ошибка при инициализации бота (попытка {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 time.sleep(5)
             else:
-                print("[FATAL] Не удалось инициализировать бота после нескольких попыток")
+                logger.error("Не удалось инициализировать бота после нескольких попыток")
                 return
         finally:
             if conn:
                 conn.close()
 
-    try:
-        bot.polling(non_stop=True)
-        while True:
+    # Запуск polling в цикле для устойчивости
+    while True:
+        try:
+            logger.info("Starting polling...")
+            bot.polling(non_stop=True, timeout=60)
+        except Exception as e:
+            logger.error(f"Ошибка в polling: {e}")
+            time.sleep(5)  # Пауза перед повторной попыткой
+        try:
             schedule.run_pending()
-            time.sleep(60)
-    except Exception as e:
-        print(f"[ERROR] Ошибка в главном цикле: {e}")
-        time.sleep(5)
-        main()  # Перезапуск при ошибке
+        except Exception as e:
+            logger.error(f"Ошибка в schedule.run_pending: {e}")
+        time.sleep(60)
+
+if __name__ == "__main__":
+    main()

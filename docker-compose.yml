@@ -25,7 +25,7 @@ services:
       - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf
     expose:
       - "5432"
-    restart: always
+    restart: unless-stopped
 
   telegram_bot:
     build:
@@ -39,7 +39,7 @@ services:
       - redis  
     volumes:
       - .:/app
-    restart: always
+    restart: unless-stopped
 
 volumes:
   postgres_data:
