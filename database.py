@@ -184,7 +184,6 @@ def check_assistants_in_database(connection):
 def set_user_assistant(user_id: int, assistant_key: str):
     print(f"[INFO] Устанавливаем ассистента для пользователя {user_id}: {assistant_key}")
     r.set(user_id, assistant_key)
-    print(f"[INFO] Ассистент для пользователя {user_id} успешно сохранен в Redis.")
     conn = connect_to_db()
     if conn is None:
         print("[ERROR] Не удалось подключиться к базе данных.")
@@ -197,7 +196,6 @@ def set_user_assistant(user_id: int, assistant_key: str):
                 WHERE user_id = %s
             """, (assistant_key, user_id))
             conn.commit()
-            print(f"[INFO] Ассистент для пользователя {user_id} успешно обновлен в базе данных.")
     except Exception as e:
         print(f"[ERROR] Ошибка при обновлении ассистента в базе данных: {e}")
     finally:
@@ -208,9 +206,7 @@ def get_user_assistant(user_id: int) -> str:
     print(f"[INFO] Получение ассистента для пользователя {user_id}...")
     assistant_key = r.get(user_id)
     if assistant_key:
-        print(f"[INFO] Ассистент для пользователя {user_id} получен из Redis: {assistant_key}")
         return assistant_key
-    print(f"[INFO] Ассистент для пользователя {user_id} не найден в Redis. Обращаемся к базе данных...")
     conn = connect_to_db()
     if conn is None:
         print("[ERROR] Не удалось подключиться к базе данных.")
@@ -220,7 +216,6 @@ def get_user_assistant(user_id: int) -> str:
             cur.execute("SELECT current_assistant FROM users WHERE user_id = %s", (user_id,))
             result = cur.fetchone()
             if result:
-                print(f"[INFO] Ассистент для пользователя {user_id} получен из базы данных: {result[0]}")
                 return result[0]
             else:
                 print(f"[WARNING] Ассистент для пользователя {user_id} не найден в базе данных.")
@@ -351,7 +346,6 @@ SEO — выведение сайта в ТОП по ключевым запро
             expert["telegram_username"],
             expert["contact_info"]
         )
-    print(f"Добавлено {len(experts)} экспертов в базу данных")
 
 def check_and_create_columns(connection):
     with connection.cursor() as cursor:
@@ -439,7 +433,6 @@ def load_assistants_config():
         cursor = connection.cursor()
         cursor.execute("SELECT assistant_key, name, prompt FROM assistants")
         assistants_data = cursor.fetchall()
-        print(f"[DEBUG] Данные ассистентов из базы: {assistants_data}")
         if not assistants_data:
             print("Нет ассистентов в базе данных.")
             return {"assistants": {}}
@@ -616,7 +609,6 @@ def store_message_in_db(chat_id, role, content):
             r.rpush(cache_key, message)
             if r.llen(cache_key) > 100:
                 r.lpop(cache_key)
-            print(f"Сообщение сохранено в базе данных и кэше Redis для chat_id {chat_id}.")
     except Exception as e:
         print(f"Ошибка при сохранении сообщения: {e}")
     finally:

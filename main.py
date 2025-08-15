@@ -19,6 +19,8 @@ import uuid
 import tempfile
 from pydub import AudioSegment
 
+print(f"[DEBUG] ShopID: {Configuration.account_id}")
+print(f"[DEBUG] YOOKASSA_SECRET_KEY: {os.getenv('YOOKASSA_SECRET_KEY')}")
 # Настройка логирования и окружения
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 connect_to_db()
@@ -482,7 +484,7 @@ def buy_subscription(callback):
                 "save_payment_method": True,
                 "description": f"Пробная подписка Plus для {user_id}",
                 "receipt": {
-                    "customer": {"email": "no-reply@yourdomain.com"},  # Фиктивный email
+                    "customer": {"email": "sg050@yandex.ru"},  # Фиктивный email
                     "items": [{
                         "description": "Пробная подписка Plus (3 дня)",
                         "quantity": 1,
@@ -593,7 +595,7 @@ def check_auto_renewal():
                             "payment_method_id": method_id,
                             "description": f"Автопродление подписки для {user_id}",
                             "receipt": {
-                                "customer": {"email": "no-reply@yourdomain.com"},  # Фиктивный email
+                                "customer": {"email": "sg050@yandex.ru"},  # Фиктивный email
                                 "items": [{
                                     "description": "Подписка Plus (месяц)",
                                     "quantity": 1,
@@ -902,7 +904,6 @@ def check_and_update_tokens(user_id):
         last_update_date = datetime.datetime.strptime(last_update, '%Y-%m-%d').date()
     else:
         last_update_date = last_update
-    print(f"[DEBUG] Проверка токенов для user_id={user_id}: tokens={tokens}, plan={current_plan}, last_update={last_update_date}, current_date={current_date}")
     if current_plan != 'free' and subscription_end_date and current_date > subscription_end_date:
         print(f"[DEBUG] Подписка user_id={user_id} истекла, перевод на free")
         cur.execute(""" 
@@ -1349,10 +1350,6 @@ def handler(event, context):
 def check_experts_in_database(connection):
     with connection.cursor() as cursor:
         cursor.execute("SELECT expert_id, name, specialization FROM experts;")
-        experts = cursor.fetchall()
-        print("Эксперты в базе данных:")
-        for expert in experts:
-            print(f"ID: {expert[0]}, Имя: {expert[1]}, Специализация: {expert[2]}")
 
 def main():
     print("Bot started")
