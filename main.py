@@ -18,9 +18,8 @@ from yookassa import Configuration, Payment
 import uuid
 import tempfile
 from pydub import AudioSegment
+load_dotenv()
 
-print(f"[DEBUG] ShopID: {Configuration.account_id}")
-print(f"[DEBUG] YOOKASSA_SECRET_KEY: {os.getenv('YOOKASSA_SECRET_KEY')}")
 # Настройка логирования и окружения
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 connect_to_db()
@@ -36,8 +35,11 @@ openai.api_key = os.getenv('OPENAI_API_KEY')
 BING_API_KEY = os.getenv('BING_API_KEY', "yLtkhrR3H6UjzBm3naReSJQ8G81ct409iLrcmQTeIAH338TwBZNEvSLQJ8og")
 
 # Настройка ЮKassa
-Configuration.account_id = "1001094"  # Ваш ShopID
-Configuration.secret_key = os.getenv('YOOKASSA_SECRET_KEY')
+Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
+Configuration.secret_key = os.getenv("YOOKASSA_SECRET_KEY")
+
+print(f"[DEBUG] ShopID: {Configuration.account_id}")
+print(f"[DEBUG] YOOKASSA_SECRET_KEY: {os.getenv('YOOKASSA_SECRET_KEY')}")
 
 class ExceptionHandler:
     def handle(self, exception):
@@ -464,17 +466,19 @@ def buy_subscription(callback):
     user_id = callback.from_user.id
     user_data = load_user_data(user_id)
     if not user_data:
+        print(f"[ERROR] Пользователь user_id={user_id} не найден в базе данных")
         bot.send_message(callback.message.chat.id, "Ошибка: пользователь не найден.", reply_markup=create_main_menu())
         bot.answer_callback_query(callback.id)
         return
     try:
         if callback.data == "buy_trial":
             if user_data['trial_used']:
+                print(f"[INFO] Пользователь user_id={user_id} уже использовал пробную подписку")
                 bot.send_message(callback.message.chat.id, "Вы уже использовали пробную подписку.", reply_markup=create_main_menu())
                 bot.answer_callback_query(callback.id)
                 return
             price = "99.00"
-            payment = Payment.create({
+            payment_params = {
                 "amount": {"value": price, "currency": "RUB"},
                 "capture": True,
                 "confirmation": {
@@ -484,16 +488,19 @@ def buy_subscription(callback):
                 "save_payment_method": True,
                 "description": f"Пробная подписка Plus для {user_id}",
                 "receipt": {
-                    "customer": {"email": "sg050@yandex.ru"},  # Фиктивный email
+                    "customer": {"email": "sg050@yandex.ru"},
                     "items": [{
                         "description": "Пробная подписка Plus (3 дня)",
-                        "quantity": 1,
+                        "quantity": "1.00",  # Исправлено на строку
                         "amount": {"value": price, "currency": "RUB"},
                         "vat_code": 1
                     }]
                 },
                 "idempotency_key": str(uuid.uuid4())
-            })
+            }
+            print(f"[DEBUG] Создание платежа для user_id={user_id}: {payment_params}")
+            payment = Payment.create(payment_params)
+            print(f"[DEBUG] Платёж создан: id={payment.id}, status={payment.status}, confirmation_url={payment.confirmation.confirmation_url}")
             save_payment_id_for_user(user_id, payment.id)
             bot.send_message(
                 callback.message.chat.id,
@@ -503,6 +510,7 @@ def buy_subscription(callback):
                 ])
             )
         elif callback.data == "buy_month":
+            print(f"[DEBUG] Создание инвойса для месячной подписки: user_id={user_id}")
             bot.send_invoice(
                 chat_id=callback.message.chat.id,
                 title="Подписка Plus (месяц)",
@@ -510,12 +518,12 @@ def buy_subscription(callback):
                 invoice_payload=f"month_subscription_{user_id}",
                 provider_token=pay_token,
                 currency="RUB",
-                prices=[types.LabeledPrice(label="Подписка Plus (месяц)", amount=39900)],  # 399₽
+                prices=[types.LabeledPrice(label="Подписка Plus (месяц)", amount=39900)],
                 start_parameter=f"month_{user_id}",
             )
         bot.answer_callback_query(callback.id)
     except Exception as e:
-        print(f"[ERROR] Ошибка при создании платежа: {e}")
+        print(f"[ERROR] Ошибка при создании платежа для user_id={user_id}: {e}")
         bot.send_message(
             callback.message.chat.id,
             f"Произошла ошибка при создании платежа. Пожалуйста, попробуйте позже или обратитесь в поддержку: https://t.me/mon_tti1",
@@ -584,27 +592,31 @@ def check_auto_renewal():
                 AND auto_renewal = TRUE
             """, (datetime.datetime.now().date(),))
             users = cursor.fetchall()
+            print(f"[DEBUG] Найдено {len(users)} пользователей для автопродления")
             for user in users:
                 user_id = user[0]
                 method_id = get_payment_method_for_user(user_id)
                 if method_id:
                     try:
-                        payment = Payment.create({
+                        payment_params = {
                             "amount": {"value": "399.00", "currency": "RUB"},
                             "capture": True,
                             "payment_method_id": method_id,
                             "description": f"Автопродление подписки для {user_id}",
                             "receipt": {
-                                "customer": {"email": "sg050@yandex.ru"},  # Фиктивный email
+                                "customer": {"email": "sg050@yandex.ru"},
                                 "items": [{
                                     "description": "Подписка Plus (месяц)",
-                                    "quantity": 1,
+                                    "quantity": "1.00",  # Исправлено на строку
                                     "amount": {"value": "399.00", "currency": "RUB"},
                                     "vat_code": 1
                                 }]
                             },
                             "idempotency_key": str(uuid.uuid4())
-                        })
+                        }
+                        print(f"[DEBUG] Создание платежа автопродления для user_id={user_id}: {payment_params}")
+                        payment = Payment.create(payment_params)
+                        print(f"[DEBUG] Платёж автопродления создан: id={payment.id}, status={payment.status}")
                         if payment.status == "succeeded":
                             set_user_subscription(user_id, "plus_month")
                             bot.send_message(
@@ -613,6 +625,7 @@ def check_auto_renewal():
                                 reply_markup=create_main_menu()
                             )
                         else:
+                            print(f"[INFO] Платёж для user_id={user_id} не успешен: status={payment.status}")
                             bot.send_message(
                                 user_id,
                                 "❌ Не удалось продлить подписку. Пожалуйста, оплатите вручную: /pay",
@@ -625,6 +638,8 @@ def check_auto_renewal():
                             f"❌ Ошибка при автопродлении: {e}. Пожалуйста, оплатите вручную: /pay",
                             reply_markup=create_main_menu()
                         )
+                else:
+                    print(f"[INFO] Не найден payment_method_id для user_id={user_id}")
     except Exception as e:
         print(f"[ERROR] Ошибка при проверке автопродления: {e}")
     finally:
