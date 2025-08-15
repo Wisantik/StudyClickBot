@@ -1,5 +1,6 @@
 import json
 import psycopg2
+from psycopg2 import OperationalError
 import os
 from dotenv import load_dotenv
 from assistance import *
@@ -7,19 +8,30 @@ import redis
 
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 
+
+
+load_dotenv()
+
 def connect_to_db():
-    try:
-        load_dotenv()
-        connection = psycopg2.connect(
-            dbname=os.getenv('DB_NAME'),
-            user=os.getenv('DB_USER'),
-            password=os.getenv('DB_PASSWORD'),
-            host=os.getenv('DB_HOST'),
-            port=os.getenv('DB_PORT')
-        )
-        return connection
-    except Exception as e:
-        print(f"Ошибка подключения к базе данных: {e}")
+    max_retries = 5
+    retry_delay = 5  # секунды
+    for attempt in range(max_retries):
+        try:
+            conn = psycopg2.connect(
+                dbname=os.getenv('DB_NAME'),
+                user=os.getenv('DB_USER'),
+                password=os.getenv('DB_PASSWORD'),
+                host=os.getenv('DB_HOST'),
+                port=os.getenv('DB_PORT', '5432')
+            )
+            print(f"[DEBUG] Успешное подключение к базе данных: {os.getenv('DB_NAME')}")
+            return conn
+        except OperationalError as e:
+            print(f"[ERROR] Ошибка подключения к базе данных (попытка {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                raise Exception("Не удалось подключиться к базе данных после нескольких попыток")
 
 def create_subscription_tables(connection):
     try:

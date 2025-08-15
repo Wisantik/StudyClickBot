@@ -1368,33 +1368,43 @@ def check_experts_in_database(connection):
 
 def main():
     print("Bot started")
-    conn = connect_to_db()
+    conn = None
+    max_retries = 5
+    for attempt in range(max_retries):
+        try:
+            conn = connect_to_db()
+            create_command_logs_table()
+            check_and_create_columns(conn)
+            create_subscription_tables(conn)
+            with conn.cursor() as cursor:
+                cursor.execute("SELECT COUNT(*) FROM assistants;")
+                count = cursor.fetchone()[0]
+            if count == 0:
+                print("Таблица 'assistants' пуста. Вставляем данные.")
+                insert_initial_data(conn)
+            print("Обновляем список экспертов...")
+            insert_initial_experts(conn)
+            check_experts_in_database(conn)
+            assistants_config = load_assistants_config()
+            setup_bot_commands()
+            break  # Выход из цикла при успешном подключении
+        except Exception as e:
+            print(f"[ERROR] Ошибка при инициализации бота (попытка {attempt + 1}/{max_retries}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5)
+            else:
+                print("[FATAL] Не удалось инициализировать бота после нескольких попыток")
+                return
+        finally:
+            if conn:
+                conn.close()
+
     try:
-        create_command_logs_table()
-        check_and_create_columns(conn)
-        create_subscription_tables(conn)
-        with conn.cursor() as cursor:
-            cursor.execute("SELECT COUNT(*) FROM assistants;")
-            count = cursor.fetchone()[0]
-        if count == 0:
-            print("Таблица 'assistants' пуста. Вставляем данные.")
-            insert_initial_data(conn)
-        print("Обновляем список экспертов...")
-        insert_initial_experts(conn)
-        check_experts_in_database(conn)
-        assistants_config = load_assistants_config()
-        setup_bot_commands()
         bot.polling(non_stop=True)
         while True:
             schedule.run_pending()
             time.sleep(60)
     except Exception as e:
-        print(f"Ошибка в главном цикле: {e}")
+        print(f"[ERROR] Ошибка в главном цикле: {e}")
         time.sleep(5)
-        main()
-    finally:
-        if conn:
-            conn.close()
-
-if __name__ == "__main__":
-    main()
+        main()  # Перезапуск при ошибке
