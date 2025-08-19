@@ -26,6 +26,11 @@ connect_to_db()
 
 MIN_TOKENS_THRESHOLD: Final = 5000
 FREE_DAILY_TOKENS: Final = 10000
+PLAN_NAMES = {
+    "free": "Бесплатный",
+    "plus_trial": "Пробная подписка Plus (3 дня)",
+    "plus_month": "Подписка Plus (месяц)"
+}
 
 logger = telebot.logger
 telebot.logger.setLevel(logging.INFO)
@@ -505,7 +510,7 @@ def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval
 
     threading.Thread(target=run, daemon=True).start()
 
-    
+
 @bot.callback_query_handler(func=lambda callback: callback.data in ["buy_trial", "buy_month"])
 def buy_subscription(callback):
     user_id = callback.from_user.id
@@ -787,7 +792,7 @@ def profile_menu_callback_handler(call):
         profile_text = f"""
 ID: {user_id}
 
-Ваш текущий тариф: {user_data['subscription_plan'].capitalize()}
+Ваш текущий тариф: {PLAN_NAMES.get(user_data['subscription_plan'], user_data['subscription_plan'])}
 """
         if user_data['subscription_plan'] != 'free' and remaining_days is not None:
             profile_text += f"Подписка активна еще {remaining_days} дней\n"
@@ -1032,7 +1037,7 @@ def show_profile(message):
     profile_text = f"""
 ID: {user_id}
 
-Ваш текущий тариф: {user_data['subscription_plan'].capitalize()}
+Ваш текущий тариф: {PLAN_NAMES.get(user_data['subscription_plan'], user_data['subscription_plan'])}
 """
     if user_data['subscription_plan'] != 'free' and remaining_days is not None:
         profile_text += f"Подписка активна еще {remaining_days} дней\n"
