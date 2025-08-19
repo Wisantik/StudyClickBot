@@ -1389,7 +1389,10 @@ def main():
             check_experts_in_database(conn)
             assistants_config = load_assistants_config()
             setup_bot_commands()
-            schedule.every(3).minutes.do(check_pending_payments)  # Проверка платежей каждые 3 минуты
+
+            # Запланированные задачи
+            schedule.every(3).minutes.do(check_pending_payments)
+            schedule.every().day.at("00:00").do(check_auto_renewal)
             break
         except Exception as e:
             logger.error(f"Ошибка при инициализации бота (попытка {attempt + 1}/{max_retries}): {e}")
@@ -1402,19 +1405,20 @@ def main():
             if conn:
                 conn.close()
 
-    # Запуск polling в цикле для устойчивости
+    # 🔹 Запускаем планировщик в отдельном потоке
+    def run_scheduler():
+        while True:
+            schedule.run_pending()
+            time.sleep(1)
+
+    import threading
+    threading.Thread(target=run_scheduler, daemon=True).start()
+
+    # 🔹 Запускаем бота (polling)
     while True:
         try:
             logger.info("Starting polling...")
             bot.polling(non_stop=True, timeout=60)
         except Exception as e:
             logger.error(f"Ошибка в polling: {e}")
-            time.sleep(5)  # Пауза перед повторной попыткой
-        try:
-            schedule.run_pending()
-        except Exception as e:
-            logger.error(f"Ошибка в schedule.run_pending: {e}")
-        time.sleep(60)
-
-if __name__ == "__main__":
-    main()
+            time.sleep(5)
