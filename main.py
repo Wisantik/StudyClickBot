@@ -1390,7 +1390,7 @@ def main():
             assistants_config = load_assistants_config()
             setup_bot_commands()
 
-            # Запланированные задачи
+            # Задачи по расписанию
             schedule.every(3).minutes.do(check_pending_payments)
             schedule.every().day.at("00:00").do(check_auto_renewal)
             break
@@ -1405,20 +1405,23 @@ def main():
             if conn:
                 conn.close()
 
-    # 🔹 Запускаем планировщик в отдельном потоке
+    # 🔹 Отдельный поток для планировщика
     def run_scheduler():
         while True:
-            schedule.run_pending()
+            try:
+                schedule.run_pending()
+            except Exception as e:
+                logger.error(f"Ошибка в scheduler: {e}")
             time.sleep(1)
 
     import threading
     threading.Thread(target=run_scheduler, daemon=True).start()
 
-    # 🔹 Запускаем бота (polling)
+    # 🔹 Запускаем polling бесконечно
     while True:
         try:
             logger.info("Starting polling...")
-            bot.polling(non_stop=True, timeout=60)
+            bot.polling(non_stop=True, timeout=60, skip_pending=True)
         except Exception as e:
             logger.error(f"Ошибка в polling: {e}")
             time.sleep(5)
