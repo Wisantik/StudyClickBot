@@ -559,9 +559,11 @@ def check_pending_payments():
         with conn.cursor() as cursor:
             cursor.execute("SELECT user_id, payment_id FROM payments WHERE status = 'pending'")
             payments = cursor.fetchall()
+            print(f"[INFO] Найдено {len(payments)} pending платежей")
             for user_id, payment_id in payments:
                 try:
                     payment = Payment.find_one(payment_id)
+                    print(f"[INFO] Платёж {payment_id} для user_id={user_id}: status={payment.status}")
                     if payment.status == "succeeded":
                         save_payment_method_for_user(user_id, payment.payment_method.id)
                         set_user_subscription(user_id, "plus_trial")
