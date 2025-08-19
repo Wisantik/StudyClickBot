@@ -460,7 +460,52 @@ def get_pay(message):
     )
 
 # ... (остальной код остаётся без изменений)
+import threading
 
+def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval: int = 180):
+    """
+    Проверяет статус платежа для user_id каждые interval секунд,
+    максимум max_checks раз (по умолчанию 12 минут).
+    """
+    def run():
+        for attempt in range(max_checks):
+            try:
+                payment = Payment.find_one(payment_id)
+                print(f"[DEBUG] Проверка платежа {payment_id} для {user_id}: status={payment.status}")
+
+                if payment.status == "succeeded":
+                    save_payment_method_for_user(user_id, payment.payment_method.id)
+                    set_user_subscription(user_id, "plus_trial")
+                    bot.send_message(
+                        user_id,
+                        "✅ Пробная подписка Plus активирована на 3 дня!",
+                        reply_markup=create_main_menu()
+                    )
+                    return  # завершаем, всё ок
+                elif payment.status in ["canceled", "failed"]:
+                    bot.send_message(
+                        user_id,
+                        "❌ Оплата не прошла. Попробуйте снова: /pay",
+                        reply_markup=create_main_menu()
+                    )
+                    return
+            except Exception as e:
+                print(f"[ERROR] Ошибка проверки платежа {payment_id} для {user_id}: {e}")
+
+            # ждём перед следующей проверкой
+            time.sleep(interval)
+
+        # если все проверки закончились, но платёж так и не подтвердился
+        bot.send_message(
+            user_id,
+            "⚠️ Мы не получили подтверждение оплаты в течение 12 минут. "
+            "Если деньги списались, напишите в поддержку: https://t.me/mon_tti1",
+            reply_markup=create_main_menu()
+        )
+
+    threading.Thread(target=run, daemon=True).start()
+
+    
 @bot.callback_query_handler(func=lambda callback: callback.data in ["buy_trial", "buy_month"])
 def buy_subscription(callback):
     user_id = callback.from_user.id
@@ -502,12 +547,16 @@ def buy_subscription(callback):
             payment = Payment.create(payment_params)
             print(f"[DEBUG] Платёж создан: id={payment.id}, status={payment.status}, confirmation_url={payment.confirmation.confirmation_url}")
             save_payment_id_for_user(user_id, payment.id)
+
+            # 🔹 запускаем мониторинг только этого платежа
+            monitor_payment(user_id, payment.id)
+
             bot.send_message(
                 callback.message.chat.id,
                 f"Оплатите по ссылке: {payment.confirmation.confirmation_url}",
-                reply_markup=types.InlineKeyboardMarkup([
-                    [types.InlineKeyboardButton("Отменить подписку", callback_data="cancel_subscription")]
-                ])
+                reply_markup=types.InlineKeyboardMarkup([[
+                    types.InlineKeyboardButton("Отменить подписку", callback_data="cancel_subscription")
+                ]])
             )
         elif callback.data == "buy_month":
             print(f"[DEBUG] Создание инвойса для месячной подписки: user_id={user_id}")
@@ -1389,10 +1438,6 @@ def main():
             check_experts_in_database(conn)
             assistants_config = load_assistants_config()
             setup_bot_commands()
-
-            # Задачи по расписанию
-            schedule.every(3).minutes.do(check_pending_payments)
-            schedule.every().day.at("00:00").do(check_auto_renewal)
             break
         except Exception as e:
             logger.error(f"Ошибка при инициализации бота (попытка {attempt + 1}/{max_retries}): {e}")
@@ -1405,23 +1450,19 @@ def main():
             if conn:
                 conn.close()
 
-    # 🔹 Отдельный поток для планировщика
-    def run_scheduler():
-        while True:
-            try:
-                schedule.run_pending()
-            except Exception as e:
-                logger.error(f"Ошибка в scheduler: {e}")
-            time.sleep(1)
-
-    import threading
-    threading.Thread(target=run_scheduler, daemon=True).start()
-
-    # 🔹 Запускаем polling бесконечно
+    # Запуск polling в цикле для устойчивости
     while True:
         try:
             logger.info("Starting polling...")
-            bot.polling(non_stop=True, timeout=60, skip_pending=True)
+            bot.polling(non_stop=True, timeout=60)
         except Exception as e:
             logger.error(f"Ошибка в polling: {e}")
-            time.sleep(5)
+            time.sleep(5)  # Пауза перед повторной попыткой
+        try:
+            schedule.run_pending()
+        except Exception as e:
+            logger.error(f"Ошибка в schedule.run_pending: {e}")
+        time.sleep(60)
+
+if __name__ == "__main__":
+    main()
