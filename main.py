@@ -1389,6 +1389,7 @@ def main():
             check_experts_in_database(conn)
             assistants_config = load_assistants_config()
             setup_bot_commands()
+            schedule.every(3).minutes.do(check_pending_payments)  # Проверка платежей каждые 3 минуты
             break
         except Exception as e:
             logger.error(f"Ошибка при инициализации бота (попытка {attempt + 1}/{max_retries}): {e}")
