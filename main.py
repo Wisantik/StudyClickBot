@@ -799,10 +799,7 @@ def profile_menu_callback_handler(call):
             cur = conn.cursor()
             cur.execute("""
                 UPDATE users 
-                SET auto_renewal = FALSE,
-                    subscription_plan = 'free',
-                    subscription_end_date = NULL,
-                    web_search_enabled = FALSE
+                SET auto_renewal = FALSE
                 WHERE user_id = %s
             """, (user_id,))
             conn.commit()
@@ -811,7 +808,7 @@ def profile_menu_callback_handler(call):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="Подписка отменена. Автопродление отключено.",
+                text="Автопродление отключено. Ваша подписка останется активной до {subscription_end_date}.",
                 reply_markup=types.InlineKeyboardMarkup().add(
                     types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
                 )
@@ -987,16 +984,13 @@ def cancel_subscription_handler(message):
     cur = conn.cursor()
     cur.execute("""
         UPDATE users 
-        SET auto_renewal = FALSE,
-            subscription_plan = 'free',
-            subscription_end_date = NULL,
-            web_search_enabled = FALSE
+        SET auto_renewal = FALSE
         WHERE user_id = %s
     """, (user_id,))
     conn.commit()
     cur.close()
     conn.close()
-    bot.reply_to(message, "Подписка отменена. Автопродление отключено.", reply_markup=create_main_menu())
+    bot.reply_to(message, "Автопродление отключено. Ваша подписка останется активной до {subscription_end_date}.", reply_markup=create_main_menu())
 
 def check_and_update_tokens(user_id):
     conn = connect_to_db()
