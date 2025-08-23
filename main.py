@@ -18,7 +18,7 @@ from yookassa import Configuration, Payment
 import uuid
 import tempfile
 from pydub import AudioSegment
-from ddgs import DDGS
+from duckduckgo_search import DDGS
 import re
 load_dotenv()
 
@@ -39,7 +39,6 @@ telebot.logger.setLevel(logging.INFO)
 pay_token = os.getenv('PAY_TOKEN')
 bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
 openai.api_key = os.getenv('OPENAI_API_KEY')
-BING_API_KEY = os.getenv('BING_API_KEY', "yLtkhrR3H6UjzBm3naReSJQ8G81ct409iLrcmQTeIAH338TwBZNEvSLQJ8og")
 
 # Настройка ЮKassa
 Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
@@ -1376,6 +1375,7 @@ def process_text_message(text, chat_id) -> str:
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
+    web_search_appendix = ""
     # 🔍 Автовключение веб-поиска, если нужно
     if user_data['web_search_enabled'] or needs_web_search(text):
         if user_data['subscription_plan'] == 'free':
@@ -1383,6 +1383,7 @@ def process_text_message(text, chat_id) -> str:
         print("[DEBUG] Выполняется веб-поиск")
         search_results = _perform_web_search(text)
         text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
+        web_search_appendix = f"\n\n🔎 Дополнительно найдено в интернете:\n{search_results}"
 
     input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
     history = get_chat_history(chat_id)
@@ -1401,7 +1402,7 @@ def process_text_message(text, chat_id) -> str:
         save_user_data(user_data)
         store_message_in_db(chat_id, "user", input_text)
         store_message_in_db(chat_id, "assistant", ai_response)
-        return ai_response
+        return ai_response + web_search_appendix
     except Exception as e:
         return f"Произошла ошибка: {str(e)}"
 

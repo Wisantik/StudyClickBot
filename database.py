@@ -24,7 +24,6 @@ def connect_to_db():
                 host=os.getenv('DB_HOST'),
                 port=os.getenv('DB_PORT', '5432')
             )
-            print(f"[DEBUG] Успешное подключение к базе данных: {os.getenv('DB_NAME')}")
             return conn
         except OperationalError as e:
             print(f"[ERROR] Ошибка подключения к базе данных (попытка {attempt + 1}/{max_retries}): {e}")
