@@ -18,7 +18,7 @@ from yookassa import Configuration, Payment
 import uuid
 import tempfile
 from pydub import AudioSegment
-from ddgs import DDGS
+from duckduckgo_search import DDGS
 import re
 load_dotenv()
 
@@ -52,13 +52,14 @@ def _call_search_api(search_query):
     print(f"[DEBUG] Выполнение поиска с DDGS: {search_query}")
     try:
         with DDGS() as ddgs:
-            results = list(ddgs.text(search_query, max_results=5))
+            results = list(ddgs.text(search_query, region="ru-ru", safesearch="moderate", max_results=15))
         formatted_results = [
             {
                 'title': result['title'],
                 'snippet': result['body'],
                 'link': result['href']
             } for result in results
+            if result.get('title') and result.get('href') and not result['href'].endswith("wiktionary.org/wiki/")
         ]
         print(f"[DEBUG] Получено результатов поиска: {len(formatted_results)}")
         return formatted_results
@@ -66,22 +67,24 @@ def _call_search_api(search_query):
         print(f"[ERROR] Ошибка при выполнении веб-поиска: {str(e)}")
         return []
 
-def _perform_web_search(query: str) -> str:
+def _perform_web_search(query: str, limit: int = 5) -> str:
     print(f"[DEBUG] Начало веб-поиска для запроса: {query}")
     cleaned_query = re.sub(
         r'^(привет|здравствуй|как дела|найди|найди мне)\s+',
         '', query, flags=re.IGNORECASE
     ).strip()
     print(f"[DEBUG] Очищенный поисковый запрос: {cleaned_query}")
-    search_query = f"{cleaned_query} site:*.edu | site:*.gov | site:*.org | site:bbc.com | site:reuters.com | site:theguardian.com | site:nature.com | site:sciencedaily.com | site:vedomosti.ru | site:kommersant.ru"
+    search_query = f"{cleaned_query} lang:ru site:*.ru | site:bbc.com | site:reuters.com | site:theguardian.com | site:nature.com | site:sciencedaily.com"
     print(f"[DEBUG] Итоговый поисковый запрос: {search_query}")
     search_results = _call_search_api(search_query)
     if not search_results:
         return "🔍 Не удалось найти актуальные результаты по вашему запросу."
-    formatted_results = "\n\n🔍 Результаты поиска:\n\n" + "\n".join(
-        [f"{i+1}️⃣ {r['title']} — {r['snippet']}\n➡️ {r['link']}" for i, r in enumerate(search_results[:3])]
-    )
-    return formatted_results
+
+    formatted = [
+        f"{i+1}️⃣ **{r['title']}**\n{r['snippet']}\n🔗 {r['link']}"
+        for i, r in enumerate(search_results[:limit])
+    ]
+    return "\n\n🔎 Результаты веб-поиска:\n\n" + "\n\n".join(formatted)
 
 def needs_web_search(message: str) -> bool:
     keywords = ["найди", "что сейчас", "новости", "поиск", "в интернете", "актуально"]
@@ -1376,14 +1379,13 @@ def process_text_message(text, chat_id) -> str:
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
     web_search_appendix = ""
-    # 🔍 Автовключение веб-поиска, если нужно
     if user_data['web_search_enabled'] or needs_web_search(text):
         if user_data['subscription_plan'] == 'free':
             return "Веб-поиск доступен только с подпиской Plus. Выберите тариф: /pay"
         print("[DEBUG] Выполняется веб-поиск")
         search_results = _perform_web_search(text)
         text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
-        web_search_appendix = f"\n\n🔎 Дополнительно найдено в интернете:\n{search_results}"
+        web_search_appendix = f"\n\n{search_results}"
 
     input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
     history = get_chat_history(chat_id)
@@ -1405,6 +1407,7 @@ def process_text_message(text, chat_id) -> str:
         return ai_response + web_search_appendix
     except Exception as e:
         return f"Произошла ошибка: {str(e)}"
+
 
 @bot.message_handler(content_types=["voice"])
 def voice(message):
