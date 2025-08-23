@@ -18,6 +18,8 @@ from yookassa import Configuration, Payment
 import uuid
 import tempfile
 from pydub import AudioSegment
+from ddgs import DDGS
+import re
 load_dotenv()
 
 # Настройка логирования и окружения
@@ -45,6 +47,46 @@ Configuration.secret_key = os.getenv("YOOKASSA_SECRET_KEY")
 
 print(f"[DEBUG] ShopID: {Configuration.account_id}")
 print(f"[DEBUG] YOOKASSA_SECRET_KEY: {os.getenv('YOOKASSA_SECRET_KEY')}")
+
+# ======== WEB SEARCH (DDGS) ========
+def _call_search_api(search_query):
+    print(f"[DEBUG] Выполнение поиска с DDGS: {search_query}")
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(search_query, max_results=5))
+        formatted_results = [
+            {
+                'title': result['title'],
+                'snippet': result['body'],
+                'link': result['href']
+            } for result in results
+        ]
+        print(f"[DEBUG] Получено результатов поиска: {len(formatted_results)}")
+        return formatted_results
+    except Exception as e:
+        print(f"[ERROR] Ошибка при выполнении веб-поиска: {str(e)}")
+        return []
+
+def _perform_web_search(query: str) -> str:
+    print(f"[DEBUG] Начало веб-поиска для запроса: {query}")
+    cleaned_query = re.sub(
+        r'^(привет|здравствуй|как дела|найди|найди мне)\s+',
+        '', query, flags=re.IGNORECASE
+    ).strip()
+    print(f"[DEBUG] Очищенный поисковый запрос: {cleaned_query}")
+    search_query = f"{cleaned_query} site:*.edu | site:*.gov | site:*.org | site:bbc.com | site:reuters.com | site:theguardian.com | site:nature.com | site:sciencedaily.com | site:vedomosti.ru | site:kommersant.ru"
+    print(f"[DEBUG] Итоговый поисковый запрос: {search_query}")
+    search_results = _call_search_api(search_query)
+    if not search_results:
+        return "🔍 Не удалось найти актуальные результаты по вашему запросу."
+    formatted_results = "\n\n🔍 Результаты поиска:\n\n" + "\n".join(
+        [f"{i+1}️⃣ {r['title']} — {r['snippet']}\n➡️ {r['link']}" for i, r in enumerate(search_results[:3])]
+    )
+    return formatted_results
+
+def needs_web_search(message: str) -> bool:
+    keywords = ["найди", "что сейчас", "новости", "поиск", "в интернете", "актуально"]
+    return any(kw in message.lower() for kw in keywords)
 
 class ExceptionHandler:
     def handle(self, exception):
@@ -1339,12 +1381,15 @@ def process_text_message(text, chat_id) -> str:
     current_assistant = get_user_assistant(chat_id)
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
-    if needs_web_search(text) and user_data['web_search_enabled']:
+
+    # 🔍 Автовключение веб-поиска, если нужно
+    if user_data['web_search_enabled'] or needs_web_search(text):
         if user_data['subscription_plan'] == 'free':
             return "Веб-поиск доступен только с подпиской Plus. Выберите тариф: /pay"
-        print("[ОТЛАДКА] Автоматически определён запрос для веб-поиска")
-        search_results = perform_web_search(text)
+        print("[DEBUG] Выполняется веб-поиск")
+        search_results = _perform_web_search(text)
         text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
+
     input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
     history = get_chat_history(chat_id)
     history.append({"role": "user", "content": input_text})
@@ -1471,3 +1516,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
