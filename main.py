@@ -213,12 +213,30 @@ def setup_bot_commands():
         BotCommand("new", "🗑 Очистить историю чата"),
         BotCommand("support", "📞 Поддержка"),
         BotCommand("referral", "🔗 Реферальная ссылка"),
+        BotCommand("universal", "🤖 Универсальный ассистент"),
     ]
     try:
         bot.set_my_commands(commands)
         print("Команды бота успешно настроены")
     except Exception as e:
         print(f"Ошибка при настройке команд: {e}")
+
+@bot.message_handler(commands=['universal'])
+def set_universal_assistant(message):
+    """Устанавливает универсального ассистента для пользователя"""
+    user_id = message.from_user.id
+    log_command(user_id, "universal")
+    
+    # Обновляем данные пользователя, устанавливая универсального ассистента
+    user_data = load_user_data(user_id)
+    if not user_data:
+        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.", reply_markup=create_main_menu())
+        return
+    
+    user_data['current_assistant'] = 'universal_expert'
+    save_user_data(user_data)
+    
+    bot.reply_to(message, "Универсальный ассистент выбран! Теперь я могу отвечать на любые ваши вопросы.", reply_markup=create_main_menu())
 
 def create_price_menu(user_data) -> types.InlineKeyboardMarkup:
     buttons = []
@@ -1122,10 +1140,13 @@ def show_stats_admin(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "У вас нет прав для просмотра статистики.", reply_markup=create_main_menu())
         return
+    
     log_command(message.from_user.id, "statsadmin12")
+    
     week_stats = get_command_stats('week')
     month_stats = get_command_stats('month')
     year_stats = get_command_stats('year')
+    
     command_names = {
         'profile': 'Мой профиль',
         'language': 'Выбрать язык',
@@ -1146,28 +1167,59 @@ def show_stats_admin(message):
         'show_support': 'Поддержка (из профиля)',
         'back_to_profile': 'Назад к профилю'
     }
-    stats_text = "📊 *Статистика использования команд* 📊\n\n"
-    stats_text += "📅 *За неделю:*\n"
-    stats_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    
+    # Формируем части сообщения
+    messages = []
+    current_message = "📊 *Статистика использования команд* 📊\n\n"
+    
+    # За неделю
+    current_message += "📅 *За неделю:*\n"
+    current_message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     for command, count in week_stats:
         display_name = command_names.get(command, command)
-        stats_text += f"🔹 {display_name}: {count} раз\n"
-    stats_text += "\n📅 *За месяц:*\n"
-    stats_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        current_message += f"🔹 {display_name}: {count} раз\n"
+    
+    current_message += "\n"
+    messages.append(current_message)
+    
+    # За месяц
+    current_message = "📅 *За месяц:*\n"
+    current_message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     for command, count in month_stats:
         display_name = command_names.get(command, command)
-        stats_text += f"🔹 {display_name}: {count} раз\n"
-    stats_text += "\n📅 *За год:*\n"
-    stats_text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        current_message += f"🔹 {display_name}: {count} раз\n"
+    
+    current_message += "\n"
+    messages.append(current_message)
+    
+    # За год
+    current_message = "📅 *За год:*\n"
+    current_message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
     for command, count in year_stats:
         display_name = command_names.get(command, command)
-        stats_text += f"🔹 {display_name}: {count} раз\n"
-    stats_text += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        current_message += f"🔹 {display_name}: {count} раз\n"
+    
+    current_message += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    messages.append(current_message)
+    
+    # Отправляем сообщения по частям
     try:
-        bot.reply_to(message, stats_text, parse_mode="Markdown", reply_markup=create_main_menu())
+        for msg in messages:
+            if len(msg) > 4096:
+                # Если сообщение всё ещё слишком длинное, разбиваем его
+                for i in range(0, len(msg), 4096):
+                    bot.reply_to(message, msg[i:i+4096], parse_mode="Markdown", reply_markup=create_main_menu())
+            else:
+                bot.reply_to(message, msg, parse_mode="Markdown", reply_markup=create_main_menu())
     except Exception as e:
-        stats_text_plain = stats_text.replace("*", "").replace("_", "")
-        bot.reply_to(message, stats_text_plain, reply_markup=create_main_menu())
+        # Убираем Markdown и пробуем снова
+        for msg in messages:
+            msg_plain = msg.replace("*", "").replace("_", "")
+            if len(msg_plain) > 4096:
+                for i in range(0, len(msg_plain), 4096):
+                    bot.reply_to(message, msg_plain[i:i+4096], reply_markup=create_main_menu())
+            else:
+                bot.reply_to(message, msg_plain, reply_markup=create_main_menu())
 
 @bot.message_handler(func=lambda message: message.text == "Отменить")
 def cancel_subscription(message):
