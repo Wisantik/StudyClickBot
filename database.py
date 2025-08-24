@@ -211,7 +211,6 @@ def set_user_assistant(user_id: int, assistant_key: str):
         print(f"[ERROR] Ошибка при обновлении ассистента в базе данных: {e}")
     finally:
         conn.close()
-        print(f"[INFO] Соединение с базой данных закрыто.")
 
 def get_user_assistant(user_id: int) -> str:
     print(f"[INFO] Получение ассистента для пользователя {user_id}...")
@@ -236,7 +235,6 @@ def get_user_assistant(user_id: int) -> str:
         return None
     finally:
         conn.close()
-        print(f"[INFO] Соединение с базой данных закрыто.")
 
 def create_experts_table(connection):
     with connection.cursor() as cursor:

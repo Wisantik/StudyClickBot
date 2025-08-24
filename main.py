@@ -268,11 +268,9 @@ def create_profile_menu() -> types.InlineKeyboardMarkup:
 def create_assistants_menu() -> types.InlineKeyboardMarkup:
     config = load_assistants_config()
     assistants = config.get("assistants", {})
-    print(f"[DEBUG] Формирование меню ассистентов: {assistants.keys()}")
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     for assistant_id, assistant_info in assistants.items():
         callback_data = f"select_assistant_{assistant_id}"
-        print(f"[DEBUG] Создание кнопки: text={assistant_info['name']}, callback_data={callback_data}")
         keyboard.add(
             types.InlineKeyboardButton(
                 text=assistant_info['name'],
@@ -398,12 +396,17 @@ def assistant_callback_handler(call):
     name = assistant_info.get("name", "Без названия")
     description = ASSISTANT_DESCRIPTIONS.get(assistant_id, "Описание отсутствует.")
 
+    text = (
+        f"✅ Вы выбрали: <b>{name}</b>\n\n"
+        f"📌 Описание:\n{description}"
+    )
+
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
-        text=f"Выбран ассистент: <b>{name}</b>\n\n{description}",
+        text=text,
         parse_mode="HTML",
-        reply_markup=create_assistants_menu()
+        reply_markup=None  # убираем клавиатуру с ассистентами
     )
 
 
