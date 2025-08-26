@@ -287,14 +287,28 @@ def create_assistants_menu() -> types.InlineKeyboardMarkup:
     config = load_assistants_config()
     assistants = config.get("assistants", {})
     keyboard = types.InlineKeyboardMarkup(row_width=2)
-    for assistant_id, assistant_info in assistants.items():
-        callback_data = f"select_assistant_{assistant_id}"
+    
+    # Сначала добавляем универсального ассистента, если он есть
+    if 'universal_expert' in assistants:
+        assistant_info = assistants['universal_expert']
         keyboard.add(
             types.InlineKeyboardButton(
                 text=assistant_info['name'],
-                callback_data=callback_data
+                callback_data="select_assistant_universal_expert"
             )
         )
+    
+    # Затем добавляем остальные ассистенты
+    for assistant_id, assistant_info in assistants.items():
+        if assistant_id != 'universal_expert':  # Пропускаем универсального
+            callback_data = f"select_assistant_{assistant_id}"
+            keyboard.add(
+                types.InlineKeyboardButton(
+                    text=assistant_info['name'],
+                    callback_data=callback_data
+                )
+            )
+    
     keyboard.add(
         types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
     )
