@@ -144,15 +144,33 @@ def create_command_logs_table():
         conn.commit()
     conn.close()
 
+def normalize_command(command: str) -> str:
+    """
+    Приводим сырое название команды к нормализованному виду.
+    """
+    if command.startswith("select_assistant_"):
+        return "assistant:" + command.replace("select_assistant_", "")
+    elif command in ("expert1", "expert2"):  # старые захардкоженные
+        return None  # можно вообще игнорить
+    elif command.startswith("expert_"):
+        return "expert:" + command.split("_", 1)[1]
+    elif command in ["universal", "search"] or command.startswith("lang"):
+        return None  # тоже игнорим
+    return command
+
+
 def log_command(user_id, command):
+    norm = normalize_command(command)
+    if not norm:  # мусор — не логируем
+        return
     conn = connect_to_db()
-    with conn.cursor() as cursor:
-        cursor.execute("""
-            INSERT INTO command_logs (user_id, command, timestamp)
-            VALUES (%s, %s, CURRENT_TIMESTAMP)
-        """, (user_id, command))
-        conn.commit()
+    with conn:
+        conn.execute(
+            "INSERT INTO command_logs (user_id, command, created_at) VALUES (%s, %s, NOW())",
+            (user_id, norm),
+        )
     conn.close()
+
 
 def get_command_stats(period):
     conn = connect_to_db()
