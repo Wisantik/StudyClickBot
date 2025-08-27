@@ -1191,36 +1191,41 @@ def show_stats_admin(message):
         'show_support': '📞 Поддержка (из профиля)',
         'back_to_profile': '⬅️ Назад к профилю'
     }
-    
+
     def format_stats(title, stats):
-        text = f"{title}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        assistants = load_assistants_config().get("assistants", {})
+        text = f"<b>{title}</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         for command, count in stats:
-            # фильтруем мусор
-            if command.startswith("selectassistant") or command in ["expert1", "expert2", "universal", "search"] or command.startswith("lang"):
+            # фильтруем старый мусор
+            if command.startswith("selectassistant") or command.startswith("lang") \
+               or command in ["expert1", "expert2", "universal", "Ассистенты", "Эксперты", "search"]:
                 continue  
 
             if command.startswith("assistant:"):
-                # красиво подставляем имя ассистента из базы
-                assistants = load_assistants_config().get("assistants", {})
                 asst_id = command.split(":", 1)[1]
                 display_name = f"🤖 Ассистент: {assistants.get(asst_id, {}).get('name', asst_id)}"
             elif command.startswith("expert:"):
-                display_name = f"👨‍💼 Эксперт #{command.split(':',1)[1]}"
+                display_name = f"👨‍💼 Эксперт #{command.split(':', 1)[1]}"
             else:
                 display_name = command_names.get(command, command)
 
             text += f"🔹 {display_name}: {count} раз\n"
         return text + "\n"
-
     
     messages = [
         format_stats("📅 За неделю:", week_stats),
         format_stats("📅 За месяц:", month_stats),
         format_stats("📅 За год:", year_stats) + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     ]
-    
+
+    # Отправляем по кускам
     for msg in messages:
-        bot.reply_to(message, msg, parse_mode="Markdown", reply_markup=create_main_menu())
+        try:
+            bot.reply_to(message, msg, parse_mode="HTML", reply_markup=create_main_menu())
+        except Exception as e:
+            print(f"[ERROR] Ошибка при отправке статистики: {e}")
+            # fallback без форматирования
+            bot.reply_to(message, msg, reply_markup=create_main_menu())
 
 @bot.message_handler(func=lambda message: message.text == "Отменить")
 def cancel_subscription(message):
