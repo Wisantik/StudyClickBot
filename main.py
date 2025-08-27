@@ -1195,14 +1195,23 @@ def show_stats_admin(message):
     def format_stats(title, stats):
         text = f"{title}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         for command, count in stats:
+            # фильтруем мусор
+            if command.startswith("selectassistant") or command in ["expert1", "expert2", "universal", "search"] or command.startswith("lang"):
+                continue  
+
             if command.startswith("assistant:"):
-                display_name = f"🤖 Ассистент: {command.split(':',1)[1]}"
+                # красиво подставляем имя ассистента из базы
+                assistants = load_assistants_config().get("assistants", {})
+                asst_id = command.split(":", 1)[1]
+                display_name = f"🤖 Ассистент: {assistants.get(asst_id, {}).get('name', asst_id)}"
             elif command.startswith("expert:"):
                 display_name = f"👨‍💼 Эксперт #{command.split(':',1)[1]}"
             else:
                 display_name = command_names.get(command, command)
+
             text += f"🔹 {display_name}: {count} раз\n"
         return text + "\n"
+
     
     messages = [
         format_stats("📅 За неделю:", week_stats),
