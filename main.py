@@ -1292,35 +1292,65 @@ GPT-4o: {user_data['daily_tokens']} символов
 
 ADMIN_IDS = [998107476, 741831495]
 
-# ---------- show_stats_admin: группированный и аккуратный вывод ----------
+
+# ---------- КЭШ ДЛЯ ASSISTANTS (чтобы не дергать Redis/БД на каждый вызов) ----------
+_ASSISTANTS_CACHE = {"ts": 0, "data": {"assistants": {}}}
+_ASSISTANTS_TTL = 30  # секунды кэша
+
+def get_assistants_cached():
+    """Возвращает конфигурацию ассистентов, кэшируя результат на _ASSISTANTS_TTL секунд."""
+    try:
+        import time as _time
+        now = int(_time.time())
+        if now - _ASSISTANTS_CACHE["ts"] < _ASSISTANTS_TTL and _ASSISTANTS_CACHE["data"]:
+            return _ASSISTANTS_CACHE["data"]
+        cfg = load_assistants_config()
+        if isinstance(cfg, dict):
+            _ASSISTANTS_CACHE["data"] = cfg
+            _ASSISTANTS_CACHE["ts"] = now
+            return cfg
+    except Exception as e:
+        print(f"[WARN] get_assistants_cached error: {e}")
+    return {"assistants": {}}
+
+
+# ---------- Окончательная функция показа статистики (без конфликтов) ----------
 @bot.message_handler(commands=['statsadmin12'])
 def show_stats_admin(message):
+    # права
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "У вас нет прав для просмотра статистики.", reply_markup=create_main_menu())
         return
 
+    # логируем сам запрос админа (он будет нормализован функцией log_command)
     log_command(message.from_user.id, "statsadmin12")
 
-    # получаем сырые данные (список (command, count))
-    week_raw = get_command_stats('week')    # предполагается: [(command, count), ...]
-    month_raw = get_command_stats('month')
-    year_raw = get_command_stats('year')
+    # получаем сырые статистики из БД (списки кортежей (command, count))
+    try:
+        week_raw = get_command_stats('week')
+        month_raw = get_command_stats('month')
+        year_raw = get_command_stats('year')
+    except Exception as e:
+        print(f"[ERROR] Не удалось получить статистику: {e}")
+        bot.reply_to(message, "Ошибка получения статистики.", reply_markup=create_main_menu())
+        return
 
-    def aggregate(raw_stats):
+    # агрегируем и нормализуем (используем normalize_command, но normalize_command читает кэш)
+    def aggregate(raw):
         agg = {}
-        for cmd, cnt in raw_stats:
+        for cmd, cnt in raw:
             norm = normalize_command(cmd)
             if not norm:
                 continue
             agg[norm] = agg.get(norm, 0) + int(cnt)
-        return agg  # {normalized_command: total_count}
+        return agg
 
     week = aggregate(week_raw)
     month = aggregate(month_raw)
     year = aggregate(year_raw)
 
-    # Группировка по категориям
-    def group_stats(agg_dict):
+    # группировка для читаемости
+    def group_stats(agg):
         groups = {
             "Профиль": {},
             "Ассистенты": {},
@@ -1332,20 +1362,20 @@ def show_stats_admin(message):
             "Админ/системное": {},
             "Другое": {}
         }
-        for cmd, cnt in agg_dict.items():
+        for cmd, cnt in agg.items():
             if "Мой профиль" in cmd or "Назад" in cmd:
                 groups["Профиль"][cmd] = cnt
             elif cmd.startswith("🤖 Ассистент") or "Ассистенты" in cmd:
                 groups["Ассистенты"][cmd] = cnt
             elif "Подписк" in cmd or "Купить" in cmd or "Отмена подписки" in cmd:
                 groups["Подписки"][cmd] = cnt
-            elif "веб-поиск" in cmd or "Включить веб-поиск" in cmd or "Выключить веб-поиск" in cmd or "Попытка веб-поиска" in cmd:
+            elif "веб-поиск" in cmd or "Интернет поиск" in cmd or "Включить веб-поиск" in cmd or "Выключить веб-поиск" in cmd or "Попытка веб-поиска" in cmd:
                 groups["Веб-поиск"][cmd] = cnt
             elif "Поддержк" in cmd:
                 groups["Поддержка"][cmd] = cnt
-            elif cmd.startswith("👨‍💼 Эксперт") or "Эксперты" in cmd:
+            elif "Эксперт" in cmd:
                 groups["Эксперты"][cmd] = cnt
-            elif cmd in ("start", "referral", "🔗 Реферальная ссылка"):
+            elif cmd in ("start", "🔗 Реферальная ссылка", "referral"):
                 groups["Платежи/прочее"][cmd] = cnt
             elif "Статистика" in cmd or cmd == "statsadmin12" or cmd.startswith("📊"):
                 groups["Админ/системное"][cmd] = cnt
@@ -1353,44 +1383,50 @@ def show_stats_admin(message):
                 groups["Другое"][cmd] = cnt
         return groups
 
-    week_groups = group_stats(week)
-    month_groups = group_stats(month)
-    year_groups = group_stats(year)
+    wk_g = group_stats(week)
+    mo_g = group_stats(month)
+    yr_g = group_stats(year)
 
-    # Форматирование одной группы
-    def format_group(title, group_dict):
-        if not group_dict:
+    # форматирование
+    def format_group(title, d):
+        if not d:
             return ""
-        # сортируем по убыванию и показываем все (или top N при желании)
-        items = sorted(group_dict.items(), key=lambda x: -x[1])
-        text = f"<b>{title}</b>\n"
-        for name, cnt in items:
-            text += f"• {name}: {cnt} раз\n"
-        text += "\n"
-        return text
+        lines = sorted(d.items(), key=lambda x: -x[1])
+        s = f"<b>{title}</b>\n"
+        for name, cnt in lines:
+            s += f"• {name}: {cnt} раз\n"
+        s += "\n"
+        return s
 
     def format_report(period_title, groups_dict):
-        text = f"<b>{period_title}</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        # порядок групп для удобства
+        header = f"<b>{period_title}</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         order = ["Профиль", "Ассистенты", "Подписки", "Веб-поиск", "Поддержка", "Эксперты", "Платежи/прочее", "Админ/системное", "Другое"]
-        for grp in order:
-            text += format_group(grp, groups_dict.get(grp, {}))
-        text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        return text
+        body = ""
+        for g in order:
+            body += format_group(g, groups_dict.get(g, {}))
+        return header + body + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
 
     reports = [
-        format_report("📅 За неделю:", week_groups),
-        format_report("📅 За месяц:", month_groups),
-        format_report("📅 За год:", year_groups)
+        format_report("📅 За неделю:", wk_g),
+        format_report("📅 За месяц:", mo_g),
+        format_report("📅 За год:", yr_g)
     ]
 
+    # отправляем аккуратно (разбитие длинных сообщений)
     for rpt in reports:
         try:
-            bot.reply_to(message, rpt, parse_mode="HTML", reply_markup=create_main_menu())
+            if len(rpt) > 4096:
+                for i in range(0, len(rpt), 4096):
+                    bot.reply_to(message, rpt[i:i+4096], parse_mode="HTML", reply_markup=create_main_menu())
+            else:
+                bot.reply_to(message, rpt, parse_mode="HTML", reply_markup=create_main_menu())
         except Exception as e:
-            print(f"[ERROR] Ошибка отправки статистики: {e}")
+            print(f"[WARN] Ошибка отправки статистики (fallback): {e}")
             # fallback plain
-            bot.reply_to(message, rpt, reply_markup=create_main_menu())
+            try:
+                bot.reply_to(message, rpt, reply_markup=create_main_menu())
+            except Exception as e2:
+                print(f"[ERROR] fallback send failed: {e2}")
 
 
     def format_stats(title, stats):
