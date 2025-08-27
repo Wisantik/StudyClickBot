@@ -414,6 +414,7 @@ def assistants_button_handler(message):
         reply_markup=create_assistants_menu()
     )
 
+# === Обработчик выбора ассистента ===
 @bot.callback_query_handler(func=lambda call: call.data.startswith("select_assistant_"))
 def assistant_callback_handler(call):
     assistant_id = call.data.replace("select_assistant_", "")
@@ -423,7 +424,10 @@ def assistant_callback_handler(call):
         bot.answer_callback_query(call.id, "Ассистент не найден")
         return
 
-    set_user_assistant(call.message.chat.id, assistant_id)
+    # Логируем ассистента в нормализованном виде
+    log_command(call.from_user.id, f"assistant:{assistant_id}")
+
+    set_user_assistant(call.from_user.id, assistant_id)
     assistant_info = config["assistants"][assistant_id]
     name = assistant_info.get("name", "Без названия")
     description = ASSISTANT_DESCRIPTIONS.get(assistant_id, "Описание отсутствует.")
@@ -438,8 +442,9 @@ def assistant_callback_handler(call):
         message_id=call.message.message_id,
         text=text,
         parse_mode="HTML",
-        reply_markup=None  # убираем клавиатуру с ассистентами
+        reply_markup=None
     )
+
 
 
 @bot.message_handler(commands=['experts'])
@@ -452,12 +457,16 @@ def experts_button_handler(message):
         reply_markup=create_experts_menu()
     )
 
+# === Обработчик выбора эксперта ===
 @bot.callback_query_handler(func=lambda call: call.data.startswith("expert_"))
 def expert_callback_handler(call):
     print(f"[DEBUG] Expert callback data: {call.data}")
     try:
         expert_id = int(call.data.split("_")[1])
-        log_command(call.from_user.id, f"expert_{expert_id}")
+
+        # Логируем эксперта в нормализованном виде
+        log_command(call.from_user.id, f"expert:{expert_id}")
+
         conn = connect_to_db()
         expert = get_expert_by_id(conn, expert_id)
         conn.close()
@@ -1149,6 +1158,7 @@ GPT-4o: {user_data['daily_tokens']} символов
 
 ADMIN_IDS = [998107476, 741831495]
 
+# === Статистика (админ) ===
 @bot.message_handler(commands=['statsadmin12'])
 def show_stats_admin(message):
     if message.from_user.id not in ADMIN_IDS:
@@ -1162,78 +1172,46 @@ def show_stats_admin(message):
     year_stats = get_command_stats('year')
     
     command_names = {
-        'profile': 'Мой профиль',
-        'language': 'Выбрать язык',
-        'assistants': 'Ассистенты',
-        'experts': 'Эксперты',
-        'search_on': 'Включить веб-поиск',
-        'search_off': 'Выключить веб-поиск',
-        'search_denied_no_subscription': 'Попытка веб-поиска без подписки',
-        'pay': 'Подписка',
-        'cancel_subscription': 'Отмена подписки',
-        'new': 'Очистить историю чата',
-        'support': 'Поддержка',
-        'statsadmin12': 'Статистика (админ)',
+        'profile': '👤 Мой профиль',
+        'language': '🌐 Выбрать язык',
+        'assistants': '🤖 Ассистенты',
+        'experts': '👨‍💼 Эксперты',
+        'search_on': '🔍 Включить веб-поиск',
+        'search_off': '🔍 Выключить веб-поиск',
+        'search_denied_no_subscription': '🚫 Попытка веб-поиска без подписки',
+        'pay': '💳 Подписка',
+        'cancel_subscription': '❌ Отмена подписки',
+        'new': '🗑 Очистить историю чата',
+        'support': '📞 Поддержка',
+        'statsadmin12': '📊 Статистика (админ)',
         'check_subscription': '✅ Нажатие "Я подписался"',
-        'show_pay_menu': 'Открытие меню подписки',
-        'show_assistants': 'Ассистенты (из профиля)',
-        'show_experts': 'Эксперты (из профиля)',
-        'show_support': 'Поддержка (из профиля)',
-        'back_to_profile': 'Назад к профилю'
+        'show_pay_menu': '💳 Открытие меню подписки',
+        'show_assistants': '🤖 Ассистенты (из профиля)',
+        'show_experts': '👨‍💼 Эксперты (из профиля)',
+        'show_support': '📞 Поддержка (из профиля)',
+        'back_to_profile': '⬅️ Назад к профилю'
     }
     
-    # Формируем части сообщения
-    messages = []
-    current_message = "📊 *Статистика использования команд* 📊\n\n"
-    
-    # За неделю
-    current_message += "📅 *За неделю:*\n"
-    current_message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    for command, count in week_stats:
-        display_name = command_names.get(command, command)
-        current_message += f"🔹 {display_name}: {count} раз\n"
-    
-    current_message += "\n"
-    messages.append(current_message)
-    
-    # За месяц
-    current_message = "📅 *За месяц:*\n"
-    current_message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    for command, count in month_stats:
-        display_name = command_names.get(command, command)
-        current_message += f"🔹 {display_name}: {count} раз\n"
-    
-    current_message += "\n"
-    messages.append(current_message)
-    
-    # За год
-    current_message = "📅 *За год:*\n"
-    current_message += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    for command, count in year_stats:
-        display_name = command_names.get(command, command)
-        current_message += f"🔹 {display_name}: {count} раз\n"
-    
-    current_message += "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-    messages.append(current_message)
-    
-    # Отправляем сообщения по частям
-    try:
-        for msg in messages:
-            if len(msg) > 4096:
-                # Если сообщение всё ещё слишком длинное, разбиваем его
-                for i in range(0, len(msg), 4096):
-                    bot.reply_to(message, msg[i:i+4096], parse_mode="Markdown", reply_markup=create_main_menu())
+    def format_stats(title, stats):
+        text = f"{title}\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        for command, count in stats:
+            if command.startswith("assistant:"):
+                display_name = f"🤖 Ассистент: {command.split(':',1)[1]}"
+            elif command.startswith("expert:"):
+                display_name = f"👨‍💼 Эксперт #{command.split(':',1)[1]}"
             else:
-                bot.reply_to(message, msg, parse_mode="Markdown", reply_markup=create_main_menu())
-    except Exception as e:
-        # Убираем Markdown и пробуем снова
-        for msg in messages:
-            msg_plain = msg.replace("*", "").replace("_", "")
-            if len(msg_plain) > 4096:
-                for i in range(0, len(msg_plain), 4096):
-                    bot.reply_to(message, msg_plain[i:i+4096], reply_markup=create_main_menu())
-            else:
-                bot.reply_to(message, msg_plain, reply_markup=create_main_menu())
+                display_name = command_names.get(command, command)
+            text += f"🔹 {display_name}: {count} раз\n"
+        return text + "\n"
+    
+    messages = [
+        format_stats("📅 За неделю:", week_stats),
+        format_stats("📅 За месяц:", month_stats),
+        format_stats("📅 За год:", year_stats) + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    ]
+    
+    for msg in messages:
+        bot.reply_to(message, msg, parse_mode="Markdown", reply_markup=create_main_menu())
 
 @bot.message_handler(func=lambda message: message.text == "Отменить")
 def cancel_subscription(message):
