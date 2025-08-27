@@ -221,7 +221,8 @@ def normalize_command(command: str) -> str:
 
 def log_command(user_id: int, command: str):
     """Логируем команду пользователя"""
-    from db import get_db_connection
+    from database import get_db_connection
+
     conn = get_db_connection()
     cursor = conn.cursor()
 
