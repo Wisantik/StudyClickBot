@@ -158,60 +158,86 @@ ASSISTANT_COMMANDS = {
 }
 
 def normalize_command(command: str) -> str:
-    """Приводим команды к понятному виду"""
+    """Приводим все команды к единому виду"""
+
     if not command:
-        return "❓ Неизвестная команда"
+        return None
 
     mapping = {
+        # Системные
         "start": "start",
+        "stats_admin": "📊 Статистика (админ)",
+
+        # Профиль
         "profile": "👤 Мой профиль",
         "Мой профиль": "👤 Мой профиль",
+        "👤 Мой профиль": "👤 Мой профиль",
+        "back_to_profile": "⬅️ Назад к профилю",
+
+        # Подписка
         "subscription": "💳 Подписка",
         "buy_subscription": "💳 Купить подписку",
         "cancel_subscription": "❌ Отмена подписки",
-        "stats_admin": "📊 Статистика (админ)",
-        "support": "📞 Поддержка",
-        "clear_history": "🗑 Очистить историю чата",
-        "back_to_profile": "⬅️ Назад к профилю",
-        "choose_language": "🌐 Выбрать язык",
+        "open_subscription_menu": "💳 Открытие меню подписки",
+        "subscribed_button": "✅ Нажатие \"Я подписался\"",
+
+        # Веб-поиск
         "toggle_web_on": "🔍 Включить веб-поиск",
         "toggle_web_off": "🔍 Выключить веб-поиск",
-        "subscribed_button": "✅ Нажатие \"Я подписался\"",
         "web_attempt": "🚫 Попытка веб-поиска без подписки",
+
+        # Поддержка
+        "support": "📞 Поддержка",
+        "support_from_profile": "📞 Поддержка (из профиля)",
+
+        # История
+        "clear_history": "🗑 Очистить историю чата",
+
+        # Язык
+        "choose_language": "🌐 Выбрать язык",
+
+        # Ассистенты
         "assistants": "🤖 Ассистенты",
+        "Ассистенты": "🤖 Ассистенты",
         "assistants_from_profile": "🤖 Ассистенты (из профиля)",
+
+        # Эксперты
+        "experts": "👨‍💼 Эксперты",
+        "Эксперты": "👨‍💼 Эксперты",
         "experts_from_profile": "👨‍💼 Эксперты (из профиля)",
-        "open_subscription_menu": "💳 Открытие меню подписки",
     }
 
-    # Если команда совпадает с ассистентами — возвращаем красивое имя
+    # Ассистенты (с кнопок меню)
     if command in ASSISTANT_COMMANDS:
         return ASSISTANT_COMMANDS[command]
 
-    # Если в списке маппинга
+    # Если команда есть в словаре
     if command in mapping:
         return mapping[command]
 
-    # Всё остальное игнорируем
-    return None
+    return None  # всё остальное выкидываем
 
 
 
-def log_command(user_id, command):
-    norm = normalize_command(command)
-    if not norm:  # мусор — не логируем
-        return
+def log_command(user_id: int, command: str):
+    """Логируем команду пользователя"""
+    from db import get_db_connection
+    conn = get_db_connection()
+    cursor = conn.cursor()
 
-    conn = connect_to_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO command_logs (user_id, command, created_at) VALUES (%s, %s, NOW())",
-                (user_id, norm),
-            )
-        conn.commit()
-    finally:
-        conn.close()
+    # Нормализуем команду сразу при записи
+    normalized = normalize_command(command)
+    if not normalized:
+        return  # игнорируем мусорные команды
+
+    cursor.execute(
+        "INSERT INTO command_logs (user_id, command, created_at) VALUES (%s, %s, NOW())",
+        (user_id, normalized)
+    )
+    conn.commit()
+    cursor.close()
+    conn.close()
+
 
 def get_command_stats(period):
     conn = connect_to_db()
