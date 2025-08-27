@@ -657,3 +657,6 @@ def clear_chat_history(chat_id):
 conn = connect_to_db()
 set_default_assistant(conn, 'universal_expert')
 conn.close()
+
+def get_db_connection():
+    return connect_to_db()
