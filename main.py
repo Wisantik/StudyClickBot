@@ -163,14 +163,17 @@ def log_command(user_id, command):
     norm = normalize_command(command)
     if not norm:  # мусор — не логируем
         return
-    conn = connect_to_db()
-    with conn:
-        conn.execute(
-            "INSERT INTO command_logs (user_id, command, created_at) VALUES (%s, %s, NOW())",
-            (user_id, norm),
-        )
-    conn.close()
 
+    conn = connect_to_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO command_logs (user_id, command, created_at) VALUES (%s, %s, NOW())",
+                (user_id, norm),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 def get_command_stats(period):
     conn = connect_to_db()
