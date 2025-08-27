@@ -144,8 +144,7 @@ def create_command_logs_table():
         conn.commit()
     conn.close()
 
-# Белый список ассистентов (из меню на скрине)
-# ==== Белый список ассистентов (любой текст, который у тебя в меню) ====
+# ---------- Нормализация команд ----------
 ASSISTANT_COMMANDS = {
     "Консультант универсальный": "🤖 Ассистент: Универсальный",
     "Консультант по финтеху и цифровым финансам": "🤖 Ассистент: Финтех и цифровые финансы",
@@ -160,127 +159,125 @@ ASSISTANT_COMMANDS = {
 
 def normalize_command(command: str) -> str:
     """
-    Приводим все команды к единому (человекочитаемому) виду.
-    Возвращает None для команд, которые нужно игнорировать в статистике.
+    Возвращает человекочитаемое название команды или None (если команду нужно игнорировать).
+    Нормализует англ. и русские варианты, select_assistant_* и др.
     """
-    if not command:
+    if not command or not isinstance(command, str):
         return None
 
-    # корректируем типы callback'ов, которые у тебя используются
-    # сначала стандартные явные callback’ы / команды
-    mapping = {
-        # системные команды
-        "start": "start",
+    cmd = command.strip()
 
-        # профиль
+    # Прямой маппинг (англ/рус/варианты)
+    mapping = {
+        "start": "start",
         "profile": "👤 Мой профиль",
         "Мой профиль": "👤 Мой профиль",
         "👤 Мой профиль": "👤 Мой профиль",
         "back_to_profile": "⬅️ Назад к профилю",
+        "back": "⬅️ Назад к профилю",
         "Назад": "⬅️ Назад к профилю",
-
-        # подписка
+        "statsadmin12": "📊 Статистика (админ)",
+        "check_subscription": '✅ Нажатие "Я подписался"',
         "pay": "💳 Подписка",
         "subscription": "💳 Подписка",
         "buy_subscription": "💳 Купить подписку",
         "cancel_subscription": "❌ Отмена подписки",
+        "cancel": "❌ Отмена подписки",
         "open_subscription_menu": "💳 Открытие меню подписки",
-        "check_subscription": '✅ Нажатие "Я подписался"',
-
-        # веб-поиск
+        "show_pay_menu": "💳 Открытие меню подписки",
         "search_on": "🔍 Включить веб-поиск",
         "search_off": "🔍 Выключить веб-поиск",
         "search_denied_no_subscription": "🚫 Попытка веб-поиска без подписки",
-        "search_on": "🔍 Включить веб-поиск",
-        "search_off": "🔍 Выключить веб-поиск",
-
-        # поддержка
+        "toggle_web_on": "🔍 Включить веб-поиск",
+        "toggle_web_off": "🔍 Выключить веб-поиск",
         "support": "📞 Поддержка",
         "show_support": "📞 Поддержка (из профиля)",
-        "support_from_profile": "📞 Поддержка (из профиля)",
-
-        # история
-        "new": "🗑 Очистить историю чата",
         "clear_history": "🗑 Очистить историю чата",
-
-        # язык и прочее
+        "new": "🗑 Очистить историю чата",
         "language": "🌐 Выбрать язык",
-        # callback'ы language приходят как lang_xx -> handled ниже
-
-        # профиль-меню callbacks
+        "assistants": "🤖 Ассистенты",
+        "Ассистенты": "🤖 Ассистенты",
+        "assistants_from_profile": "🤖 Ассистенты (из профиля)",
         "show_assistants": "🤖 Ассистенты (из профиля)",
-        "show_experts": "👨‍💼 Эксперты (из профиля)",
-        "show_pay_menu": "💳 Открытие меню подписки",
+        "experts": "👨‍💼 Эксперты",
+        "Эксперты": "👨‍💼 Эксперты",
+        "experts_from_profile": "👨‍💼 Эксперты (из профиля)",
         "referral": "🔗 Реферальная ссылка",
+        "search": None,  # избегаем логирования "search" как мусор
     }
 
-    # 1) Если это callback типа lang_xx -> нормализуем в "🌐 Выбрать язык"
-    if command.startswith("lang_"):
+    # при прямом совпадении
+    if cmd in mapping:
+        return mapping[cmd]
+
+    # lang_xx -> язык (нормируем в один пункт)
+    if cmd.startswith("lang") or cmd.startswith("language_") or cmd.startswith("lang_"):
         return "🌐 Выбрать язык"
 
-    # 2) Если это callback типа select_assistant_<id> или assistant:<id> -> подставляем человеческое имя
-    if command.startswith("select_assistant_") or command.startswith("assistant:"):
-        # достаём id
-        if command.startswith("select_assistant_"):
-            assistant_id = command.replace("select_assistant_", "")
-        else:
-            assistant_id = command.split(":", 1)[1]
-        # пробуем взять имя из текущей конфигурации
+    # select_assistant_<id> или select_assistant_<readable name>
+    if cmd.startswith("select_assistant_") or cmd.startswith("selectassistant_"):
+        aid = cmd.replace("select_assistant_", "").replace("selectassistant_", "")
+        # попробуем взять красивое имя из конфигурации
         try:
             cfg = load_assistants_config()
-            assistants = cfg.get("assistants", {})
-            if assistant_id in assistants:
-                human_name = assistants[assistant_id].get("name") or assistant_id
-                return f"🤖 Ассистент: {human_name}"
+            assistants = cfg.get("assistants", {}) if isinstance(cfg, dict) else {}
+            if aid in assistants:
+                return f"🤖 Ассистент: {assistants[aid].get('name')}"
+            # иногда id может быть 'personal_finance' или 'Fintech Consultant' — ищем по вхождению
+            for k, v in assistants.items():
+                if aid.lower() in k.lower() or aid.lower() in (v.get("name","").lower()):
+                    return f"🤖 Ассистент: {v.get('name')}"
         except Exception:
             pass
-        # fallback — возвращаем id
-        return f"🤖 Ассистент: {assistant_id}"
+        # если не нашли — подставляем тот текст, что в callback (человеческий)
+        human = aid.replace("_", " ").strip()
+        return f"🤖 Ассистент: {human.capitalize()}" if human else f"🤖 Ассистент: {aid}"
 
-    # 3) expert callbacks
-    if command.startswith("expert_") or command.startswith("expert:"):
-        # expert_12 или expert:12
+    # формат assistant:xyz (если где-то осталось)
+    if cmd.startswith("assistant:"):
+        aid = cmd.split(":", 1)[1]
         try:
-            ex_id = int(command.split("_")[-1]) if "expert_" in command else int(command.split(":")[1])
-            return f"👨‍💼 Эксперт #{ex_id}"
+            cfg = load_assistants_config()
+            assistants = cfg.get("assistants", {}) if isinstance(cfg, dict) else {}
+            if aid in assistants:
+                return f"🤖 Ассистент: {assistants[aid].get('name')}"
         except Exception:
-            return "👨‍💼 Эксперт"
+            pass
+        return f"🤖 Ассистент: {aid}"
 
-    # 4) если команда соответствует одному из ключей mapping
-    if command in mapping:
-        return mapping[command]
+    # expert callbacks
+    if cmd.startswith("expert_") or cmd.startswith("expert:"):
+        # достаем id (число) если есть
+        parts = cmd.replace("expert:", "expert_").split("_")
+        for p in parts:
+            if p.isdigit():
+                return f"👨‍💼 Эксперт #{p}"
+        return "👨‍💼 Эксперт"
 
-    # 5) команды, которые приходят как русские варианты названия ассистента (в GUI),
-    #    если совпадает с белым списком — вернуть человекочитаемое значение
-    if command in ASSISTANT_COMMANDS:
-        return ASSISTANT_COMMANDS[command]
+    # если команда — уже человекочитаемая русская строка (с эмодзи или кириллицей) — сохраняем
+    if any(ch.isalpha() for ch in cmd) and len(cmd) <= 200:
+        # нормализуем пробелы
+        return " ".join(cmd.split())
 
-    # 6) игнорируем заведомо мусорные/внутренние команды
-    trash_prefixes = ("selectassistant", "select_assistant", "expert1", "expert2", "universal", "search", "lang")
-    if any(command.startswith(pf) for pf in trash_prefixes) or command in ("universal", "Ассистенты", "Эксперты"):
-        return None
-
-    # 7) по умолчанию — если это уже человекочитаемая строка (с эмодзи или кириллицей), сохранём её
-    # Ограничение длины — чтобы не хранить хаос
-    if isinstance(command, str) and 1 <= len(command) <= 200:
-        return command
-
+    # всё остальное — игнорируем
     return None
 
 
-
-
+# ---------- Логирование команды (вставляет нормализованное значение) ----------
 def log_command(user_id: int, command: str):
-    """Нормализуем и логируем команду в БД; игнорируем мусор."""
+    """
+    Нормализуем команду и пишем в command_logs.
+    Игнорируем None (мусор).
+    """
     try:
         normalized = normalize_command(command)
         if not normalized:
-            # игнорируем мусорные/лишние команды
-            return
+            return  # игнорируем мусор или технические варианты
+
         conn = connect_to_db()
         try:
-            with conn.cursor() as cursor:
-                cursor.execute(
+            with conn.cursor() as cur:
+                cur.execute(
                     "INSERT INTO command_logs (user_id, command) VALUES (%s, %s)",
                     (user_id, normalized)
                 )
@@ -289,9 +286,7 @@ def log_command(user_id: int, command: str):
             conn.close()
     except Exception as e:
         # не даём падать боту из-за логов
-        print(f"[ERROR] log_command error: {e} (original command: {command})")
-
-
+        print(f"[ERROR] log_command error: {e} (orig='{command}')")
 
 def get_command_stats(period):
     conn = connect_to_db()
@@ -1297,39 +1292,106 @@ GPT-4o: {user_data['daily_tokens']} символов
 
 ADMIN_IDS = [998107476, 741831495]
 
-# === Статистика (админ) ===
+# ---------- show_stats_admin: группированный и аккуратный вывод ----------
 @bot.message_handler(commands=['statsadmin12'])
 def show_stats_admin(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "У вас нет прав для просмотра статистики.", reply_markup=create_main_menu())
         return
-    
+
     log_command(message.from_user.id, "statsadmin12")
-    
-    week_stats = get_command_stats('week')
-    month_stats = get_command_stats('month')
-    year_stats = get_command_stats('year')
-    
-    command_names = {
-        'profile': '👤 Мой профиль',
-        'language': '🌐 Выбрать язык',
-        'assistants': '🤖 Ассистенты',
-        'experts': '👨‍💼 Эксперты',
-        'search_on': '🔍 Включить веб-поиск',
-        'search_off': '🔍 Выключить веб-поиск',
-        'search_denied_no_subscription': '🚫 Попытка веб-поиска без подписки',
-        'pay': '💳 Подписка',
-        'cancel_subscription': '❌ Отмена подписки',
-        'new': '🗑 Очистить историю чата',
-        'support': '📞 Поддержка',
-        'statsadmin12': '📊 Статистика (админ)',
-        'check_subscription': '✅ Нажатие "Я подписался"',
-        'show_pay_menu': '💳 Открытие меню подписки',
-        'show_assistants': '🤖 Ассистенты (из профиля)',
-        'show_experts': '👨‍💼 Эксперты (из профиля)',
-        'show_support': '📞 Поддержка (из профиля)',
-        'back_to_profile': '⬅️ Назад к профилю'
-    }
+
+    # получаем сырые данные (список (command, count))
+    week_raw = get_command_stats('week')    # предполагается: [(command, count), ...]
+    month_raw = get_command_stats('month')
+    year_raw = get_command_stats('year')
+
+    def aggregate(raw_stats):
+        agg = {}
+        for cmd, cnt in raw_stats:
+            norm = normalize_command(cmd)
+            if not norm:
+                continue
+            agg[norm] = agg.get(norm, 0) + int(cnt)
+        return agg  # {normalized_command: total_count}
+
+    week = aggregate(week_raw)
+    month = aggregate(month_raw)
+    year = aggregate(year_raw)
+
+    # Группировка по категориям
+    def group_stats(agg_dict):
+        groups = {
+            "Профиль": {},
+            "Ассистенты": {},
+            "Подписки": {},
+            "Веб-поиск": {},
+            "Поддержка": {},
+            "Эксперты": {},
+            "Платежи/прочее": {},
+            "Админ/системное": {},
+            "Другое": {}
+        }
+        for cmd, cnt in agg_dict.items():
+            if "Мой профиль" in cmd or "Назад" in cmd:
+                groups["Профиль"][cmd] = cnt
+            elif cmd.startswith("🤖 Ассистент") or "Ассистенты" in cmd:
+                groups["Ассистенты"][cmd] = cnt
+            elif "Подписк" in cmd or "Купить" in cmd or "Отмена подписки" in cmd:
+                groups["Подписки"][cmd] = cnt
+            elif "веб-поиск" in cmd or "Включить веб-поиск" in cmd or "Выключить веб-поиск" in cmd or "Попытка веб-поиска" in cmd:
+                groups["Веб-поиск"][cmd] = cnt
+            elif "Поддержк" in cmd:
+                groups["Поддержка"][cmd] = cnt
+            elif cmd.startswith("👨‍💼 Эксперт") or "Эксперты" in cmd:
+                groups["Эксперты"][cmd] = cnt
+            elif cmd in ("start", "referral", "🔗 Реферальная ссылка"):
+                groups["Платежи/прочее"][cmd] = cnt
+            elif "Статистика" in cmd or cmd == "statsadmin12" or cmd.startswith("📊"):
+                groups["Админ/системное"][cmd] = cnt
+            else:
+                groups["Другое"][cmd] = cnt
+        return groups
+
+    week_groups = group_stats(week)
+    month_groups = group_stats(month)
+    year_groups = group_stats(year)
+
+    # Форматирование одной группы
+    def format_group(title, group_dict):
+        if not group_dict:
+            return ""
+        # сортируем по убыванию и показываем все (или top N при желании)
+        items = sorted(group_dict.items(), key=lambda x: -x[1])
+        text = f"<b>{title}</b>\n"
+        for name, cnt in items:
+            text += f"• {name}: {cnt} раз\n"
+        text += "\n"
+        return text
+
+    def format_report(period_title, groups_dict):
+        text = f"<b>{period_title}</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        # порядок групп для удобства
+        order = ["Профиль", "Ассистенты", "Подписки", "Веб-поиск", "Поддержка", "Эксперты", "Платежи/прочее", "Админ/системное", "Другое"]
+        for grp in order:
+            text += format_group(grp, groups_dict.get(grp, {}))
+        text += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        return text
+
+    reports = [
+        format_report("📅 За неделю:", week_groups),
+        format_report("📅 За месяц:", month_groups),
+        format_report("📅 За год:", year_groups)
+    ]
+
+    for rpt in reports:
+        try:
+            bot.reply_to(message, rpt, parse_mode="HTML", reply_markup=create_main_menu())
+        except Exception as e:
+            print(f"[ERROR] Ошибка отправки статистики: {e}")
+            # fallback plain
+            bot.reply_to(message, rpt, reply_markup=create_main_menu())
+
 
     def format_stats(title, stats):
         assistants_cfg = {}
