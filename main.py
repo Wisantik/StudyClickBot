@@ -145,6 +145,7 @@ def create_command_logs_table():
     conn.close()
 
 # Белый список ассистентов (из меню на скрине)
+# ==== Белый список ассистентов (любой текст, который у тебя в меню) ====
 ASSISTANT_COMMANDS = {
     "Консультант универсальный": "🤖 Ассистент: Универсальный",
     "Консультант по финтеху и цифровым финансам": "🤖 Ассистент: Финтех и цифровые финансы",
@@ -158,86 +159,138 @@ ASSISTANT_COMMANDS = {
 }
 
 def normalize_command(command: str) -> str:
-    """Приводим все команды к единому виду"""
-
+    """
+    Приводим все команды к единому (человекочитаемому) виду.
+    Возвращает None для команд, которые нужно игнорировать в статистике.
+    """
     if not command:
         return None
 
+    # корректируем типы callback'ов, которые у тебя используются
+    # сначала стандартные явные callback’ы / команды
     mapping = {
-        # Системные
+        # системные команды
         "start": "start",
-        "stats_admin": "📊 Статистика (админ)",
 
-        # Профиль
+        # профиль
         "profile": "👤 Мой профиль",
         "Мой профиль": "👤 Мой профиль",
         "👤 Мой профиль": "👤 Мой профиль",
         "back_to_profile": "⬅️ Назад к профилю",
+        "Назад": "⬅️ Назад к профилю",
 
-        # Подписка
+        # подписка
+        "pay": "💳 Подписка",
         "subscription": "💳 Подписка",
         "buy_subscription": "💳 Купить подписку",
         "cancel_subscription": "❌ Отмена подписки",
         "open_subscription_menu": "💳 Открытие меню подписки",
-        "subscribed_button": "✅ Нажатие \"Я подписался\"",
+        "check_subscription": '✅ Нажатие "Я подписался"',
 
-        # Веб-поиск
-        "toggle_web_on": "🔍 Включить веб-поиск",
-        "toggle_web_off": "🔍 Выключить веб-поиск",
-        "web_attempt": "🚫 Попытка веб-поиска без подписки",
+        # веб-поиск
+        "search_on": "🔍 Включить веб-поиск",
+        "search_off": "🔍 Выключить веб-поиск",
+        "search_denied_no_subscription": "🚫 Попытка веб-поиска без подписки",
+        "search_on": "🔍 Включить веб-поиск",
+        "search_off": "🔍 Выключить веб-поиск",
 
-        # Поддержка
+        # поддержка
         "support": "📞 Поддержка",
+        "show_support": "📞 Поддержка (из профиля)",
         "support_from_profile": "📞 Поддержка (из профиля)",
 
-        # История
+        # история
+        "new": "🗑 Очистить историю чата",
         "clear_history": "🗑 Очистить историю чата",
 
-        # Язык
-        "choose_language": "🌐 Выбрать язык",
+        # язык и прочее
+        "language": "🌐 Выбрать язык",
+        # callback'ы language приходят как lang_xx -> handled ниже
 
-        # Ассистенты
-        "assistants": "🤖 Ассистенты",
-        "Ассистенты": "🤖 Ассистенты",
-        "assistants_from_profile": "🤖 Ассистенты (из профиля)",
-
-        # Эксперты
-        "experts": "👨‍💼 Эксперты",
-        "Эксперты": "👨‍💼 Эксперты",
-        "experts_from_profile": "👨‍💼 Эксперты (из профиля)",
+        # профиль-меню callbacks
+        "show_assistants": "🤖 Ассистенты (из профиля)",
+        "show_experts": "👨‍💼 Эксперты (из профиля)",
+        "show_pay_menu": "💳 Открытие меню подписки",
+        "referral": "🔗 Реферальная ссылка",
     }
 
-    # Ассистенты (с кнопок меню)
-    if command in ASSISTANT_COMMANDS:
-        return ASSISTANT_COMMANDS[command]
+    # 1) Если это callback типа lang_xx -> нормализуем в "🌐 Выбрать язык"
+    if command.startswith("lang_"):
+        return "🌐 Выбрать язык"
 
-    # Если команда есть в словаре
+    # 2) Если это callback типа select_assistant_<id> или assistant:<id> -> подставляем человеческое имя
+    if command.startswith("select_assistant_") or command.startswith("assistant:"):
+        # достаём id
+        if command.startswith("select_assistant_"):
+            assistant_id = command.replace("select_assistant_", "")
+        else:
+            assistant_id = command.split(":", 1)[1]
+        # пробуем взять имя из текущей конфигурации
+        try:
+            cfg = load_assistants_config()
+            assistants = cfg.get("assistants", {})
+            if assistant_id in assistants:
+                human_name = assistants[assistant_id].get("name") or assistant_id
+                return f"🤖 Ассистент: {human_name}"
+        except Exception:
+            pass
+        # fallback — возвращаем id
+        return f"🤖 Ассистент: {assistant_id}"
+
+    # 3) expert callbacks
+    if command.startswith("expert_") or command.startswith("expert:"):
+        # expert_12 или expert:12
+        try:
+            ex_id = int(command.split("_")[-1]) if "expert_" in command else int(command.split(":")[1])
+            return f"👨‍💼 Эксперт #{ex_id}"
+        except Exception:
+            return "👨‍💼 Эксперт"
+
+    # 4) если команда соответствует одному из ключей mapping
     if command in mapping:
         return mapping[command]
 
-    return None  # всё остальное выкидываем
+    # 5) команды, которые приходят как русские варианты названия ассистента (в GUI),
+    #    если совпадает с белым списком — вернуть человекочитаемое значение
+    if command in ASSISTANT_COMMANDS:
+        return ASSISTANT_COMMANDS[command]
+
+    # 6) игнорируем заведомо мусорные/внутренние команды
+    trash_prefixes = ("selectassistant", "select_assistant", "expert1", "expert2", "universal", "search", "lang")
+    if any(command.startswith(pf) for pf in trash_prefixes) or command in ("universal", "Ассистенты", "Эксперты"):
+        return None
+
+    # 7) по умолчанию — если это уже человекочитаемая строка (с эмодзи или кириллицей), сохранём её
+    # Ограничение длины — чтобы не хранить хаос
+    if isinstance(command, str) and 1 <= len(command) <= 200:
+        return command
+
+    return None
+
 
 
 
 def log_command(user_id: int, command: str):
-    """Логируем команду пользователя"""
-    from database import get_db_connection
+    """Нормализуем и логируем команду в БД; игнорируем мусор."""
+    try:
+        normalized = normalize_command(command)
+        if not normalized:
+            # игнорируем мусорные/лишние команды
+            return
+        conn = connect_to_db()
+        try:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    "INSERT INTO command_logs (user_id, command) VALUES (%s, %s)",
+                    (user_id, normalized)
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        # не даём падать боту из-за логов
+        print(f"[ERROR] log_command error: {e} (original command: {command})")
 
-    conn = get_db_connection()
-    cursor = conn.cursor()
-
-    # Нормализуем команду сразу при записи
-    normalized = normalize_command(command)
-    if not normalized:
-        return  # игнорируем мусорные команды
-
-    cursor.execute(
-        "INSERT INTO command_logs (user_id, command, created_at) VALUES (%s, %s, NOW())",
-        (user_id, normalized)
-    )
-    conn.commit()
-    cursor.close()
-    conn.close()
 
 
 def get_command_stats(period):
@@ -1279,24 +1332,34 @@ def show_stats_admin(message):
     }
 
     def format_stats(title, stats):
-        assistants = load_assistants_config().get("assistants", {})
+        assistants_cfg = {}
+        try:
+            assistants_cfg = load_assistants_config().get("assistants", {})
+        except Exception:
+            assistants_cfg = {}
         text = f"<b>{title}</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
         for command, count in stats:
-            # фильтруем старый мусор
-            if command.startswith("selectassistant") or command.startswith("lang") \
-               or command in ["expert1", "expert2", "universal", "Ассистенты", "Эксперты", "search"]:
-                continue  
-
-            if command.startswith("assistant:"):
-                asst_id = command.split(":", 1)[1]
-                display_name = f"🤖 Ассистент: {assistants.get(asst_id, {}).get('name', asst_id)}"
-            elif command.startswith("expert:"):
-                display_name = f"👨‍💼 Эксперт #{command.split(':', 1)[1]}"
+            # если в БД вдруг попали старые сырые значения — попробуем преобразовать/пропустить
+            # 1) сырые select_assistant_* или select_assistant.* -> человекочитаемое имя
+            if isinstance(command, str) and (command.startswith("select_assistant_") or command.startswith("selectassistant_")):
+                aid = command.replace("select_assistant_", "").replace("selectassistant_", "")
+                name = assistants_cfg.get(aid, {}).get("name") if isinstance(assistants_cfg, dict) else None
+                display_name = f"🤖 Ассистент: {name or aid}"
+            # 2) наши normalized assistant:... (на случай, если кто-то логировал так)
+            elif isinstance(command, str) and command.startswith("assistant:"):
+                aid = command.split(":", 1)[1]
+                name = assistants_cfg.get(aid, {}).get("name") if isinstance(assistants_cfg, dict) else None
+                display_name = f"🤖 Ассистент: {name or aid}"
             else:
-                display_name = command_names.get(command, command)
+                # это уже человекочитаемая нормализованная строка (как мы сохраняем)
+                display_name = command
 
+            # фильтр дополнительных нежелательных строк
+            if display_name is None:
+                continue
             text += f"🔹 {display_name}: {count} раз\n"
         return text + "\n"
+
     
     messages = [
         format_stats("📅 За неделю:", week_stats),
