@@ -1614,49 +1614,69 @@ def _chunk_text_full(text: str, max_chars: int = 8000, overlap: int = 300):
         start = end - overlap
     return chunks
 
-def _analyze_chunks_with_ai(chunks: list, filename: str, message):
+# ----------------- Анализ больших документов без обрезки (не отправляя текст обратно) -----------------
+def _analyze_chunks_with_ai(chunks: list, filename: str, message, user_query: str | None = None):
     """
-    Для каждого чанка отправляет запрос в ИИ (через твою функцию process_text_message),
-    собирает частичные ответы, затем просит ИИ объединить их в единый итог.
-    Возвращает итоговый текст (строка), который можно безопасно отправить пользователю.
+    Анализ чанков и синтез итогового ответа. Возвращает итоговый текст — без отправки исходного файла.
+    Если user_query задан, итог — ответ на этот вопрос (используя данные из чанков).
+    Если user_query == None, итог — аналитический разбор: ключевые факты, выводы и рекомендации.
     """
-    partial_summaries = []
+    partials = []
     total = len(chunks)
     for idx, chunk in enumerate(chunks):
-        # Формируем инструкцию, чтобы ИИ понял, что это часть файла
-        prompt = (
-            f"[Файл: {filename}] Часть {idx+1}/{total}.\n"
-            "Проанализируй этот фрагмент документа. Дай краткое резюме (2-4 предложения) и перечисли 3-5 ключевых фактов/выводов из этой части.\n\n"
-            f"{chunk}\n\n"
-            "Ответ — только текст (без дополнительных пояснений)."
-        )
-        # process_text_message — твоя существующая функция, использующая модель
+        # Инструкция для анализа части — просим не делать общий резюме, а извлечь факты/данные релевантные вопросу
+        if user_query:
+            prompt = (
+                f"[Файл: {filename}] Часть {idx+1}/{total}.\n"
+                f"Задача: подготовь факты/фрагменты информации из этой части, которые релевантны вопросу: «{user_query}».\n"
+                "Не делай общего резюме файла — просто перечисли важные факты/данные/цитаты и укажи, к каким выводам они ведут.\n\n"
+                f"{chunk}\n\n"
+                "Ответ содержательный, короткие пункты/факты — не более 6 пунктов."
+            )
+        else:
+            prompt = (
+                f"[Файл: {filename}] Часть {idx+1}/{total}.\n"
+                "Задача: извлечь ключевые факты, наблюдения и возможные рекомендации из этой части.\n"
+                "Не нужно писать общее резюме. Ответьте пунктами (факт -> комментарий/значение).\n\n"
+                f"{chunk}\n\n"
+                "Ответ — только текст (пункты), без вводных слов."
+            )
+
+        # показать typing
         try:
-            # показываем typing
             bot.send_chat_action(message.chat.id, "typing")
         except Exception:
             pass
+
         try:
             partial = process_text_message(prompt, message.chat.id)
         except Exception as e:
-            # если модель упала для чанка — всё равно продолжаем, логируем
             print(f"[WARN] AI chunk analysis failed (part {idx+1}): {e}")
             partial = f"[Ошибка анализа части {idx+1}]"
-        partial_summaries.append(f"--- Часть {idx+1}/{total} ---\n{partial}\n")
+        partials.append(f"--- Часть {idx+1}/{total} ---\n{partial}\n")
 
-    # Теперь объединяем частичные анализы в единый запрос на синтез
-    synthesis_prompt = (
-        f"[Файл: {filename}] Объединение частичных анализов. "
-        "На основе следующих частичных резюме, составь единое краткое резюме документа (3-6 предложений), "
-        "затем перечисли ключевые выводы/факты (пункты), и в конце — 3 приоритетных вопроса/неясности, которые следует проверить.\n\n"
-        "Частичные анализы:\n\n" + "\n".join(partial_summaries) +
-        "\n\nОтвет структурируй как:\n1) Резюме:\n<текст>\n\n2) Ключевые выводы:\n- ...\n\n3) Вопросы/неясности:\n- ...\n\n"
-    )
+    # Синтез итогового ответа (учитываем user_query)
+    if user_query:
+        synthesis_instruct = (
+            f"[Файл: {filename}] Объединение частичных фактов для ответа на вопрос: «{user_query}».\n"
+            "На основе приведённых частичных фактов составь развёрнутый ответ на вопрос. "
+            "Если фактов недостаточно — честно укажи, какие данные отсутствуют и что нужно уточнить. "
+            "Ответ структурируй: 1) Ответ на вопрос (по сути), 2) Ключевые факты, использованные при ответе, 3) Рекомендации/следующие шаги."
+        )
+    else:
+        synthesis_instruct = (
+            f"[Файл: {filename}] Объединение частичных фактов / аналитика.\n"
+            "На основе частичных фактов составь аналитический ответ: 1) Ключевые выводы (пункты), "
+            "2) Практические рекомендации (пункты), 3) 3 приоритетных вопроса/неясности для проверки."
+        )
+
+    synthesis_prompt = synthesis_instruct + "\n\nЧастичные анализы:\n\n" + "\n".join(partials)
 
     try:
         bot.send_chat_action(message.chat.id, "typing")
     except Exception:
         pass
+
     try:
         final_analysis = process_text_message(synthesis_prompt, message.chat.id)
     except Exception as e:
@@ -1665,10 +1685,15 @@ def _analyze_chunks_with_ai(chunks: list, filename: str, message):
 
     return final_analysis
 
-# Замена хендлера документов:
+
+# Новый хендлер документов — сохраняет файл в user_data + отвечает с учётом подписи (caption) или даёт аналитический ответ
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
     user_data = load_user_data(message.from_user.id)
+    if not user_data:
+        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте /start.", reply_markup=create_main_menu())
+        return
+
     if user_data.get('subscription_plan') == 'free':
         bot.reply_to(message, "Для чтения документов требуется подписка Plus. Выберите тариф: /pay", reply_markup=create_main_menu())
         return
@@ -1678,12 +1703,12 @@ def handle_document(message):
         downloaded_file = bot.download_file(file_info.file_path)
         file_extension = message.document.file_name.split('.')[-1].lower()
 
-        # читаем весь документ (никто не обрезается)
+        # читаем весь документ (никаких обрезок при чтении)
         if file_extension == 'txt':
             content = downloaded_file.decode('utf-8', errors='ignore')
         elif file_extension == 'pdf':
             with io.BytesIO(downloaded_file) as pdf_file:
-                content = read_pdf(pdf_file)  # твоя функция — достаёт весь текст
+                content = read_pdf(pdf_file)  # ваша функция, возвращающая весь текст
         elif file_extension == 'docx':
             with io.BytesIO(downloaded_file) as docx_file:
                 content = read_docx(docx_file)
@@ -1692,37 +1717,56 @@ def handle_document(message):
             return
 
         if not content or not content.strip():
-            bot.reply_to(message, "Файл пуст или в нём нет извлекаемого текста (возможно, это изображение).", reply_markup=create_main_menu())
+            bot.reply_to(message, "Файл пуст или в нём нет извлекаемого текста (возможно, это изображение/pdf-скан).", reply_markup=create_main_menu())
             return
 
-        # Разбиваем на чанки для отправки в ИИ — НО НИКАКИХ ОБРЕЗОК ВДОЛЬ ТЕКСТА (все символы покрываются)
-        # На практике max_chars подбирается под модель/токены. 8000 символов — ориентир, не обрезаем исходный.
-        chunks = _chunk_text_full(content, max_chars=8000, overlap=400)
+        # Сохраняем документ в профиле пользователя (чтобы он был доступен как контекст)
+        user_data['last_document'] = {
+            'filename': message.document.file_name,
+            'content': content,
+            'uploaded_at': datetime.utcnow().isoformat()
+        }
+        save_user_data(user_data)
 
-        # Анализируем чанки и синтезируем единый ответ
-        final_analysis = _analyze_chunks_with_ai(chunks, message.document.file_name, message)
-
-        # ОТЛИЧНО: бот НЕ отправляет исходный текст файлом/сообщением.
-        # Отправляем только итог анализа (который короче исходного)
-        # если итог очень длинный — можно разбить при отправке; тут делаем простой send (телеграм лимит)
-        try:
-            # безопасная отправка — разбиваем ответ на допустимые части, но это только для вывода,
-            # сам исходник не меняется и не отправляется
-            CHUNK = 4000
-            for i in range(0, len(final_analysis), CHUNK):
-                bot.reply_to(message, final_analysis[i:i+CHUNK], reply_markup=create_main_menu())
-        except Exception as e:
-            # на случай ошибок отправки (например, парсинг сущностей), шлём без parse_mode
-            print(f"[WARN] sending analysis failed: {e}")
+        # Если есть подпись (caption) — считаем это вопросом/инструкцией и отвечаем с учётом файла.
+        caption = (message.caption or "").strip()
+        if caption:
+            # сформируем единый запрос: файл + вопрос — process_text_message добавит подсказку ассистента автоматически
+            combined = f"[Файл: {message.document.file_name}]\n\n{content}\n\nВопрос пользователя: {caption}"
+            # сначала пробуем прямой вызов (вдруг помещается в лимит и быстрее)
             try:
-                bot.reply_to(message, final_analysis, reply_markup=create_main_menu())
-            except Exception as e2:
-                print(f"[ERROR] final send failed: {e2}")
-                bot.reply_to(message, "Ошибка при отправке результата анализа.", reply_markup=create_main_menu())
+                bot.send_chat_action(message.chat.id, "typing")
+                ai_response = process_text_message(combined, message.chat.id)
+                # не отправляем файл обратно — только ответ
+                send_in_chunks(message, ai_response)
+                return
+            except Exception as e:
+                print(f"[WARN] Direct processing failed (will fallback to chunked): {e}")
 
+        # Если подписи нет или прямой вызов упал — делаем безопасный chunked анализ (без отправки исходника)
+        chunks = _chunk_text_full(content, max_chars=8000, overlap=400)
+        user_query = caption if caption else None
+        final_analysis = _analyze_chunks_with_ai(chunks, message.document.file_name, message, user_query=user_query)
+
+        # шлём ответ частями (телеграм лимиты)
+        send_in_chunks(message, final_analysis)
     except Exception as e:
         print(f"[ERROR] handle_document exception: {e}")
         bot.reply_to(message, f"Ошибка при чтении файла: {e}", reply_markup=create_main_menu())
+
+
+# Вспомогательная функция для безопасной отправки больших ответов (чтобы не посылать исходник)
+def send_in_chunks(message, text, chunk_size=4000):
+    try:
+        for i in range(0, len(text), chunk_size):
+            bot.reply_to(message, text[i:i+chunk_size], reply_markup=create_main_menu())
+    except Exception as e:
+        print(f"[WARN] sending analysis failed: {e}")
+        try:
+            bot.reply_to(message, text, reply_markup=create_main_menu())
+        except Exception as e2:
+            print(f"[ERROR] final send failed: {e2}")
+            bot.reply_to(message, "Ошибка при отправке результата анализа.", reply_markup=create_main_menu())
 
 def read_pdf(file):
     content = []
