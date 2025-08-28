@@ -21,7 +21,7 @@ from pydub import AudioSegment
 from ddgs import DDGS
 import re
 load_dotenv()
-
+from datetime import datetime
 # Настройка логирования и окружения
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 connect_to_db()
@@ -1719,8 +1719,7 @@ def handle_document(message):
         if not content or not content.strip():
             bot.reply_to(message, "Файл пуст или в нём нет извлекаемого текста (возможно, это изображение/pdf-скан).", reply_markup=create_main_menu())
             return
-
-        # Сохраняем документ в профиле пользователя (чтобы он был доступен как контекст)
+        
         user_data['last_document'] = {
             'filename': message.document.file_name,
             'content': content,
@@ -1728,20 +1727,36 @@ def handle_document(message):
         }
         save_user_data(user_data)
 
-        # Если есть подпись (caption) — считаем это вопросом/инструкцией и отвечаем с учётом файла.
         caption = (message.caption or "").strip()
         if caption:
-            # сформируем единый запрос: файл + вопрос — process_text_message добавит подсказку ассистента автоматически
-            combined = f"[Файл: {message.document.file_name}]\n\n{content}\n\nВопрос пользователя: {caption}"
-            # сначала пробуем прямой вызов (вдруг помещается в лимит и быстрее)
-            try:
-                bot.send_chat_action(message.chat.id, "typing")
-                ai_response = process_text_message(combined, message.chat.id)
-                # не отправляем файл обратно — только ответ
-                send_in_chunks(message, ai_response)
-                return
-            except Exception as e:
-                print(f"[WARN] Direct processing failed (will fallback to chunked): {e}")
+            # build assistant header safely
+            assistant_key = user_data.get('assistant') or user_data.get('assistant_id') or user_data.get('current_assistant') or user_data.get('last_assistant')
+            assistant_header = ""
+            if assistant_key:
+                try:
+                    cfg = get_assistants_cached() if 'get_assistants_cached' in globals() else load_assistants_config()
+                    assistants = cfg.get("assistants", {}) if isinstance(cfg, dict) else {}
+                    info = assistants.get(assistant_key)
+                    if not info:
+                        for k, v in assistants.items():
+                            if assistant_key.lower() in k.lower() or assistant_key.lower() == v.get("name","").lower():
+                                info = v
+                                break
+                    if info:
+                        ass_name = info.get("name", assistant_key)
+                        ass_prompt = info.get("prompt") or info.get("system_prompt") or info.get("system") or ""
+                        assistant_header = f"[Ассистент: {ass_name}]\n{ass_prompt}\n\n" if ass_prompt else f"[Ассистент: {ass_name}]\n\n"
+                except Exception as e:
+                    print(f"[WARN] assistant header build failed: {e}")
+
+            combined = assistant_header + f"[Файл: {message.document.file_name}]\n\n{content}\n\nВопрос пользователя: {caption}"
+
+            # теперь вызывать process_text_message как раньше
+            bot.send_chat_action(message.chat.id, "typing")
+            ai_response = process_text_message(combined, message.chat.id)
+            send_in_chunks(message, ai_response)
+            return
+
 
         # Если подписи нет или прямой вызов упал — делаем безопасный chunked анализ (без отправки исходника)
         chunks = _chunk_text_full(content, max_chars=8000, overlap=400)
