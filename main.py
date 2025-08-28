@@ -1428,52 +1428,6 @@ def show_stats_admin(message):
             except Exception as e2:
                 print(f"[ERROR] fallback send failed: {e2}")
 
-
-    def format_stats(title, stats):
-        assistants_cfg = {}
-        try:
-            assistants_cfg = load_assistants_config().get("assistants", {})
-        except Exception:
-            assistants_cfg = {}
-        text = f"<b>{title}</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        for command, count in stats:
-            # если в БД вдруг попали старые сырые значения — попробуем преобразовать/пропустить
-            # 1) сырые select_assistant_* или select_assistant.* -> человекочитаемое имя
-            if isinstance(command, str) and (command.startswith("select_assistant_") or command.startswith("selectassistant_")):
-                aid = command.replace("select_assistant_", "").replace("selectassistant_", "")
-                name = assistants_cfg.get(aid, {}).get("name") if isinstance(assistants_cfg, dict) else None
-                display_name = f"🤖 Ассистент: {name or aid}"
-            # 2) наши normalized assistant:... (на случай, если кто-то логировал так)
-            elif isinstance(command, str) and command.startswith("assistant:"):
-                aid = command.split(":", 1)[1]
-                name = assistants_cfg.get(aid, {}).get("name") if isinstance(assistants_cfg, dict) else None
-                display_name = f"🤖 Ассистент: {name or aid}"
-            else:
-                # это уже человекочитаемая нормализованная строка (как мы сохраняем)
-                display_name = command
-
-            # фильтр дополнительных нежелательных строк
-            if display_name is None:
-                continue
-            text += f"🔹 {display_name}: {count} раз\n"
-        return text + "\n"
-
-    
-    messages = [
-        format_stats("📅 За неделю:", week_stats),
-        format_stats("📅 За месяц:", month_stats),
-        format_stats("📅 За год:", year_stats) + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-    ]
-
-    # Отправляем по кускам
-    for msg in messages:
-        try:
-            bot.reply_to(message, msg, parse_mode="HTML", reply_markup=create_main_menu())
-        except Exception as e:
-            print(f"[ERROR] Ошибка при отправке статистики: {e}")
-            # fallback без форматирования
-            bot.reply_to(message, msg, reply_markup=create_main_menu())
-
 @bot.message_handler(func=lambda message: message.text == "Отменить")
 def cancel_subscription(message):
     log_command(message.from_user.id, "Отменить")
@@ -1638,30 +1592,136 @@ def echo_message(message):
     except Exception as e:
         bot.reply_to(message, f"Произошла ошибка, попробуйте позже! {e}", reply_markup=create_main_menu())
 
+# ----------------- Анализ больших документов без обрезки (не отправляя текст обратно) -----------------
+def _chunk_text_full(text: str, max_chars: int = 8000, overlap: int = 300):
+    """
+    Разбивает текст на чанки длиной <= max_chars, с перекрытием overlap символов.
+    НЕ обрезает текст: все символы покрыты.
+    Возвращает список чанков (строк).
+    """
+    if not text:
+        return []
+    if max_chars <= overlap:
+        raise ValueError("max_chars must be > overlap")
+    chunks = []
+    start = 0
+    L = len(text)
+    while start < L:
+        end = start + max_chars
+        chunk = text[start:end]
+        chunks.append(chunk)
+        # двигаться на (max_chars - overlap) символов, чтобы был контекст
+        start = end - overlap
+    return chunks
+
+def _analyze_chunks_with_ai(chunks: list, filename: str, message):
+    """
+    Для каждого чанка отправляет запрос в ИИ (через твою функцию process_text_message),
+    собирает частичные ответы, затем просит ИИ объединить их в единый итог.
+    Возвращает итоговый текст (строка), который можно безопасно отправить пользователю.
+    """
+    partial_summaries = []
+    total = len(chunks)
+    for idx, chunk in enumerate(chunks):
+        # Формируем инструкцию, чтобы ИИ понял, что это часть файла
+        prompt = (
+            f"[Файл: {filename}] Часть {idx+1}/{total}.\n"
+            "Проанализируй этот фрагмент документа. Дай краткое резюме (2-4 предложения) и перечисли 3-5 ключевых фактов/выводов из этой части.\n\n"
+            f"{chunk}\n\n"
+            "Ответ — только текст (без дополнительных пояснений)."
+        )
+        # process_text_message — твоя существующая функция, использующая модель
+        try:
+            # показываем typing
+            bot.send_chat_action(message.chat.id, "typing")
+        except Exception:
+            pass
+        try:
+            partial = process_text_message(prompt, message.chat.id)
+        except Exception as e:
+            # если модель упала для чанка — всё равно продолжаем, логируем
+            print(f"[WARN] AI chunk analysis failed (part {idx+1}): {e}")
+            partial = f"[Ошибка анализа части {idx+1}]"
+        partial_summaries.append(f"--- Часть {idx+1}/{total} ---\n{partial}\n")
+
+    # Теперь объединяем частичные анализы в единый запрос на синтез
+    synthesis_prompt = (
+        f"[Файл: {filename}] Объединение частичных анализов. "
+        "На основе следующих частичных резюме, составь единое краткое резюме документа (3-6 предложений), "
+        "затем перечисли ключевые выводы/факты (пункты), и в конце — 3 приоритетных вопроса/неясности, которые следует проверить.\n\n"
+        "Частичные анализы:\n\n" + "\n".join(partial_summaries) +
+        "\n\nОтвет структурируй как:\n1) Резюме:\n<текст>\n\n2) Ключевые выводы:\n- ...\n\n3) Вопросы/неясности:\n- ...\n\n"
+    )
+
+    try:
+        bot.send_chat_action(message.chat.id, "typing")
+    except Exception:
+        pass
+    try:
+        final_analysis = process_text_message(synthesis_prompt, message.chat.id)
+    except Exception as e:
+        print(f"[ERROR] AI synthesis failed: {e}")
+        final_analysis = "Ошибка при объединении анализов документа."
+
+    return final_analysis
+
+# Замена хендлера документов:
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
     user_data = load_user_data(message.from_user.id)
-    if user_data['subscription_plan'] == 'free':
+    if user_data.get('subscription_plan') == 'free':
         bot.reply_to(message, "Для чтения документов требуется подписка Plus. Выберите тариф: /pay", reply_markup=create_main_menu())
         return
-    file_info = bot.get_file(message.document.file_id)
-    downloaded_file = bot.download_file(file_info.file_path)
-    file_extension = message.document.file_name.split('.')[-1].lower()
+
     try:
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        file_extension = message.document.file_name.split('.')[-1].lower()
+
+        # читаем весь документ (никто не обрезается)
         if file_extension == 'txt':
-            content = downloaded_file.decode('utf-8')
-            bot.reply_to(message, process_text_message(content, message.chat.id), reply_markup=create_main_menu())
+            content = downloaded_file.decode('utf-8', errors='ignore')
         elif file_extension == 'pdf':
             with io.BytesIO(downloaded_file) as pdf_file:
-                content = read_pdf(pdf_file)
-                bot.reply_to(message, process_text_message(content, message.chat.id), reply_markup=create_main_menu())
+                content = read_pdf(pdf_file)  # твоя функция — достаёт весь текст
         elif file_extension == 'docx':
             with io.BytesIO(downloaded_file) as docx_file:
                 content = read_docx(docx_file)
-                bot.reply_to(message, process_text_message(content, message.chat.id), reply_markup=create_main_menu())
         else:
             bot.reply_to(message, "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx.", reply_markup=create_main_menu())
+            return
+
+        if not content or not content.strip():
+            bot.reply_to(message, "Файл пуст или в нём нет извлекаемого текста (возможно, это изображение).", reply_markup=create_main_menu())
+            return
+
+        # Разбиваем на чанки для отправки в ИИ — НО НИКАКИХ ОБРЕЗОК ВДОЛЬ ТЕКСТА (все символы покрываются)
+        # На практике max_chars подбирается под модель/токены. 8000 символов — ориентир, не обрезаем исходный.
+        chunks = _chunk_text_full(content, max_chars=8000, overlap=400)
+
+        # Анализируем чанки и синтезируем единый ответ
+        final_analysis = _analyze_chunks_with_ai(chunks, message.document.file_name, message)
+
+        # ОТЛИЧНО: бот НЕ отправляет исходный текст файлом/сообщением.
+        # Отправляем только итог анализа (который короче исходного)
+        # если итог очень длинный — можно разбить при отправке; тут делаем простой send (телеграм лимит)
+        try:
+            # безопасная отправка — разбиваем ответ на допустимые части, но это только для вывода,
+            # сам исходник не меняется и не отправляется
+            CHUNK = 4000
+            for i in range(0, len(final_analysis), CHUNK):
+                bot.reply_to(message, final_analysis[i:i+CHUNK], reply_markup=create_main_menu())
+        except Exception as e:
+            # на случай ошибок отправки (например, парсинг сущностей), шлём без parse_mode
+            print(f"[WARN] sending analysis failed: {e}")
+            try:
+                bot.reply_to(message, final_analysis, reply_markup=create_main_menu())
+            except Exception as e2:
+                print(f"[ERROR] final send failed: {e2}")
+                bot.reply_to(message, "Ошибка при отправке результата анализа.", reply_markup=create_main_menu())
+
     except Exception as e:
+        print(f"[ERROR] handle_document exception: {e}")
         bot.reply_to(message, f"Ошибка при чтении файла: {e}", reply_markup=create_main_menu())
 
 def read_pdf(file):
