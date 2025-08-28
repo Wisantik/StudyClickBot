@@ -21,7 +21,6 @@ from pydub import AudioSegment
 from ddgs import DDGS
 import re
 load_dotenv()
-from datetime import datetime
 # Настройка логирования и окружения
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 connect_to_db()
@@ -1723,7 +1722,7 @@ def handle_document(message):
         user_data['last_document'] = {
             'filename': message.document.file_name,
             'content': content,
-            'uploaded_at': datetime.utcnow().isoformat()
+            'uploaded_at': datetime.datetime.utcnow().isoformat()
         }
         save_user_data(user_data)
 
