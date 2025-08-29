@@ -503,6 +503,11 @@ def subscription_check_callback(call):
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
             text="Спасибо за подписку! Теперь вы можете использовать бота с универсальным экспертом.",
+            reply_markup=None  
+        )
+        bot.send_message(
+            call.message.chat.id,
+            "Добро пожаловать обратно!", 
             reply_markup=create_main_menu()
         )
     else:
@@ -1504,54 +1509,75 @@ def typing(chat_id):
         bot.send_chat_action(chat_id, "typing")
         time.sleep(5)
 
-def send_broadcast(message_content, photo=None):
+
+def get_all_users():
+    """Возвращает список всех user_id из базы"""
     conn = connect_to_db()
     cur = conn.cursor()
-    cur.execute("SELECT user_id FROM users")
-    users = cur.fetchall()
-    for user in users:
-        try:
-            if photo:
-                bot.send_photo(user[0], photo, caption=message_content, reply_markup=create_main_menu())
-            else:
-                bot.send_message(user[0], message_content, reply_markup=create_main_menu())
-        except telebot.apihelper.ApiTelegramException as e:
-            if e.error_code == 403:
-                print(f"Пользователь {user[0]} заблокировал бота.")
-                continue
-            else:
-                print(f"Ошибка API для {user[0]}: {e}")
-                continue
-        except Exception as e:
-            print(f"Ошибка отправки пользователю {user[0]}: {e}")
-            continue
-    cur.close()
-    conn.close()
+    try:
+        cur.execute("SELECT user_id FROM users")
+        users = [row[0] for row in cur.fetchall()]
+    except Exception as e:
+        print(f"[ERROR] Не удалось получить список пользователей: {e}")
+        users = []
+    finally:
+        cur.close()
+        conn.close()
+    return users
 
-@bot.message_handler(commands=["broadcast"])
+@bot.message_handler(commands=['broadcast'])
 def broadcast(message):
-    if message.from_user.id == 998107476:
-        msg = bot.reply_to(message, "Отправьте изображение с подписью или текст для рассылки:", reply_markup=create_main_menu())
-        bot.register_next_step_handler(msg, process_broadcast)
-    else:
-        bot.reply_to(message, "У вас нет прав на отправку рассылки.", reply_markup=create_main_menu())
+    # Проверка прав
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "У вас нет прав для этой команды.", reply_markup=create_main_menu())
+        return
+
+    bot.reply_to(message, "📢 Отправьте сообщение, которое нужно разослать всем пользователям.")
+    bot.register_next_step_handler(message, process_broadcast)
+
 
 def process_broadcast(message):
-    if message.content_type == 'photo':
-        photo = message.photo[-1].file_id
-        caption = message.caption if message.caption else ""
-        send_broadcast(caption, photo=photo)
-    else:
-        send_broadcast(message.text)
-    bot.reply_to(message, "Рассылка успешно завершена!", reply_markup=create_main_menu())
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "У вас нет прав для этой команды.", reply_markup=create_main_menu())
+        return
 
-@bot.message_handler(content_types=['photo'])
-def handle_broadcast_photo(message):
-    if message.from_user.id == 998107476 and message.caption and message.caption.startswith('/broadcast'):
-        photo = message.photo[-1].file_id
-        caption = message.caption.replace('/broadcast', '').strip()
-        send_broadcast(caption, photo=photo)
-        bot.reply_to(message, "Рассылка с изображением успешно завершена!", reply_markup=create_main_menu())
+    users = get_all_users()
+    success, failed = 0, 0
+
+    bot.reply_to(message, "📡 Рассылка запущена...")
+
+    for user_id in users:
+        try:
+            if message.content_type == "text":
+                bot.send_message(user_id, message.text, reply_markup=create_main_menu())
+
+            elif message.content_type == "photo":
+                bot.send_photo(user_id, message.photo[-1].file_id, caption=message.caption or "")
+
+            elif message.content_type == "document":
+                bot.send_document(user_id, message.document.file_id, caption=message.caption or "")
+
+            elif message.content_type == "video":
+                bot.send_video(user_id, message.video.file_id, caption=message.caption or "")
+
+            elif message.content_type == "voice":
+                bot.send_voice(user_id, message.voice.file_id, caption=message.caption or "")
+
+            elif message.content_type == "audio":
+                bot.send_audio(user_id, message.audio.file_id, caption=message.caption or "")
+
+            else:
+                bot.send_message(user_id, "📢 (неподдерживаемый тип сообщения)", reply_markup=create_main_menu())
+
+            success += 1
+            time.sleep(0.05)  # антифлуд
+
+        except Exception as e:
+            print(f"[WARN] Не удалось отправить {user_id}: {e}")
+            failed += 1
+
+    bot.send_message(message.chat.id, f"✅ Рассылка завершена.\nУспешно: {success}\nОшибок: {failed}")
+
 
 def perform_web_search(query: str) -> str:
     endpoint = "https://api.bing.microsoft.com/v7.0/search"
