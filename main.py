@@ -1873,7 +1873,7 @@ def process_text_message(text, chat_id) -> str:
     history.append({"role": "user", "content": input_text})
     try:
         chat_completion = openai.ChatCompletion.create(
-            model="gpt-4.1-mini-2025-04-14",
+            model="gpt-5-mini-2025-08-07",
             messages=history
         )
         ai_response = chat_completion.choices[0].message.content
