@@ -1599,23 +1599,69 @@ def needs_web_search(message: str) -> bool:
     keywords = ["найди", "что сейчас", "новости", "поиск", "в интернете", "актуально"]
     return any(kw in message.lower() for kw in keywords)
 
+from threading import Thread
+from collections import defaultdict
+
+# Очередь сообщений для каждого пользователя
+message_queues = defaultdict(list)
+user_processing = defaultdict(bool)  # флаг "идёт обработка" для каждого пользователя
+
+
+def process_user_queue(user_id, chat_id):
+    """Обрабатывает очередь сообщений пользователя по одному за раз."""
+    if user_processing[user_id]:
+        return  # уже идёт обработка
+    if not message_queues[user_id]:
+        return  # очередь пуста
+
+    user_processing[user_id] = True
+    message = message_queues[user_id].pop(0)
+
+    def _worker():
+        try:
+            bot.send_chat_action(chat_id, "typing")
+            text = message.text
+
+            # Генерация ответа
+            ai_response = process_text_message(text, chat_id)
+
+            # Отправляем чанками (4096 символов максимум)
+            CHUNK_SIZE = 4000
+            for i in range(0, len(ai_response), CHUNK_SIZE):
+                chunk = ai_response[i:i + CHUNK_SIZE]
+                bot.send_message(chat_id, chunk, reply_markup=create_main_menu())
+
+        except Exception as e:
+            bot.send_message(chat_id, f"Ошибка при обработке: {e}", reply_markup=create_main_menu())
+        finally:
+            user_processing[user_id] = False
+            # Проверяем, есть ли ещё сообщения в очереди
+            if message_queues[user_id]:
+                process_user_queue(user_id, chat_id)
+
+    Thread(target=_worker, daemon=True).start()
+
+
 @bot.message_handler(func=lambda message: True, content_types=["text"])
 def echo_message(message):
-    if not check_user_subscription(message.from_user.id):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+
+    # Проверяем подписку
+    if not check_user_subscription(user_id):
         bot.send_message(
-            message.chat.id,
+            chat_id,
             """👋 Привет! Это быстро и бесплатно.
 Чтобы начать пользоваться ботом, подпишись на наш канал Guiding Star — ты получишь доступ к бота и эксклюзивным материалам по финансам и ИИ.""",
             reply_markup=create_subscription_keyboard()
         )
         return
-    bot.send_chat_action(message.chat.id, "typing")
-    try:
-        text = message.text
-        ai_response = process_text_message(text, message.chat.id)
-        bot.reply_to(message, ai_response, reply_markup=create_main_menu())
-    except Exception as e:
-        bot.reply_to(message, f"Произошла ошибка, попробуйте позже! {e}", reply_markup=create_main_menu())
+
+    # Добавляем сообщение в очередь
+    message_queues[user_id].append(message)
+
+    # Запускаем обработку, если не занята
+    process_user_queue(user_id, chat_id)
 
 # ----------------- Анализ больших документов без обрезки (не отправляя текст обратно) -----------------
 def _chunk_text_full(text: str, max_chars: int = 8000, overlap: int = 300):
