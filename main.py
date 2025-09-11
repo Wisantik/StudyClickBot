@@ -1601,10 +1601,44 @@ def needs_web_search(message: str) -> bool:
 
 from threading import Thread
 from collections import defaultdict
+import time
 
 # Очередь сообщений для каждого пользователя
 message_queues = defaultdict(list)
 user_processing = defaultdict(bool)  # флаг "идёт обработка" для каждого пользователя
+
+
+def split_message(text, chunk_size=4000):
+    """
+    Разбивает длинный текст на части по chunk_size символов,
+    стараясь резать по предложениям или хотя бы по пробелу.
+    """
+    chunks = []
+    while len(text) > chunk_size:
+        # ищем ближайший перенос строки или точку перед лимитом
+        split_at = max(
+            text.rfind("\n", 0, chunk_size),
+            text.rfind(". ", 0, chunk_size),
+            text.rfind(" ", 0, chunk_size)
+        )
+        if split_at == -1 or split_at < chunk_size // 2:
+            split_at = chunk_size  # если ничего не нашли — режем по лимиту
+
+        chunks.append(text[:split_at].strip())
+        text = text[split_at:].strip()
+    if text:
+        chunks.append(text.strip())
+    return chunks
+
+
+def send_typing(chat_id, stop_flag):
+    """Отправляет typing каждые 3 секунды, пока stop_flag[0] == False."""
+    while not stop_flag[0]:
+        try:
+            bot.send_chat_action(chat_id, "typing")
+        except Exception:
+            pass
+        time.sleep(3)
 
 
 def process_user_queue(user_id, chat_id):
@@ -1618,24 +1652,29 @@ def process_user_queue(user_id, chat_id):
     message = message_queues[user_id].pop(0)
 
     def _worker():
+        stop_flag = [False]
+        typing_thread = Thread(target=send_typing, args=(chat_id, stop_flag), daemon=True)
+        typing_thread.start()
+
         try:
-            bot.send_chat_action(chat_id, "typing")
             text = message.text
 
             # Генерация ответа
             ai_response = process_text_message(text, chat_id)
 
-            # Отправляем чанками (4096 символов максимум)
-            CHUNK_SIZE = 4000
-            for i in range(0, len(ai_response), CHUNK_SIZE):
-                chunk = ai_response[i:i + CHUNK_SIZE]
+            # Останавливаем typing
+            stop_flag[0] = True
+            typing_thread.join(timeout=1)
+
+            # Отправляем красиво нарезанными чанками
+            for chunk in split_message(ai_response, 4000):
                 bot.send_message(chat_id, chunk, reply_markup=create_main_menu())
 
         except Exception as e:
+            stop_flag[0] = True
             bot.send_message(chat_id, f"Ошибка при обработке: {e}", reply_markup=create_main_menu())
         finally:
             user_processing[user_id] = False
-            # Проверяем, есть ли ещё сообщения в очереди
             if message_queues[user_id]:
                 process_user_queue(user_id, chat_id)
 
