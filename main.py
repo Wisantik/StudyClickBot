@@ -1699,8 +1699,9 @@ def process_user_queue(user_id, chat_id):
             typing_thread.join(timeout=1)
 
             # Отправляем красиво нарезанными чанками
-            for chunk in split_message(ai_response, 4000):
-                bot.send_message(chat_id, chunk, reply_markup=create_main_menu())
+            # новое — использует send_in_chunks (не режет слова)
+            send_in_chunks(message, ai_response, chunk_size=TELEGRAM_SAFE_CHARS, reply_markup=create_main_menu())
+
 
         except Exception as e:
             stop_flag[0] = True
