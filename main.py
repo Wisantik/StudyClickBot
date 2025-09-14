@@ -1611,7 +1611,7 @@ user_processing = defaultdict(bool)  # флаг "идёт обработка" д
 TELEGRAM_SAFE_CHARS = 4000  # безопасный предел (Telegram ~4096)
 
 def split_text_preserving_words(text: str, max_len: int = TELEGRAM_SAFE_CHARS) -> list:
-    """Разбивает текст на фрагменты <= max_len, не разрывая слова (пытается резать по переносам/пробелам)."""
+    """Разбивает text на части длиной <= max_len, стараясь не разрывать слова/абзацы."""
     if not text:
         return []
     parts = []
@@ -1621,47 +1621,50 @@ def split_text_preserving_words(text: str, max_len: int = TELEGRAM_SAFE_CHARS) -
         if n - start <= max_len:
             parts.append(text[start:].strip())
             break
-        # ищем ближайший перенос строки или пробел перед пределом
+        # ищем наиболее подходящий разделитель перед пределом
         cut = text.rfind("\n\n", start, start + max_len)
         if cut == -1:
             cut = text.rfind("\n", start, start + max_len)
         if cut == -1:
             cut = text.rfind(" ", start, start + max_len)
         if cut == -1 or cut <= start:
-            # нет подходящего разделителя — режем по пределу, чтобы избежать бесконечного цикала
             cut = start + max_len
         parts.append(text[start:cut].strip())
         start = cut
     return parts
 
-def send_in_chunks(message, text: str, chunk_size: int = TELEGRAM_SAFE_CHARS, reply_markup=None):
+def send_in_chunks(message, text: str, chunk_size: int = TELEGRAM_SAFE_CHARS, **send_kwargs):
     """
-    Надёжная отправка длинного текста: разбиваем, не режем слова, отправляем последовательно.
-    Заменяет прежнюю реализацию send_in_chunks.
-    message — объект Telegram message (чтобы reply_to / chat_id достать).
+    Надёжно отправляет длинный текст: разбивает на части (не разрезая слова) и отправляет.
+    Параметры для отправки (reply_markup, parse_mode и т.д.) передавайте через именованные аргументы.
+    message — объект Telegram message (используется bot.reply_to; если он падает — fallback bot.send_message).
     """
     try:
-        parts = split_text_preserving_words(text, max_len=chunk_size)
+        parts = split_text_preserving_words(text or "", max_len=chunk_size)
         for part in parts:
             if not part:
                 continue
-            # используем reply_to, чтобы ответ выглядел аккуратно
             try:
-                bot.reply_to(message, part, reply_markup=reply_markup)
+                # основной вариант — ответить в цепочке (reply_to)
+                bot.reply_to(message, part, **send_kwargs)
             except Exception:
-                # fallback: отправить в чат напрямую
-                bot.send_message(message.chat.id, part, reply_markup=reply_markup)
+                # если reply_to не сработал — отправим обычное сообщение в чат
+                try:
+                    bot.send_message(message.chat.id, part, **send_kwargs)
+                except Exception:
+                    # ничего не делаем, чтобы не ломать поток
+                    pass
     except Exception as e:
-        print(f"[WARN] sending analysis failed: {e}")
+        print(f"[WARN] send_in_chunks failed: {e}")
+        # в крайнем случае отправляем короткое уведомление
         try:
-            bot.reply_to(message, text if len(text) < 1000 else text[:1000] + "...", reply_markup=reply_markup)
-        except Exception as e2:
-            print(f"[ERROR] final send failed: {e2}")
+            short = (text[:1000] + "...") if text and len(text) > 1000 else text
+            bot.reply_to(message, short, **(send_kwargs or {}))
+        except Exception:
             try:
-                bot.send_message(message.chat.id, "Ошибка при отправке результата анализа.", reply_markup=reply_markup)
+                bot.send_message(message.chat.id, "Ошибка при отправке результата анализа.", **(send_kwargs or {}))
             except Exception:
                 pass
-
 
 def send_typing(chat_id, stop_flag):
     """Отправляет typing каждые 3 секунды, пока stop_flag[0] == False."""
