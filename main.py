@@ -2045,8 +2045,10 @@ def main():
                 cursor.execute("SELECT COUNT(*) FROM assistants;")
                 count = cursor.fetchone()[0]
             if count == 0:
-                logger.info("Таблица 'assistants' пуста. Вставляем данные.")
-                insert_initial_data(conn)
+                logger.warning("Таблица 'assistants' пуста! Добавь ассистентов через SQL.")
+            else:
+                logger.info("Обновляем кэш ассистентов...")
+                refresh_assistants_cache(conn)
             logger.info("Обновляем список экспертов...")
             insert_initial_experts(conn)
             check_experts_in_database(conn)
