@@ -1608,63 +1608,28 @@ message_queues = defaultdict(list)
 user_processing = defaultdict(bool)  # флаг "идёт обработка" для каждого пользователя
 
 
-TELEGRAM_SAFE_CHARS = 4000  # безопасный предел (Telegram ~4096)
-
-def split_text_preserving_words(text: str, max_len: int = TELEGRAM_SAFE_CHARS) -> list:
-    """Разбивает text на части длиной <= max_len, стараясь не разрывать слова/абзацы."""
-    if not text:
-        return []
-    parts = []
-    start = 0
-    n = len(text)
-    while start < n:
-        if n - start <= max_len:
-            parts.append(text[start:].strip())
-            break
-        # ищем наиболее подходящий разделитель перед пределом
-        cut = text.rfind("\n\n", start, start + max_len)
-        if cut == -1:
-            cut = text.rfind("\n", start, start + max_len)
-        if cut == -1:
-            cut = text.rfind(" ", start, start + max_len)
-        if cut == -1 or cut <= start:
-            cut = start + max_len
-        parts.append(text[start:cut].strip())
-        start = cut
-    return parts
-
-def send_in_chunks(message, text: str, chunk_size: int = TELEGRAM_SAFE_CHARS, **send_kwargs):
+def split_message(text, chunk_size=4000):
     """
-    Надёжно отправляет длинный текст: разбивает на части (не разрезая слова) и отправляет.
-    Параметры для отправки (reply_markup, parse_mode и т.д.) передавайте через именованные аргументы.
-    message — объект Telegram message (используется bot.reply_to; если он падает — fallback bot.send_message).
+    Разбивает длинный текст на части по chunk_size символов,
+    стараясь резать по предложениям или хотя бы по пробелу.
     """
-    try:
-        parts = split_text_preserving_words(text or "", max_len=chunk_size)
-        for part in parts:
-            if not part:
-                continue
-            try:
-                # основной вариант — ответить в цепочке (reply_to)
-                bot.reply_to(message, part, **send_kwargs)
-            except Exception:
-                # если reply_to не сработал — отправим обычное сообщение в чат
-                try:
-                    bot.send_message(message.chat.id, part, **send_kwargs)
-                except Exception:
-                    # ничего не делаем, чтобы не ломать поток
-                    pass
-    except Exception as e:
-        print(f"[WARN] send_in_chunks failed: {e}")
-        # в крайнем случае отправляем короткое уведомление
-        try:
-            short = (text[:1000] + "...") if text and len(text) > 1000 else text
-            bot.reply_to(message, short, **(send_kwargs or {}))
-        except Exception:
-            try:
-                bot.send_message(message.chat.id, "Ошибка при отправке результата анализа.", **(send_kwargs or {}))
-            except Exception:
-                pass
+    chunks = []
+    while len(text) > chunk_size:
+        # ищем ближайший перенос строки или точку перед лимитом
+        split_at = max(
+            text.rfind("\n", 0, chunk_size),
+            text.rfind(". ", 0, chunk_size),
+            text.rfind(" ", 0, chunk_size)
+        )
+        if split_at == -1 or split_at < chunk_size // 2:
+            split_at = chunk_size  # если ничего не нашли — режем по лимиту
+
+        chunks.append(text[:split_at].strip())
+        text = text[split_at:].strip()
+    if text:
+        chunks.append(text.strip())
+    return chunks
+
 
 def send_typing(chat_id, stop_flag):
     """Отправляет typing каждые 3 секунды, пока stop_flag[0] == False."""
@@ -1702,9 +1667,8 @@ def process_user_queue(user_id, chat_id):
             typing_thread.join(timeout=1)
 
             # Отправляем красиво нарезанными чанками
-            # новое — использует send_in_chunks (не режет слова)
-            send_in_chunks(message, ai_response, chunk_size=TELEGRAM_SAFE_CHARS, reply_markup=create_main_menu())
-
+            for chunk in split_message(ai_response, 4000):
+                bot.send_message(chat_id, chunk, reply_markup=create_main_menu())
 
         except Exception as e:
             stop_flag[0] = True
@@ -1763,40 +1727,68 @@ def _chunk_text_full(text: str, max_chars: int = 8000, overlap: int = 300):
 # ----------------- Анализ больших документов без обрезки (не отправляя текст обратно) -----------------
 def _analyze_chunks_with_ai(chunks: list, filename: str, message, user_query: str | None = None):
     """
-    Анализ чанков и синтез итогового ответа. НЕ добавляет локальных инструкций:
-    для всех вызовов используется ТОЛЬКО system-prompt из базы (process_text_message).
-    Возвращает итоговый текст (строка).
+    Анализ чанков и синтез итогового ответа. Возвращает итоговый текст — без отправки исходного файла.
+    Если user_query задан, итог — ответ на этот вопрос (используя данные из чанков).
+    Если user_query == None, итог — аналитический разбор: ключевые факты, выводы и рекомендации.
     """
     partials = []
     total = len(chunks)
-
     for idx, chunk in enumerate(chunks):
-        # показываем typing
+        # Инструкция для анализа части — просим не делать общий резюме, а извлечь факты/данные релевантные вопросу
+        if user_query:
+            prompt = (
+                f"[Файл: {filename}] Часть {idx+1}/{total}.\n"
+                f""
+                "\n\n"
+                f"{chunk}\n\n"
+                ""
+            )
+        else:
+            prompt = (
+                f"[Файл: {filename}] Часть {idx+1}/{total}.\n"
+                "\n"
+                "\n\n"
+                f"{chunk}\n\n"
+                ""
+            )
+
+        # показать typing
         try:
             bot.send_chat_action(message.chat.id, "typing")
         except Exception:
             pass
 
-        # Отправляем ВОН chunk как user input — system-prompt возьмётся из БД внутри process_text_message
         try:
-            partial = process_text_message(chunk, message.chat.id)
+            partial = process_text_message(prompt, message.chat.id)
         except Exception as e:
             print(f"[WARN] AI chunk analysis failed (part {idx+1}): {e}")
             partial = f"[Ошибка анализа части {idx+1}]"
         partials.append(f"--- Часть {idx+1}/{total} ---\n{partial}\n")
 
-    # Синтез: объединяем partials в единый текст; если есть явный вопрос — добавляем его в конец
-    synthesis_input = "\n\n".join(partials)
+    # Синтез итогового ответа (учитываем user_query)
     if user_query:
-        synthesis_input = synthesis_input + f"\n\nВопрос пользователя: {user_query}"
+        synthesis_instruct = (
+            f"[Файл: {filename}] Объединение частичных фактов для ответа на вопрос: «{user_query}».\n"
+            "На основе приведённых частичных фактов составь развёрнутый ответ на вопрос. "
+            "Если фактов недостаточно — честно укажи, какие данные отсутствуют и что нужно уточнить. "
+            "Ответ структурируй: 1) Ответ на вопрос (по сути), 2) Ключевые факты, использованные при ответе, 3) Рекомендации/следующие шаги."
+        )
+    else:
+        synthesis_instruct = (
+            f"[Файл: {filename}] Объединение частичных фактов / аналитика.\n"
+            "На основе частичных фактов составь аналитический ответ: 1) Ключевые выводы (пункты), "
+            "2) Практические рекомендации (пункты), 3) 3 приоритетных вопроса/неясности для проверки."
+        )
+
+    synthesis_prompt = synthesis_instruct + "\n\nЧастичные анализы:\n\n" + "\n".join(partials)
 
     try:
-        try:
-            bot.send_chat_action(message.chat.id, "typing")
-        except Exception:
-            pass
+        bot.send_chat_action(message.chat.id, "typing")
+    except Exception:
+        pass
 
-        final_analysis = process_text_message(synthesis_input, message.chat.id)
+    try:
+        final_analysis = process_text_message(synthesis_prompt, message.chat.id)
     except Exception as e:
         print(f"[ERROR] AI synthesis failed: {e}")
         final_analysis = "Ошибка при объединении анализов документа."
@@ -1935,77 +1927,52 @@ def update_user_tokens(user_id, input_tokens, output_tokens):
 def generate_referral_link(user_id):
     return f"https://t.me/fiinny_bot?start={user_id}"
 
-def process_text_message(text: str, chat_id) -> str:
-    """
-    Формирует chat-completion с system = prompt_from_db и user = text.
-    Возвращает ответ модели (строка).
-    Сохраняет текущую логику подсчёта токенов / веб-поиска.
-    """
+def process_text_message(text, chat_id) -> str:
     user_data = load_user_data(chat_id)
     if not user_data:
         return "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
-
     input_tokens = len(text)
     if user_data['subscription_plan'] == 'free':
         check_and_update_tokens(chat_id)
         user_data = load_user_data(chat_id)
         if user_data['daily_tokens'] < input_tokens:
             return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
-
     if not update_user_tokens(chat_id, input_tokens, 0):
         return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
-
-    # Получаем промпт из конфигурации ассистентов (из БД/кэша)
     config = load_assistants_config()
     current_assistant = get_user_assistant(chat_id)
-    assistant_settings = {}
-    if config and isinstance(config, dict):
-        assistant_settings = config.get("assistants", {}).get(current_assistant, {}) or {}
-    prompt = assistant_settings.get("prompt", "")  # если пусто — оставляем пустой system
+    assistant_settings = config["assistants"].get(current_assistant, {})
+    prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
-    # Web search: если нужен — добавляем результаты к user text (как раньше)
     web_search_appendix = ""
-    if user_data.get('web_search_enabled') or needs_web_search(text):
+    if user_data['web_search_enabled'] or needs_web_search(text):
         if user_data['subscription_plan'] == 'free':
             return "Веб-поиск доступен только с подпиской Plus. Выберите тариф: /pay"
         print("[DEBUG] Выполняется веб-поиск")
         search_results = _perform_web_search(text)
-        text = text + f"\n\n[Результаты веб-поиска]:\n{search_results}"
+        text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
         web_search_appendix = f"\n\n{search_results}"
 
-    # Формируем messages: system (если есть) + history + user
-    messages = []
-    if prompt:
-        messages.append({"role": "system", "content": prompt})
-
-    # history уже должен возвращать список сообщений в формате [{"role": "...", "content": "..."}]
-    history = get_chat_history(chat_id) or []
-    # безопасно добавляем историю (может быть пустой)
-    if isinstance(history, list):
-        messages.extend(history)
-
-    messages.append({"role": "user", "content": text})
-
+    input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
+    history = get_chat_history(chat_id)
+    history.append({"role": "user", "content": input_text})
     try:
         chat_completion = openai.ChatCompletion.create(
             model="gpt-5-mini-2025-08-07",
-            messages=messages
+            messages=history
         )
         ai_response = chat_completion.choices[0].message.content
         output_tokens = len(ai_response)
         if not update_user_tokens(chat_id, 0, output_tokens):
             return "Ответ слишком длинный для вашего лимита токенов."
-
-        # обновления статистики
         user_data = load_user_data(chat_id)
         user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001
         save_user_data(user_data)
-        store_message_in_db(chat_id, "user", text if text else "")
+        store_message_in_db(chat_id, "user", input_text)
         store_message_in_db(chat_id, "assistant", ai_response)
         return ai_response + web_search_appendix
     except Exception as e:
         return f"Произошла ошибка: {str(e)}"
-
 
 
 @bot.message_handler(content_types=["voice"])
