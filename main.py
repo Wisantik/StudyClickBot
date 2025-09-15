@@ -557,10 +557,14 @@ def assistants_button_handler(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("select_assistant_"))
 def assistant_callback_handler(call):
     try:
-        # Более строгий guard: Проверяем тип и атрибуты call
-        if not isinstance(call, types.CallbackQuery) or not hasattr(call, 'data') or not hasattr(call, 'from_user') or not call.from_user:
-            print(f"[ERROR] Некорректный call объект в assistant_callback_handler: тип {type(call)}, data: {getattr(call, 'data', 'None')}")
-            if hasattr(call, 'id') and callable(getattr(call, 'id', None)):
+        # Более строгий guard: Проверяем тип и атрибуты call на самом начале
+        if not isinstance(call, types.CallbackQuery):
+            print(f"[ERROR] Некорректный тип call в assistant_callback_handler: {type(call)}")
+            return  # Выходим сразу, без дальнейших вызовов
+        
+        if not hasattr(call, 'data') or not call.data or not hasattr(call, 'from_user') or not call.from_user:
+            print(f"[ERROR] Отсутствуют атрибуты в call: data={getattr(call, 'data', 'None')}, from_user={call.from_user}")
+            if hasattr(call, 'id'):
                 bot.answer_callback_query(call.id, "Ошибка обработки. Попробуйте снова.")
             return
         
@@ -571,7 +575,7 @@ def assistant_callback_handler(call):
             bot.answer_callback_query(call.id, "Ассистент не найден")
             return
 
-        # Логируем ассистента в нормализованном виде
+        # Логируем ассистента в нормализованном виде (теперь безопасно)
         log_command(call.from_user.id, f"assistant:{assistant_id}")
 
         set_user_assistant(call.from_user.id, assistant_id)
@@ -590,9 +594,9 @@ def assistant_callback_handler(call):
             f"📌 Описание:\n{description}"
         )
 
-        # Guard для call.message
-        if not hasattr(call.message, 'chat') or not hasattr(call.message, 'message_id'):
-            print(f"[ERROR] Некорректный call.message: тип {type(call.message)}")
+        # Guard для call.message перед edit
+        if not hasattr(call, 'message') or not call.message or not hasattr(call.message, 'chat') or not hasattr(call.message, 'message_id'):
+            print(f"[ERROR] Некорректный call.message: тип {type(getattr(call, 'message', None))}")
             bot.answer_callback_query(call.id, "Ошибка обновления сообщения.")
             return
 
@@ -603,10 +607,17 @@ def assistant_callback_handler(call):
             parse_mode="HTML",
             reply_markup=None
         )
+        
+        # Безопасный answer_callback_query в конце
+        bot.answer_callback_query(call.id, f"Ассистент {name} выбран")
+        
     except Exception as e:
-        print(f"[ERROR] Ошибка в assistant_callback_handler: {e}")
-        if hasattr(call, 'id') and callable(getattr(call, 'id', None)):
-            bot.answer_callback_query(call.id, "Ошибка. Попробуйте перезапустить выбор.")
+        print(f"[ERROR] Общая ошибка в assistant_callback_handler: {e}, call тип: {type(call)}")
+        try:
+            if hasattr(call, 'id'):
+                bot.answer_callback_query(call.id, "Ошибка. Попробуйте перезапустить выбор.")
+        except:
+            pass  # Игнорируем ошибки в answer_callback_query
 
 
 @bot.message_handler(commands=['experts'])
@@ -686,11 +697,13 @@ def expert_callback_handler(call):
 @bot.message_handler(func=lambda message: message.text == "🌍 Универсальный ассистент")
 def universal_assistant_handler(message):
     try:
-        # Guard: Проверяем, что message — Message, а не int или другой тип
-        if not isinstance(message, types.Message) or not hasattr(message, 'from_user') or not message.from_user:
-            print(f"[ERROR] Некорректный message объект в universal_assistant_handler: тип {type(message)}")
-            if hasattr(message, 'chat') and hasattr(message, 'message_id'):
-                bot.reply_to(message, "Ошибка обработки команды. Попробуйте /start.", reply_markup=create_main_menu())
+        # Более строгий guard: Проверяем тип и атрибуты message на самом начале
+        if not isinstance(message, types.Message):
+            print(f"[ERROR] Некорректный тип message в universal_assistant_handler: {type(message)}")
+            return  # Выходим сразу
+        
+        if not hasattr(message, 'from_user') or not message.from_user or not hasattr(message, 'chat'):
+            print(f"[ERROR] Отсутствуют атрибуты в message: from_user={getattr(message, 'from_user', None)}, chat={getattr(message, 'chat', None)}")
             return
         
         user_id = message.from_user.id
@@ -716,17 +729,14 @@ def universal_assistant_handler(message):
             f"📌 Описание:\n{description}"
         )
         
-        # Guard для reply_to
-        if not hasattr(message, 'chat'):
-            print(f"[ERROR] Некорректный message.chat: тип {type(message)}")
-            return
-        
         bot.reply_to(message, text, parse_mode="HTML", reply_markup=create_main_menu())
+        
     except Exception as e:
-        print(f"[ERROR] Ошибка в universal_assistant_handler: {e}")
-        if hasattr(message, 'chat') and hasattr(message, 'message_id'):
+        print(f"[ERROR] Общая ошибка в universal_assistant_handler: {e}, message тип: {type(message)}")
+        try:
             bot.reply_to(message, "Ошибка. Попробуйте позже.", reply_markup=create_main_menu())
-
+        except:
+            pass  # Игнорируем ошибки в reply_to
 
 @bot.message_handler(func=lambda message: message.text == "Назад")
 def back_button_handler(message):
