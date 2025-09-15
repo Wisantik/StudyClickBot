@@ -556,39 +556,51 @@ def assistants_button_handler(message):
 # === Обработчик выбора ассистента ===
 @bot.callback_query_handler(func=lambda call: call.data.startswith("select_assistant_"))
 def assistant_callback_handler(call):
-    assistant_id = call.data.replace("select_assistant_", "")
-    config = load_assistants_config()
+    try:
+        # Guard: Проверяем, что call — CallbackQuery, а не int или другой тип
+        if not hasattr(call, 'data') or not hasattr(call, 'from_user') or not call.from_user:
+            print(f"[ERROR] Некорректный call объект: тип {type(call)}, data: {getattr(call, 'data', 'None')}")
+            if hasattr(call, 'id'):
+                bot.answer_callback_query(call.id, "Ошибка обработки. Попробуйте снова.")
+            return
+        
+        assistant_id = call.data.replace("select_assistant_", "")
+        config = load_assistants_config()
 
-    if assistant_id not in config["assistants"]:
-        bot.answer_callback_query(call.id, "Ассистент не найден")
-        return
+        if assistant_id not in config["assistants"]:
+            bot.answer_callback_query(call.id, "Ассистент не найден")
+            return
 
-    # Логируем ассистента в нормализованном виде
-    log_command(call.from_user.id, f"assistant:{assistant_id}")
+        # Логируем ассистента в нормализованном виде
+        log_command(call.from_user.id, f"assistant:{assistant_id}")
 
-    set_user_assistant(call.from_user.id, assistant_id)
-    
-    # Сброс истории только для универсального ассистента
-    if assistant_id == 'universal_expert':
-        clear_chat_history(call.from_user.id)
-        print(f"[INFO] Универсальный ассистент установлен для {call.from_user.id} с сбросом истории")
-    
-    assistant_info = config["assistants"][assistant_id]
-    name = assistant_info.get("name", "Без названия")
-    description = ASSISTANT_DESCRIPTIONS.get(assistant_id, "Описание отсутствует.")
+        set_user_assistant(call.from_user.id, assistant_id)
+        
+        # Сброс истории только для универсального ассистента (как договаривались)
+        if assistant_id == 'universal_expert':
+            clear_chat_history(call.from_user.id)
+            print(f"[INFO] Универсальный ассистент установлен для {call.from_user.id} с сбросом истории")
+        
+        assistant_info = config["assistants"][assistant_id]
+        name = assistant_info.get("name", "Без названия")
+        description = ASSISTANT_DESCRIPTIONS.get(assistant_id, "Описание отсутствует.")
 
-    text = (
-        f"✅ Вы выбрали: <b>{name}</b>\n\n"
-        f"📌 Описание:\n{description}"
-    )
+        text = (
+            f"✅ Вы выбрали: <b>{name}</b>\n\n"
+            f"📌 Описание:\n{description}"
+        )
 
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text=text,
-        parse_mode="HTML",
-        reply_markup=None
-    )
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=text,
+            parse_mode="HTML",
+            reply_markup=None
+        )
+    except Exception as e:
+        print(f"[ERROR] Ошибка в assistant_callback_handler: {e}")
+        if hasattr(call, 'id'):
+            bot.answer_callback_query(call.id, "Ошибка. Попробуйте перезапустить выбор.")
 
 
 @bot.message_handler(commands=['experts'])
@@ -667,10 +679,41 @@ def expert_callback_handler(call):
 @bot.message_handler(commands=['universal'])
 @bot.message_handler(func=lambda message: message.text == "🌍 Универсальный ассистент")
 def universal_assistant_handler(message):
-    log_command(message.from_user.id, "universal")
-    set_user_assistant(message.from_user.id, 'universal_expert')
-    bot.reply_to(message, "Универсальный ассистент выбран!", reply_markup=create_main_menu())
+    try:
+        # Guard: Проверяем, что message — Message, а не int или другой тип
+        if not hasattr(message, 'from_user') or not message.from_user:
+            print(f"[ERROR] Некорректный message объект: тип {type(message)}")
+            bot.reply_to(message, "Ошибка обработки команды. Попробуйте /start.", reply_markup=create_main_menu())
+            return
+        
+        user_id = message.from_user.id
+        assistant_id = 'universal_expert'
+        
+        # Логируем (если log_command используется)
+        log_command(user_id, "universal")
+        
+        # Устанавливаем через общую функцию (БД + Redis)
+        set_user_assistant(user_id, assistant_id)
+        
+        # Сброс истории только для универсального
+        clear_chat_history(user_id)
+        print(f"[INFO] Универсальный ассистент установлен для {user_id} через /universal с сбросом истории")
+        
+        config = load_assistants_config()
+        assistant_info = config["assistants"].get(assistant_id, {})
+        name = assistant_info.get("name", "Универсальный эксперт")
+        description = ASSISTANT_DESCRIPTIONS.get(assistant_id, "Отвечает на любые вопросы.")
+        
+        text = (
+            f"✅ Вы выбрали: <b>{name}</b>\n\n"
+            f"📌 Описание:\n{description}"
+        )
+        bot.reply_to(message, text, parse_mode="HTML", reply_markup=create_main_menu())
+    except Exception as e:
+        print(f"[ERROR] Ошибка в universal_assistant_handler: {e}")
+        bot.reply_to(message, "Ошибка. Попробуйте позже.", reply_markup=create_main_menu())
 
+        
 @bot.message_handler(func=lambda message: message.text == "Назад")
 def back_button_handler(message):
     log_command(message.from_user.id, "Назад")
