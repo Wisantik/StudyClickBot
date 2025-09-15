@@ -264,27 +264,22 @@ def normalize_command(command: str) -> str:
     # всё остальное — игнорируем
     return None
 
-# Новый обработчик для команды /universal
 @bot.message_handler(commands=['universal'])
-def set_universal_assistant(message):
+def set_universal_command(message):
     user_id = message.from_user.id
-    assistant_key = 'universal_expert'
-    set_user_assistant(user_id, assistant_key)  # Устанавливаем ассистента
-    clear_chat_history(user_id)  # Сбрасываем историю чата
-    conn = connect_to_db()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                "INSERT INTO command_logs (user_id, command, timestamp) VALUES (%s, %s, NOW())",
-                (user_id, '/universal')
-            )
-            conn.commit()
-    except Exception as e:
-        print(f"[ERROR] Ошибка при логировании команды /universal: {e}")
-    finally:
-        conn.close()
-    bot.reply_to(message, "✅ Переключились на Универсальный ассистент. История чата сброшена!", reply_markup=create_main_menu())
-
+    assistant_id = 'universal_expert'
+    set_user_assistant(user_id, assistant_id)
+    clear_chat_history(user_id)  # Сброс только для универсального
+    print(f"[INFO] Универсальный ассистент установлен для {user_id} через /universal с сбросом истории")
+    config = load_assistants_config()
+    assistant_info = config["assistants"][assistant_id]
+    name = assistant_info.get("name", "Без названия")
+    description = ASSISTANT_DESCRIPTIONS.get(assistant_id, "Описание отсутствует.")
+    text = (
+        f"✅ Вы выбрали: <b>{name}</b>\n\n"
+        f"📌 Описание:\n{description}"
+    )
+    bot.reply_to(message, text, parse_mode="HTML", reply_markup=create_main_menu())
 
 # ---------- Логирование команды (вставляет нормализованное значение) ----------
 def log_command(user_id: int, command: str):
@@ -377,23 +372,6 @@ def setup_bot_commands():
         print("Команды бота успешно настроены")
     except Exception as e:
         print(f"Ошибка при настройке команд: {e}")
-
-@bot.message_handler(commands=['universal'])
-def set_universal_assistant(message):
-    """Устанавливает универсального ассистента для пользователя"""
-    user_id = message.from_user.id
-    log_command(user_id, "universal")
-    
-    # Обновляем данные пользователя, устанавливая универсального ассистента
-    user_data = load_user_data(user_id)
-    if not user_data:
-        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.", reply_markup=create_main_menu())
-        return
-    
-    user_data['current_assistant'] = 'universal_expert'
-    save_user_data(user_data)
-    
-    bot.reply_to(message, "Универсальный ассистент выбран! Теперь я могу отвечать на любые ваши вопросы.", reply_markup=create_main_menu())
 
 def create_price_menu(user_data) -> types.InlineKeyboardMarkup:
     buttons = []
@@ -575,7 +553,6 @@ def assistants_button_handler(message):
         "Выберите ассистента:",
         reply_markup=create_assistants_menu()
     )
-
 # === Обработчик выбора ассистента ===
 @bot.callback_query_handler(func=lambda call: call.data.startswith("select_assistant_"))
 def assistant_callback_handler(call):
@@ -590,6 +567,12 @@ def assistant_callback_handler(call):
     log_command(call.from_user.id, f"assistant:{assistant_id}")
 
     set_user_assistant(call.from_user.id, assistant_id)
+    
+    # Сброс истории только для универсального ассистента
+    if assistant_id == 'universal_expert':
+        clear_chat_history(call.from_user.id)
+        print(f"[INFO] Универсальный ассистент установлен для {call.from_user.id} с сбросом истории")
+    
     assistant_info = config["assistants"][assistant_id]
     name = assistant_info.get("name", "Без названия")
     description = ASSISTANT_DESCRIPTIONS.get(assistant_id, "Описание отсутствует.")
@@ -606,7 +589,6 @@ def assistant_callback_handler(call):
         parse_mode="HTML",
         reply_markup=None
     )
-
 
 
 @bot.message_handler(commands=['experts'])
