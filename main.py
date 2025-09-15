@@ -2015,23 +2015,40 @@ def voice(message):
         bot.reply_to(message, "Произошла ошибка, попробуйте позже!", reply_markup=create_main_menu())
 
 def handler(event, context):
-    message = json.loads(event["body"])
-    update = telebot.types.Update.de_json(message)
-    allowed_updates=["message", "callback_query", "pre_checkout_query"]
-    if update.message is not None:
-        try:
-            bot.process_new_updates([update])
-        except telebot.apihelper.ApiTelegramException as e:
-            if e.error_code == 403:
-                print(f"Пользователь заблокировал бота.")
-            else:
-                print(f"Ошибка API Telegram: {e}")
-        except Exception as e:
-            print(f"Ошибка обработки обновления: {e}")
-    return {
-        "statusCode": 200,
-        "body": "ok",
-    }
+    try:
+        body = event.get("body", "")
+        if not body:
+            print(f"[WARN] Пустой body в handler")
+            return {"statusCode": 200, "body": "ok"}
+        
+        message = json.loads(body)
+        update = telebot.types.Update.de_json(message)
+        
+        # Проверка: update должен быть объектом Update, не int или другим
+        if not isinstance(update, telebot.types.Update):
+            print(f"[ERROR] Некорректное update (тип: {type(update)}, значение: {message})")
+            return {"statusCode": 200, "body": "ok"}
+        
+        # Проверяем наличие message, callback_query или pre_checkout_query
+        if update.message or update.callback_query or update.pre_checkout_query:
+            try:
+                bot.process_new_updates([update])
+            except telebot.apihelper.ApiTelegramException as e:
+                if e.error_code == 403:
+                    print(f"Пользователь заблокировал бота.")
+                else:
+                    print(f"Ошибка API Telegram: {e}")
+            except Exception as e:
+                print(f"Ошибка обработки обновления: {e}")
+        else:
+            print(f"[WARN] Игнорируем update без ключевых полей: {message}")
+    except json.JSONDecodeError as e:
+        print(f"[ERROR] Ошибка парсинга JSON в handler: {e}")
+    except Exception as e:
+        print(f"[ERROR] Общая ошибка в handler: {e}")
+    
+    return {"statusCode": 200, "body": "ok"}
+
 
 def check_experts_in_database(connection):
     with connection.cursor() as cursor:
