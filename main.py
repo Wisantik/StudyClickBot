@@ -269,7 +269,10 @@ def set_universal_command(message):
     user_id = message.from_user.id
     assistant_id = 'universal_expert'
     set_user_assistant(user_id, assistant_id)
-    clear_chat_history(user_id)  # Сброс только для универсального
+
+    # Сброс только для универсального
+    clear_chat_history_for_user(user_id, message.chat.id)
+
     print(f"[INFO] Универсальный ассистент установлен для {user_id} через /universal с сбросом истории")
     config = load_assistants_config()
     assistant_info = config["assistants"][assistant_id]
@@ -280,6 +283,7 @@ def set_universal_command(message):
         f"📌 Описание:\n{description}"
     )
     bot.reply_to(message, text, parse_mode="HTML", reply_markup=create_main_menu())
+
 
 # ---------- Логирование команды (вставляет нормализованное значение) ----------
 def log_command(user_id: int, command: str):
@@ -599,7 +603,7 @@ def assistant_callback_handler(call):
         
         # Сброс истории только для универсального ассистента
         if assistant_id == 'universal_expert':
-            clear_chat_history(user_id)
+            clear_chat_history_for_user(call.from_user.id, getattr(call.message, "chat", {}).id if call.message else None)
             print(f"[INFO] Универсальный ассистент установлен для {user_id} с сбросом истории")
         
         assistant_info = config["assistants"][assistant_id]
@@ -750,7 +754,8 @@ def universal_assistant_handler(message):
         set_user_assistant(user_id, assistant_id)
         
         # Сброс истории только для универсального
-        clear_chat_history(user_id)
+        clear_chat_history_for_user(user_id, message.chat.id)
+
         print(f"[INFO] Универсальный ассистент установлен для {user_id} через /universal с сбросом истории")
         
         config = load_assistants_config()
@@ -1172,20 +1177,32 @@ GPT-4o: {user_data['daily_tokens']} символов
                 reply_markup=create_profile_menu()
             )
     bot.answer_callback_query(call.id)
+# helper — делает реальную очистку по user_id
+def clear_chat_history_for_user(user_id: int, chat_id: int | None = None):
+    try:
+        conn = connect_to_db()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM chat_history WHERE chat_id = %s", (user_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        # ставим универсального ассистента
+        set_user_assistant(user_id, 'universal_expert')
+        # опционально шлём уведомление в чат (если у нас есть chat_id)
+        if chat_id:
+            try:
+                bot.send_message(chat_id, "История чата очищена! Можете начать новый диалог.", reply_markup=create_main_menu())
+            except Exception as e:
+                print(f"[WARN] Не удалось отправить уведомление об очистке для {user_id}: {e}")
+    except Exception as e:
+        print(f"[ERROR] clear_chat_history_for_user({user_id}) failed: {e}")
 
+# обработчик сообщения теперь вызывает helper
 @bot.message_handler(commands=['new'])
 @bot.message_handler(func=lambda message: message.text == "🗑 Очистить историю чата")
-def clear_chat_history(message):
+def clear_chat_history_handler(message):
     log_command(message.from_user.id, "new")
-    chat_id = message.chat.id
-    conn = connect_to_db()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM chat_history WHERE chat_id = %s", (chat_id,))
-    conn.commit()
-    cur.close()
-    conn.close()
-    set_user_assistant(message.from_user.id, 'universal_expert')
-    bot.reply_to(message, "История чата очищена! Можете начать новый диалог с универсальным экспертом.", reply_markup=create_main_menu())
+    clear_chat_history_for_user(message.from_user.id, message.chat.id)
 
 def create_language_menu():
     keyboard = types.InlineKeyboardMarkup(row_width=3)
