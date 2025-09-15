@@ -557,10 +557,10 @@ def assistants_button_handler(message):
 @bot.callback_query_handler(func=lambda call: call.data.startswith("select_assistant_"))
 def assistant_callback_handler(call):
     try:
-        # Guard: Проверяем, что call — CallbackQuery, а не int или другой тип
-        if not hasattr(call, 'data') or not hasattr(call, 'from_user') or not call.from_user:
-            print(f"[ERROR] Некорректный call объект: тип {type(call)}, data: {getattr(call, 'data', 'None')}")
-            if hasattr(call, 'id'):
+        # Более строгий guard: Проверяем тип и атрибуты call
+        if not isinstance(call, types.CallbackQuery) or not hasattr(call, 'data') or not hasattr(call, 'from_user') or not call.from_user:
+            print(f"[ERROR] Некорректный call объект в assistant_callback_handler: тип {type(call)}, data: {getattr(call, 'data', 'None')}")
+            if hasattr(call, 'id') and callable(getattr(call, 'id', None)):
                 bot.answer_callback_query(call.id, "Ошибка обработки. Попробуйте снова.")
             return
         
@@ -576,7 +576,7 @@ def assistant_callback_handler(call):
 
         set_user_assistant(call.from_user.id, assistant_id)
         
-        # Сброс истории только для универсального ассистента (как договаривались)
+        # Сброс истории только для универсального ассистента
         if assistant_id == 'universal_expert':
             clear_chat_history(call.from_user.id)
             print(f"[INFO] Универсальный ассистент установлен для {call.from_user.id} с сбросом истории")
@@ -590,6 +590,12 @@ def assistant_callback_handler(call):
             f"📌 Описание:\n{description}"
         )
 
+        # Guard для call.message
+        if not hasattr(call.message, 'chat') or not hasattr(call.message, 'message_id'):
+            print(f"[ERROR] Некорректный call.message: тип {type(call.message)}")
+            bot.answer_callback_query(call.id, "Ошибка обновления сообщения.")
+            return
+
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
@@ -599,7 +605,7 @@ def assistant_callback_handler(call):
         )
     except Exception as e:
         print(f"[ERROR] Ошибка в assistant_callback_handler: {e}")
-        if hasattr(call, 'id'):
+        if hasattr(call, 'id') and callable(getattr(call, 'id', None)):
             bot.answer_callback_query(call.id, "Ошибка. Попробуйте перезапустить выбор.")
 
 
@@ -681,9 +687,10 @@ def expert_callback_handler(call):
 def universal_assistant_handler(message):
     try:
         # Guard: Проверяем, что message — Message, а не int или другой тип
-        if not hasattr(message, 'from_user') or not message.from_user:
-            print(f"[ERROR] Некорректный message объект: тип {type(message)}")
-            bot.reply_to(message, "Ошибка обработки команды. Попробуйте /start.", reply_markup=create_main_menu())
+        if not isinstance(message, types.Message) or not hasattr(message, 'from_user') or not message.from_user:
+            print(f"[ERROR] Некорректный message объект в universal_assistant_handler: тип {type(message)}")
+            if hasattr(message, 'chat') and hasattr(message, 'message_id'):
+                bot.reply_to(message, "Ошибка обработки команды. Попробуйте /start.", reply_markup=create_main_menu())
             return
         
         user_id = message.from_user.id
@@ -708,12 +715,19 @@ def universal_assistant_handler(message):
             f"✅ Вы выбрали: <b>{name}</b>\n\n"
             f"📌 Описание:\n{description}"
         )
+        
+        # Guard для reply_to
+        if not hasattr(message, 'chat'):
+            print(f"[ERROR] Некорректный message.chat: тип {type(message)}")
+            return
+        
         bot.reply_to(message, text, parse_mode="HTML", reply_markup=create_main_menu())
     except Exception as e:
         print(f"[ERROR] Ошибка в universal_assistant_handler: {e}")
-        bot.reply_to(message, "Ошибка. Попробуйте позже.", reply_markup=create_main_menu())
+        if hasattr(message, 'chat') and hasattr(message, 'message_id'):
+            bot.reply_to(message, "Ошибка. Попробуйте позже.", reply_markup=create_main_menu())
 
-        
+
 @bot.message_handler(func=lambda message: message.text == "Назад")
 def back_button_handler(message):
     log_command(message.from_user.id, "Назад")
