@@ -20,7 +20,9 @@ import tempfile
 from pydub import AudioSegment
 from ddgs import DDGS
 import re
+
 load_dotenv()
+
 # Настройка логирования и окружения
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 connect_to_db()
@@ -203,6 +205,7 @@ def normalize_command(command: str) -> str:
         "experts_from_profile": "👨‍💼 Эксперты (из профиля)",
         "referral": "🔗 Реферальная ссылка",
         "search": None,  # избегаем логирования "search" как мусор
+        "universal": "🤖 Ассистент: Универсальный"  # Добавлено для /universal
     }
 
     # при прямом совпадении
@@ -260,6 +263,27 @@ def normalize_command(command: str) -> str:
 
     # всё остальное — игнорируем
     return None
+
+# Новый обработчик для команды /universal
+@bot.message_handler(commands=['universal'])
+def set_universal_assistant(message):
+    user_id = message.from_user.id
+    assistant_key = 'universal_expert'
+    set_user_assistant(user_id, assistant_key)  # Устанавливаем ассистента
+    clear_chat_history(user_id)  # Сбрасываем историю чата
+    conn = connect_to_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO command_logs (user_id, command, timestamp) VALUES (%s, %s, NOW())",
+                (user_id, '/universal')
+            )
+            conn.commit()
+    except Exception as e:
+        print(f"[ERROR] Ошибка при логировании команды /universal: {e}")
+    finally:
+        conn.close()
+    bot.reply_to(message, "✅ Переключились на Универсальный ассистент. История чата сброшена!", reply_markup=create_main_menu())
 
 
 # ---------- Логирование команды (вставляет нормализованное значение) ----------
