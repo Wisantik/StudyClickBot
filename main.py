@@ -203,7 +203,7 @@ def normalize_command(command: str) -> str:
         "experts": "👨‍💼 Эксперты",
         "Эксперты": "👨‍💼 Эксперты",
         "experts_from_profile": "👨‍💼 Эксперты (из профиля)",
-        "referral": "🔗 Реферальная ссылка",
+        # "referral": "🔗 Реферальная ссылка",
         "search": None,  # избегаем логирования "search" как мусор
         "universal": "🤖 Ассистент: Универсальный"  # Добавлено для /universal
     }
@@ -368,7 +368,7 @@ def setup_bot_commands():
         BotCommand("cancel_subscription", "❌ Отмена подписки"),
         BotCommand("new", "🗑 Очистить историю чата"),
         BotCommand("support", "📞 Поддержка"),
-        BotCommand("referral", "🔗 Реферальная ссылка"),
+        # BotCommand("referral", "🔗 Реферальная ссылка"),
         BotCommand("universal", "🤖 Универсальный ассистент"),
     ]
     try:
@@ -528,7 +528,7 @@ def show_pay_menu_callback(call):
     log_command(call.from_user.id, "show_pay_menu")
     subscription_text = """Подписка Plus
 
-Доступ к GPT 40 - безлимит
+Доступ к GPT 5 - безлимит
 Чтение PDF файлов - безлимит
 Чтение ссылок - безлимит
 Интернет поиск - безлимит
@@ -797,7 +797,7 @@ def get_pay(message):
     log_command(message.from_user.id, "pay")
     subscription_text = """Подписка Plus
 
-Доступ к GPT 40 - безлимит
+Доступ к GPT 5 - безлимит
 Чтение PDF файлов - безлимит
 Чтение ссылок - безлимит
 Интернет поиск - безлимит
@@ -1039,6 +1039,8 @@ def check_auto_renewal():
                                 "❌ Не удалось продлить подписку. Пожалуйста, оплатите вручную: /pay",
                                 reply_markup=create_main_menu()
                             )
+                            # 🔹 Сбрасываем план на free
+                            set_user_subscription(user_id, "free")
                     except Exception as e:
                         print(f"[ERROR] Ошибка автопродления для user_id={user_id}: {e}")
                         bot.send_message(
@@ -1132,11 +1134,11 @@ def profile_menu_callback_handler(call):
             if remaining_days < 0:
                 remaining_days = 0
         invited_users = user_data['invited_users']
-        referral_text = (
-            "🙁 Вы пока не пригласили ни одного друга."
-            if invited_users == 0
-            else f"🎉 Вы пригласили: {invited_users} друзей"
-        )
+        # referral_text = (
+        #     "🙁 Вы пока не пригласили ни одного друга."
+        #     if invited_users == 0
+        #     else f"🎉 Вы пригласили: {invited_users} друзей"
+        # )
         web_search_status = "включён" if user_data['web_search_enabled'] else "выключен" if user_data['subscription_plan'].startswith('plus_') else "недоступен (требуется подписка Plus)"
         profile_text = f"""
 ID: {user_id}
@@ -1156,11 +1158,6 @@ GPT-4o: {user_data['daily_tokens']} символов
 
 📝 Входные токены: {user_data['input_tokens']}
 📝 Выходные токены: {user_data['output_tokens']}
-👥 Реферальная программа:
-Количество приглашенных пользователей: {invited_users}
-{referral_text}
-{'👤 Вы были приглашены пользователем с ID: ' + str(user_data['referrer_id']) if user_data['referrer_id'] else 'Вы не были приглашены никем.'}
-Чтобы пригласить пользователя, отправьте ему ссылку: {generate_referral_link(user_id)}
 """
         try:
             bot.edit_message_text(
@@ -1386,11 +1383,11 @@ def show_profile(message):
         if remaining_days < 0:
             remaining_days = 0
     invited_users = user_data['invited_users']
-    referral_text = (
-        "🙁 Вы пока не пригласили ни одного друга."
-        if invited_users == 0
-        else f"🎉 Вы пригласили: {invited_users} друзей"
-    )
+    # referral_text = (
+    #     "🙁 Вы пока не пригласили ни одного друга."
+    #     if invited_users == 0
+    #     else f"🎉 Вы пригласили: {invited_users} друзей"
+    # )
     web_search_status = "включён" if user_data['web_search_enabled'] else "выключен" if user_data['subscription_plan'].startswith('plus_') else "недоступен (требуется подписка Plus)"
     profile_text = f"""
 ID: {user_id}
@@ -1410,11 +1407,6 @@ GPT-4o: {user_data['daily_tokens']} символов
 
 📝 Входные токены: {user_data['input_tokens']}
 📝 Выходные токены: {user_data['output_tokens']}
-👥 Реферальная программа:
-Количество приглашенных пользователей: {invited_users}
-{referral_text}
-{'👤 Вы были приглашены пользователем с ID: ' + str(user_data['referrer_id']) if user_data['referrer_id'] else 'Вы не были приглашены никем.'}
-Чтобы пригласить пользователя, отправьте ему ссылку: {generate_referral_link(user_id)}
 """
     bot.send_message(message.chat.id, profile_text, reply_markup=create_profile_menu())
 
@@ -1620,13 +1612,13 @@ VK — https://vk.com/guidingstarvlog
     reply_markup=create_main_menu(),
     parse_mode="HTML"
 )
-@bot.message_handler(commands=['referral'])
-@bot.message_handler(func=lambda message: message.text == "🔗 Реферальная ссылка")
-def send_referral_link(message):
-    log_command(message.from_user.id, "referral")
-    user_id = message.from_user.id
-    referral_link = generate_referral_link(user_id)
-    bot.reply_to(message, f"Ваша реферальная ссылка: {referral_link}", reply_markup=create_main_menu())
+# @bot.message_handler(commands=['referral'])
+# @bot.message_handler(func=lambda message: message.text == "🔗 Реферальная ссылка")
+# def send_referral_link(message):
+#     log_command(message.from_user.id, "referral")
+#     user_id = message.from_user.id
+#     referral_link = generate_referral_link(user_id)
+#     bot.reply_to(message, f"Ваша реферальная ссылка: {referral_link}", reply_markup=create_main_menu())
 
 def typing(chat_id):
     while True:
