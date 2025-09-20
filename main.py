@@ -353,7 +353,7 @@ def create_main_menu() -> types.ReplyKeyboardMarkup:
         types.KeyboardButton("❌ Отмена подписки"),
         types.KeyboardButton("🗑 Очистить историю чата"),
         types.KeyboardButton("📞 Поддержка"),
-        types.KeyboardButton("🔗 Реферальная ссылка"),
+        # types.KeyboardButton("🔗 Реферальная ссылка"),
     )
     return keyboard
 
@@ -1495,7 +1495,7 @@ def show_stats_admin(message):
                 groups["Поддержка"][cmd] = cnt
             elif "Эксперт" in cmd:
                 groups["Эксперты"][cmd] = cnt
-            elif cmd in ("start", "🔗 Реферальная ссылка", "referral"):
+            # elif cmd in ("start", "🔗 Реферальная ссылка", "referral"):
                 groups["Платежи/прочее"][cmd] = cnt
             elif "Статистика" in cmd or cmd == "statsadmin12" or cmd.startswith("📊"):
                 groups["Админ/системное"][cmd] = cnt
