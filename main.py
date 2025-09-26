@@ -820,10 +820,6 @@ def get_pay(message):
 import threading
 
 def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval: int = 180):
-    """
-    Проверяет статус платежа для user_id каждые interval секунд,
-    максимум max_checks раз (по умолчанию 12 минут).
-    """
     def run():
         for attempt in range(max_checks):
             try:
@@ -833,12 +829,19 @@ def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval
                 if payment.status == "succeeded":
                     save_payment_method_for_user(user_id, payment.payment_method.id)
                     set_user_subscription(user_id, "plus_trial")
+
+                    # 🔹 Отмечаем, что триал уже использован
+                    user_data = load_user_data(user_id)
+                    if user_data:
+                        user_data['trial_used'] = True
+                        save_user_data(user_data)
+
                     bot.send_message(
                         user_id,
                         "✅ Пробная подписка Plus активирована на 3 дня!",
                         reply_markup=create_main_menu()
                     )
-                    return  # завершаем, всё ок
+                    return
                 elif payment.status in ["canceled", "failed"]:
                     bot.send_message(
                         user_id,
@@ -849,10 +852,8 @@ def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval
             except Exception as e:
                 print(f"[ERROR] Ошибка проверки платежа {payment_id} для {user_id}: {e}")
 
-            # ждём перед следующей проверкой
             time.sleep(interval)
 
-        # если все проверки закончились, но платёж так и не подтвердился
         bot.send_message(
             user_id,
             "⚠️ Мы не получили подтверждение оплаты в течение 12 минут. "
@@ -861,6 +862,7 @@ def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval
         )
 
     threading.Thread(target=run, daemon=True).start()
+
 
 
 @bot.callback_query_handler(func=lambda callback: callback.data in ["buy_trial", "buy_month"])
@@ -920,7 +922,7 @@ def buy_subscription(callback):
             bot.send_invoice(
                 chat_id=callback.message.chat.id,
                 title="Подписка Plus (месяц)",
-                description="Месячная подписка Plus: безлимитный доступ к GPT-4o, веб-поиск, обработка PDF и голосовых сообщений.",
+                description="Месячная подписка Plus: безлимитный доступ к GPT-5, веб-поиск, обработка PDF и голосовых сообщений.",
                 invoice_payload=f"month_subscription_{user_id}",
                 provider_token=pay_token,
                 currency="RUB",
@@ -1015,7 +1017,7 @@ def check_auto_renewal():
                                 "customer": {"email": "sg050@yandex.ru"},
                                 "items": [{
                                     "description": "Подписка Plus (месяц)",
-                                    "quantity": "1.00",  # Исправлено на строку
+                                    "quantity": "1.00",
                                     "amount": {"value": "399.00", "currency": "RUB"},
                                     "vat_code": 1
                                 }]
@@ -1025,6 +1027,7 @@ def check_auto_renewal():
                         print(f"[DEBUG] Создание платежа автопродления для user_id={user_id}: {payment_params}")
                         payment = Payment.create(payment_params)
                         print(f"[DEBUG] Платёж автопродления создан: id={payment.id}, status={payment.status}")
+
                         if payment.status == "succeeded":
                             set_user_subscription(user_id, "plus_month")
                             bot.send_message(
@@ -1033,14 +1036,32 @@ def check_auto_renewal():
                                 reply_markup=create_main_menu()
                             )
                         else:
-                            print(f"[INFO] Платёж для user_id={user_id} не успешен: status={payment.status}")
-                            bot.send_message(
-                                user_id,
-                                "❌ Не удалось продлить подписку. Пожалуйста, оплатите вручную: /pay",
-                                reply_markup=create_main_menu()
-                            )
-                            # 🔹 Сбрасываем план на free
+                            reason = None
+                            if hasattr(payment, "cancellation_details") and payment.cancellation_details:
+                                reason = getattr(payment.cancellation_details, "reason", None)
+
+                            msg = f"❌ Не удалось продлить подписку.\nСтатус: {payment.status}"
+                            if reason:
+                                msg += f"\nПричина: {reason}"
+                            msg += "\nПожалуйста, оплатите вручную: /pay"
+
+                            # 🔹 Уведомляем пользователя
+                            bot.send_message(user_id, msg, reply_markup=create_main_menu())
+
+                            # 🔹 Отправляем уведомление админу
+                            try:
+                                bot.send_message(
+                                    741831495,
+                                    f"⚠️ Ошибка автопродления для user_id={user_id}\n"
+                                    f"Статус: {payment.status}\n"
+                                    f"Причина: {reason or 'неизвестно'}"
+                                )
+                            except Exception as e:
+                                print(f"[WARN] Не удалось уведомить админа: {e}")
+
+                            # 🔹 Сбрасываем подписку на free
                             set_user_subscription(user_id, "free")
+
                     except Exception as e:
                         print(f"[ERROR] Ошибка автопродления для user_id={user_id}: {e}")
                         bot.send_message(
@@ -1048,12 +1069,20 @@ def check_auto_renewal():
                             f"❌ Ошибка при автопродлении: {e}. Пожалуйста, оплатите вручную: /pay",
                             reply_markup=create_main_menu()
                         )
+                        try:
+                            bot.send_message(
+                                741831495,
+                                f"❌ Exception при автопродлении user_id={user_id}\nОшибка: {e}"
+                            )
+                        except:
+                            pass
                 else:
                     print(f"[INFO] Не найден payment_method_id для user_id={user_id}")
     except Exception as e:
         print(f"[ERROR] Ошибка при проверке автопродления: {e}")
     finally:
         conn.close()
+
 
 schedule.every(5).minutes.do(check_pending_payments)
 schedule.every().day.at("00:00").do(check_auto_renewal)
@@ -1151,7 +1180,7 @@ ID: {user_id}
 Веб-поиск: {web_search_status}
 
 Оставшаяся квота:
-GPT-4o: {user_data['daily_tokens']} символов
+GPT-5: {user_data['daily_tokens']} символов
 
 🏷 Детали расходов:
 💰 Общая сумма: ${user_data['total_spent']:.4f}
@@ -1400,7 +1429,7 @@ ID: {user_id}
 Веб-поиск: {web_search_status}
 
 Оставшаяся квота:
-GPT-4o: {user_data['daily_tokens']} символов
+GPT-5: {user_data['daily_tokens']} символов
 
 🏷 Детали расходов:
 💰 Общая сумма: ${user_data['total_spent']:.4f}
