@@ -1101,6 +1101,7 @@ def profile_menu_callback_handler(call):
         )
         bot.answer_callback_query(call.id)
         return
+
     if call.data == "show_assistants":
         bot.edit_message_text(
             chat_id=call.message.chat.id,
@@ -1108,6 +1109,7 @@ def profile_menu_callback_handler(call):
             text="Выберите ассистента:",
             reply_markup=create_assistants_menu()
         )
+
     elif call.data == "show_experts":
         bot.edit_message_text(
             chat_id=call.message.chat.id,
@@ -1115,6 +1117,7 @@ def profile_menu_callback_handler(call):
             text="Выберите эксперта:",
             reply_markup=create_experts_menu()
         )
+
     elif call.data == "show_support":
         bot.edit_message_text(
             chat_id=call.message.chat.id,
@@ -1125,6 +1128,7 @@ def profile_menu_callback_handler(call):
                 types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
             )
         )
+
     elif call.data == "cancel_subscription":
         if not user_data or user_data['subscription_plan'] == 'free':
             bot.edit_message_text(
@@ -1154,6 +1158,7 @@ def profile_menu_callback_handler(call):
                     types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
                 )
             )
+
     elif call.data == "back_to_profile":
         subscription_end_date = user_data.get('subscription_end_date')
         remaining_days = None
@@ -1162,25 +1167,31 @@ def profile_menu_callback_handler(call):
             remaining_days = (subscription_end_date - today).days
             if remaining_days < 0:
                 remaining_days = 0
-        invited_users = user_data['invited_users']
-        # referral_text = (
-        #     "🙁 Вы пока не пригласили ни одного друга."
-        #     if invited_users == 0
-        #     else f"🎉 Вы пригласили: {invited_users} друзей"
-        # )
-        web_search_status = "включён" if user_data['web_search_enabled'] else "выключен" if user_data['subscription_plan'].startswith('plus_') else "недоступен (требуется подписка Plus)"
+
+        # 🔹 Веб-поиск
+        web_search_status = "включён" if user_data['web_search_enabled'] else \
+            "выключен" if user_data['subscription_plan'].startswith('plus_') else \
+            "недоступен (требуется подписка Plus)"
+
+        # 🔹 Квота токенов
+        if user_data['subscription_plan'] in ['plus_trial', 'plus_month']:
+            quota_text = "GPT-5: безлимит ✅"
+        else:
+            quota_text = f"GPT-5: {user_data['daily_tokens']} символов"
+
         profile_text = f"""
 ID: {user_id}
 
 Ваш текущий тариф: {PLAN_NAMES.get(user_data['subscription_plan'], user_data['subscription_plan'])}
 """
         if user_data['subscription_plan'] != 'free' and remaining_days is not None:
-            profile_text += f"Подписка активна еще {remaining_days} дней\n"
+            profile_text += f"Подписка активна ещё {remaining_days} дней\n"
+
         profile_text += f"""
 Веб-поиск: {web_search_status}
 
 Оставшаяся квота:
-GPT-5: {user_data['daily_tokens']} символов
+{quota_text}
 
 🏷 Детали расходов:
 💰 Общая сумма: ${user_data['total_spent']:.4f}
@@ -1202,6 +1213,7 @@ GPT-5: {user_data['daily_tokens']} символов
                 text=profile_text,
                 reply_markup=create_profile_menu()
             )
+
     bot.answer_callback_query(call.id)
 # helper — делает реальную очистку по user_id
 def clear_chat_history_for_user(user_id: int, chat_id: int | None = None):
@@ -1344,7 +1356,7 @@ def check_and_update_tokens(user_id):
     conn = connect_to_db()
     cur = conn.cursor()
     cur.execute(""" 
-        SELECT daily_tokens, subscription_plan, last_token_update, last_warning_time, subscription_end_date 
+        SELECT daily_tokens, subscription_plan, last_token_update, subscription_end_date 
         FROM users WHERE user_id = %s 
     """, (user_id,))
     user_data = cur.fetchone()
@@ -1353,12 +1365,11 @@ def check_and_update_tokens(user_id):
         cur.close()
         conn.close()
         return
-    tokens, current_plan, last_update, last_warning_time, subscription_end_date = user_data
+
+    tokens, current_plan, last_update, subscription_end_date = user_data
     current_date = datetime.datetime.now().date()
-    if isinstance(last_update, str):
-        last_update_date = datetime.datetime.strptime(last_update, '%Y-%m-%d').date()
-    else:
-        last_update_date = last_update
+
+    # 🔹 Если подписка закончилась → переводим на free
     if current_plan != 'free' and subscription_end_date and current_date > subscription_end_date:
         print(f"[DEBUG] Подписка user_id={user_id} истекла, перевод на free")
         cur.execute(""" 
@@ -1369,20 +1380,20 @@ def check_and_update_tokens(user_id):
                 web_search_enabled = FALSE
             WHERE user_id = %s 
         """, (FREE_DAILY_TOKENS, user_id))
-        try:
-            bot.send_message(
-                user_id,
-                "Ваша подписка истекла. Вы переведены на бесплатный тариф. Веб-поиск отключён. Пожалуйста, выберите новый тариф: /pay",
-                reply_markup=create_main_menu()
-            )
-        except telebot.apihelper.ApiTelegramException as e:
-            if e.error_code == 403:
-                print(f"Пользователь {user_id} заблокировал бота.")
-            else:
-                print(f"Ошибка API для {user_id}: {e}")
-        except Exception as e:
-            print(f"Ошибка отправки уведомления {user_id}: {e}")
-    if tokens <= MIN_TOKENS_THRESHOLD and current_plan == 'free':
+        bot.send_message(
+            user_id,
+            "Ваша подписка истекла. Вы переведены на бесплатный тариф. Веб-поиск отключён. "
+            "Пожалуйста, выберите новый тариф: /pay",
+            reply_markup=create_main_menu()
+        )
+
+    # 🔹 Если тариф free → начисляем токены раз в день
+    if current_plan == 'free':
+        if isinstance(last_update, str):
+            last_update_date = datetime.datetime.strptime(last_update, '%Y-%m-%d').date()
+        else:
+            last_update_date = last_update
+
         if current_date > last_update_date:
             print(f"[DEBUG] Обновление токенов для user_id={user_id}: {FREE_DAILY_TOKENS}")
             cur.execute(""" 
@@ -1391,6 +1402,15 @@ def check_and_update_tokens(user_id):
                     last_token_update = %s 
                 WHERE user_id = %s 
             """, (FREE_DAILY_TOKENS, current_date, user_id))
+
+    # 🔹 Для платных тарифов токены не ограничиваем (ставим "бесконечность")
+    elif current_plan in ['plus_trial', 'plus_month']:
+        cur.execute("""
+            UPDATE users 
+            SET daily_tokens = 999999999  -- символизируем "безлимит"
+            WHERE user_id = %s
+        """, (user_id,))
+
     conn.commit()
     cur.close()
     conn.close()
@@ -1404,6 +1424,7 @@ def show_profile(message):
     if not user_data:
         bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.", reply_markup=create_main_menu())
         return
+
     subscription_end_date = user_data.get('subscription_end_date')
     remaining_days = None
     if user_data['subscription_plan'] != 'free' and subscription_end_date:
@@ -1411,25 +1432,31 @@ def show_profile(message):
         remaining_days = (subscription_end_date - today).days
         if remaining_days < 0:
             remaining_days = 0
-    invited_users = user_data['invited_users']
-    # referral_text = (
-    #     "🙁 Вы пока не пригласили ни одного друга."
-    #     if invited_users == 0
-    #     else f"🎉 Вы пригласили: {invited_users} друзей"
-    # )
-    web_search_status = "включён" if user_data['web_search_enabled'] else "выключен" if user_data['subscription_plan'].startswith('plus_') else "недоступен (требуется подписка Plus)"
+
+    # 🔹 Веб-поиск
+    web_search_status = "включён" if user_data['web_search_enabled'] else \
+        "выключен" if user_data['subscription_plan'].startswith('plus_') else \
+        "недоступен (требуется подписка Plus)"
+
+    # 🔹 Квота токенов
+    if user_data['subscription_plan'] in ['plus_trial', 'plus_month']:
+        quota_text = "GPT-5: безлимит ✅"
+    else:
+        quota_text = f"GPT-5: {user_data['daily_tokens']} символов"
+
     profile_text = f"""
 ID: {user_id}
 
 Ваш текущий тариф: {PLAN_NAMES.get(user_data['subscription_plan'], user_data['subscription_plan'])}
 """
     if user_data['subscription_plan'] != 'free' and remaining_days is not None:
-        profile_text += f"Подписка активна еще {remaining_days} дней\n"
+        profile_text += f"Подписка активна ещё {remaining_days} дней\n"
+
     profile_text += f"""
 Веб-поиск: {web_search_status}
 
 Оставшаяся квота:
-GPT-5: {user_data['daily_tokens']} символов
+{quota_text}
 
 🏷 Детали расходов:
 💰 Общая сумма: ${user_data['total_spent']:.4f}
@@ -1438,6 +1465,7 @@ GPT-5: {user_data['daily_tokens']} символов
 📝 Выходные токены: {user_data['output_tokens']}
 """
     bot.send_message(message.chat.id, profile_text, reply_markup=create_profile_menu())
+
 
 ADMIN_IDS = [998107476, 741831495]
 
