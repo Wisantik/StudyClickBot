@@ -152,8 +152,17 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
 В конце обязательно добавь блок "📚 Источники" со списком ссылок.
 """
 
-    # Отправляем в модель
-    final_answer = generate_response(full_prompt)
+        # Отправляем в модель
+    try:
+        chat_completion = openai.ChatCompletion.create(
+            model="gpt-5-mini-2025-08-07",
+            messages=[{"role": "system", "content": full_prompt}]
+        )
+        final_answer = chat_completion.choices[0].message.content
+    except Exception as e:
+        print(f"[ERROR] Ошибка при генерации ответа: {e}")
+        final_answer = "Произошла ошибка при генерации ответа."
+
 
     # Добавляем красиво оформленные источники
     sources_block = "\n\n📚 *Источники:*\n" + "\n".join(
