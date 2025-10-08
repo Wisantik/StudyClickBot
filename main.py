@@ -131,7 +131,10 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
     combined_context = "\n\n".join(page_texts)
 
     # Получаем промпт ассистента
-    assistant_prompt = get_assistant_prompt(assistant_key) or ""
+    config = load_assistants_config()
+    assistant_settings = config["assistants"].get(assistant_key, {})
+    assistant_prompt = assistant_settings.get("prompt", "Вы просто бот.")
+
     print(f"[DEBUG] Промпт ассистента загружен ({len(assistant_prompt)} символов)")
 
     # Формируем общий промпт для нейросети
