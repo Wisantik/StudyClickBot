@@ -2181,15 +2181,15 @@ def process_text_message(text, chat_id) -> str:
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
-    web_search_appendix = ""
     if user_data['web_search_enabled'] or needs_web_search(text):
         if user_data['subscription_plan'] == 'free':
             return "Веб-поиск доступен только с подпиской Plus. Выберите тариф: /pay"
         print("[DEBUG] Выполняется веб-поиск")
-        search_results = _perform_web_search(text)
-        text += f"\n\n[Результаты веб-поиска]:\n{search_results}"
-        web_search_appendix = f"\n\n{search_results}"
+        # Исправленный вызов: передайте все требуемые аргументы (user_id=chat_id, query=text, assistant_key=current_assistant)
+        # Также напрямую возвращайте результат, чтобы избежать двойной генерации ИИ
+        return _perform_web_search(chat_id, text, current_assistant)
 
+    # Если веб-поиск не нужен, продолжайте с обычной генерацией (без изменений)
     input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
     history = get_chat_history(chat_id)
     history.append({"role": "user", "content": input_text})
@@ -2207,7 +2207,7 @@ def process_text_message(text, chat_id) -> str:
         save_user_data(user_data)
         store_message_in_db(chat_id, "user", input_text)
         store_message_in_db(chat_id, "assistant", ai_response)
-        return ai_response + web_search_appendix
+        return ai_response
     except Exception as e:
         return f"Произошла ошибка: {str(e)}"
 
