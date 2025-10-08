@@ -65,7 +65,8 @@ def _call_search_api(search_query):
     print(f"[DEBUG] Выполнение поиска с DDGS: {search_query}")
     try:
         with DDGS() as ddgs:
-            results = list(ddgs.text(search_query, region="ru-ru", safesearch="moderate", max_results=15))
+            # убираем лимит max_results, ставим None = без ограничений
+            results = list(ddgs.text(search_query, region="ru-ru", safesearch="moderate", max_results=None))
         formatted_results = [
             {
                 'title': result['title'],
@@ -80,24 +81,84 @@ def _call_search_api(search_query):
         print(f"[ERROR] Ошибка при выполнении веб-поиска: {str(e)}")
         return []
 
-def _perform_web_search(query: str, limit: int = 5) -> str:
-    print(f"[DEBUG] Начало веб-поиска для запроса: {query}")
+
+from bs4 import BeautifulSoup
+
+def _fetch_page_content(url: str) -> str:
+    """Скачивает и очищает контент страницы."""
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        html = requests.get(url, headers=headers, timeout=10).text
+        soup = BeautifulSoup(html, "html.parser")
+        # Извлекаем только текст из параграфов
+        text = ' '.join(p.get_text() for p in soup.find_all('p'))
+        return text[:4000]  # ограничение по длине
+    except Exception as e:
+        print(f"[ERROR] Ошибка при загрузке {url}: {e}")
+        return ""
+
+
+def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
+    """
+    Выполняет расширенный веб-поиск через DDGS, анализирует топ-3 страницы
+    и возвращает ответ от выбранного ассистента с красивыми источниками.
+    """
+    print(f"[DEBUG] Веб-поиск активирован для ассистента: {assistant_key}")
+
     cleaned_query = re.sub(
         r'^(привет|здравствуй|как дела|найди|найди мне)\s+',
         '', query, flags=re.IGNORECASE
     ).strip()
-    print(f"[DEBUG] Очищенный поисковый запрос: {cleaned_query}")
-    search_query = f"{cleaned_query} lang:ru site:*.ru | site:bbc.com | site:reuters.com | site:theguardian.com | site:nature.com | site:sciencedaily.com"
-    print(f"[DEBUG] Итоговый поисковый запрос: {search_query}")
+
+    # Поиск по всему интернету
+    search_query = f"{cleaned_query} lang:ru"
     search_results = _call_search_api(search_query)
+
     if not search_results:
         return "🔍 Не удалось найти актуальные результаты по вашему запросу."
 
-    formatted = [
-        f"{i+1}️⃣ **{r['title']}**\n{r['snippet']}\n🔗 {r['link']}"
-        for i, r in enumerate(search_results[:limit])
-    ]
-    return "\n\n🔎 Результаты веб-поиска:\n\n" + "\n\n".join(formatted)
+    # Берём топ-3 ссылок
+    top_links = search_results[:3]
+    print(f"[DEBUG] Используемые источники: {[r['link'] for r in top_links]}")
+
+    # Получаем тексты страниц
+    page_texts = []
+    for r in top_links:
+        text = _fetch_page_content(r['link'])
+        if text:
+            page_texts.append(f"Источник: {r['title']} ({r['link']})\n{text}\n")
+
+    combined_context = "\n\n".join(page_texts)
+
+    # Получаем промпт ассистента
+    assistant_prompt = get_assistant_prompt(assistant_key) or ""
+    print(f"[DEBUG] Промпт ассистента загружен ({len(assistant_prompt)} символов)")
+
+    # Формируем общий промпт для нейросети
+    full_prompt = f"""{assistant_prompt}
+
+Пользователь задал вопрос:
+"{query}"
+
+Я нашёл следующую информацию в интернете:
+
+{combined_context}
+
+Используя эти источники, дай развёрнутый, связный и точный ответ,
+учитывая стиль и роль ассистента. Если источники противоречат — укажи это.
+В конце обязательно добавь блок "📚 Источники" со списком ссылок.
+"""
+
+    # Отправляем в модель
+    final_answer = generate_response(full_prompt)
+
+    # Добавляем красиво оформленные источники
+    sources_block = "\n\n📚 *Источники:*\n" + "\n".join(
+        [f"🔗 [{r['title']}]({r['link']})" for r in top_links]
+    )
+
+    return f"{final_answer}\n\n{sources_block}"
+
 
 def needs_web_search(message: str) -> bool:
     keywords = ["найди", "что сейчас", "новости", "поиск", "в интернете", "актуально"]
