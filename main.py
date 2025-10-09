@@ -61,26 +61,68 @@ print(f"[DEBUG] ShopID: {Configuration.account_id}")
 print(f"[DEBUG] YOOKASSA_SECRET_KEY: {os.getenv('YOOKASSA_SECRET_KEY')}")
 
 # ======== WEB SEARCH (DDGS) ========
+import json
+from textwrap import shorten
+
 def _call_search_api(search_query):
-    print(f"[DEBUG] Выполнение поиска с DDGS: {search_query}")
+    """Выполняет поиск через DDGS и выводит красиво отформатированные принты."""
+    banner = "="*60
+    print(f"\n{banner}\n[DDGS SEARCH] Запрос -> {search_query}\n{banner}")
     try:
         with DDGS() as ddgs:
-            # убираем лимит max_results, ставим None = без ограничений
             results = list(ddgs.text(search_query, region="ru-ru", safesearch="moderate", max_results=None))
-        formatted_results = [
-            {
-                'title': result['title'],
-                'snippet': result['body'],
-                'link': result['href']
-            } for result in results
-            if result.get('title') and result.get('href') and not result['href'].endswith("wiktionary.org/wiki/")
-        ]
-        print(f"[DEBUG] Получено результатов поиска: {len(formatted_results)}")
-        return formatted_results
-    except Exception as e:
-        print(f"[ERROR] Ошибка при выполнении веб-поиска: {str(e)}")
-        return []
 
+        print(f"[DDGS] Всего результатов получено сырой выдачей: {len(results)}")
+
+        formatted_results = []
+        filtered_out = []
+        for i, result in enumerate(results, start=1):
+            title = result.get('title')
+            href = result.get('href')
+            body = result.get('body', '') or ""
+            reason = None
+            if not title:
+                reason = "no title"
+            elif not href:
+                reason = "no href"
+            elif href.endswith("wiktionary.org/wiki/"):
+                reason = "wiktionary filter"
+            if reason:
+                filtered_out.append((i, href, reason))
+                continue
+
+            formatted = {
+                'title': title,
+                'snippet': body,
+                'link': href
+            }
+            formatted_results.append(formatted)
+
+        print(f"[DDGS] После фильтрации: {len(formatted_results)} результатов (отфильтровано: {len(filtered_out)})")
+
+        # печатаем краткий список найденных ссылок
+        if formatted_results:
+            print("\n[DDGS] Список найденных ссылок (index, title, link, snippet...):")
+            for idx, r in enumerate(formatted_results, start=1):
+                print(f" {idx:>2}. {shorten(r['title'], 100)}")
+                print(f"      → {r['link']}")
+                print(f"      snip: {shorten(r['snippet'].replace('\\n',' '), 180)}\n")
+        else:
+            print("[DDGS] Нет отфильтрованных результатов для показа.")
+
+        if filtered_out:
+            print("[DDGS] Отфильтрованные элементы:")
+            for idx, href, why in filtered_out[:10]:
+                print(f"  - raw#{idx}: {href} (reason: {why})")
+            if len(filtered_out) > 10:
+                print(f"  ...и ещё {len(filtered_out)-10} элементов отфильтровано.")
+
+        print(f"{banner}\n")
+        return formatted_results
+
+    except Exception as e:
+        print(f"[ERROR][DDGS] Ошибка при выполнении веб-поиска: {e}")
+        return []
 
 from bs4 import BeautifulSoup
 
@@ -100,44 +142,58 @@ def _fetch_page_content(url: str) -> str:
 
 def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
     """
-    Выполняет расширенный веб-поиск через DDGS, анализирует топ-3 страницы
-    и возвращает ответ от выбранного ассистента с красиво оформленными источниками.
+    Расширенный веб-поиск: печатает подробности запроса, выбранные топ-3 ссылки,
+    статусы загрузки страниц и формирует контекст для ИИ.
     """
-    print(f"[DEBUG] Веб-поиск активирован для ассистента: {assistant_key}")
-
+    banner = "-"*60
+    print(f"\n{banner}\n[WEB SEARCH] user_id={user_id} assistant={assistant_key}")
     cleaned_query = re.sub(
         r'^(привет|здравствуй|как дела|найди|найди мне)\s+',
         '', query, flags=re.IGNORECASE
     ).strip()
-
-    # Поиск по интернету
     search_query = f"{cleaned_query} lang:ru"
-    search_results = _call_search_api(search_query)
+    print(f"[WEB SEARCH] Отправляем в DDGS: \"{search_query}\"")
 
+    search_results = _call_search_api(search_query)
     if not search_results:
+        print("[WEB SEARCH] Ничего не найдено по запросу.")
         return "🔍 Не удалось найти актуальные результаты по вашему запросу."
 
     # Берём топ-3 ссылок
     top_links = search_results[:3]
-    print(f"[DEBUG] Используемые источники: {[r['link'] for r in top_links]}")
+    print(f"[WEB SEARCH] Выбрано top-{len(top_links)} для обработки:")
+    for i, r in enumerate(top_links, start=1):
+        print(f"  {i}. {shorten(r['title'], 120)}")
+        print(f"       → {r['link']}")
+        print(f"       snip: {shorten(r['snippet'].replace('\\n',' '), 200)}")
 
-    # Получаем тексты страниц
+    # Получаем тексты страниц и печатаем статус каждой загрузки
     page_texts = []
-    for r in top_links:
-        text = _fetch_page_content(r['link'])
-        if text:
-            page_texts.append(f"Источник: {r['title']} ({r['link']})\n{text}\n")
+    for i, r in enumerate(top_links, start=1):
+        url = r['link']
+        print(f"[FETCH] #{i} Загружаем {url} ...")
+        text = _fetch_page_content(url)
+        if not text:
+            print(f"[FETCH] #{i} FAILED: не удалось извлечь текст или пустой ответ")
+            continue
+        print(f"[FETCH] #{i} OK: извлечено {len(text)} символов (усечено до 4000 при добавлении в контекст)")
+        page_texts.append(f"Источник: {r['title']} ({r['link']})\n{text}\n")
+
+    if not page_texts:
+        print("[WEB SEARCH] Ошибка: не удалось получить текст ни с одного из топовых URL.")
+        return "🔍 Нашлись ссылки, но не удалось загрузить содержимое страниц."
 
     combined_context = "\n\n".join(page_texts)
+    # Показываем маленькую выдержку из контекста (без утечки всего текста)
+    sample = shorten(combined_context.replace("\n", " "), 400)
+    print(f"[WEB SEARCH] Объединённый контекст (превью 400 символов):\n{sample}\n")
 
-    # Загружаем промпт ассистента (унифицировано с process_text_message)
+    # Загружаем промпт ассистента
     config = load_assistants_config()
     assistant_settings = config["assistants"].get(assistant_key, {})
     assistant_prompt = assistant_settings.get("prompt", "Вы просто бот.")
+    print(f"[WEB SEARCH] Промпт ассистента загружен ({len(assistant_prompt)} символов)")
 
-    print(f"[DEBUG] Промпт ассистента загружен ({len(assistant_prompt)} символов)")
-
-    # Формируем общий промпт
     full_prompt = f"""{assistant_prompt}
 
 Пользователь задал вопрос:
@@ -150,24 +206,25 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
 Используя эти источники, дай развёрнутый, связный и точный ответ.
 Если источники противоречат — укажи это.
 """
-
-    # Генерация ответа
+    print("[WEB SEARCH] Генерируем ответ через OpenAI (промпт сформирован).")
     try:
         chat_completion = openai.ChatCompletion.create(
             model="gpt-5-mini-2025-08-07",
             messages=[{"role": "system", "content": full_prompt}]
         )
         final_answer = chat_completion.choices[0].message.content
+        print("[WEB SEARCH] Ответ от OpenAI получен.")
     except Exception as e:
-        print(f"[ERROR] Ошибка при генерации ответа: {e}")
+        print(f"[ERROR][OpenAI] Ошибка при генерации: {e}")
         final_answer = "Произошла ошибка при генерации ответа."
 
-    # Один красивый блок источников в Markdown
     sources_block = "\n\n📚 *Источники:*\n" + "\n".join(
         [f"🔗 [{r['title']}]({r['link']})" for r in top_links]
     )
 
+    print(f"{banner}\n[WEB SEARCH] Завершено для user_id={user_id}\n{banner}\n")
     return f"{final_answer}\n\n{sources_block}"
+
 
 
 
