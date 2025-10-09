@@ -166,7 +166,9 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
     for i, r in enumerate(top_links, start=1):
         print(f"  {i}. {shorten(r['title'], 120)}")
         print(f"       → {r['link']}")
-        print(f"       snip: {shorten(r['snippet'].replace('\\n',' '), 200)}")
+        snippet_clean = r['snippet'].replace('\n', ' ')
+        print(f"      snip: {shorten(snippet_clean, 180)}\n")
+
 
     # Получаем тексты страниц и печатаем статус каждой загрузки
     page_texts = []
