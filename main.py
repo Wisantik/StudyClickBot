@@ -106,7 +106,8 @@ def _call_search_api(search_query):
             for idx, r in enumerate(formatted_results, start=1):
                 print(f" {idx:>2}. {shorten(r['title'], 100)}")
                 print(f"      → {r['link']}")
-                print(f"      snip: {shorten(r['snippet'].replace('\\n',' '), 180)}\n")
+                snippet_clean = r['snippet'].replace('\n', ' ')
+                print(f"      snip: {shorten(snippet_clean, 180)}\n")
         else:
             print("[DDGS] Нет отфильтрованных результатов для показа.")
 
