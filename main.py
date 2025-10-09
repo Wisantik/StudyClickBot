@@ -187,7 +187,8 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
     combined_context = "\n\n".join(page_texts)
     # Показываем маленькую выдержку из контекста (без утечки всего текста)
     sample = shorten(combined_context.replace("\n", " "), 400)
-    print(f"[WEB SEARCH] Объединённый контекст (превью 400 символов):\n{sample}\n")
+    snippet_clean = r['snippet'].replace('\n', ' ')
+    print(f"      snip: {shorten(snippet_clean, 180)}\n")
 
     # Загружаем промпт ассистента
     config = load_assistants_config()
