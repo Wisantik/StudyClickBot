@@ -103,13 +103,17 @@ def _call_search_api(search_query):
         # печатаем краткий список найденных ссылок
         if formatted_results:
             print("\n[DDGS] Список найденных ссылок (index, title, link, snippet...):")
-            for idx, r in enumerate(formatted_results, start=1):
+            max_to_show = 5
+            for idx, r in enumerate(formatted_results[:max_to_show], start=1):
+                snippet_clean = r['snippet'].replace('\n', ' ')
                 print(f" {idx:>2}. {shorten(r['title'], 100)}")
                 print(f"      → {r['link']}")
-                snippet_clean = r['snippet'].replace('\n', ' ')
                 print(f"      snip: {shorten(snippet_clean, 180)}\n")
+            if len(formatted_results) > max_to_show:
+                print(f"  ... и ещё {len(formatted_results) - max_to_show} результатов скрыто.\n")
         else:
             print("[DDGS] Нет отфильтрованных результатов для показа.")
+
 
         if filtered_out:
             print("[DDGS] Отфильтрованные элементы:")
