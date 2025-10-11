@@ -158,7 +158,6 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
     ).strip()
     search_query = f"{cleaned_query} lang:ru"
     print(f"[WEB SEARCH] Отправляем в DDGS: \"{search_query}\"")
-
     search_results = _call_search_api(search_query)
     if not search_results:
         print("[WEB SEARCH] Ничего не найдено по запросу.")
@@ -231,7 +230,7 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
     )
 
     print(f"{banner}\n[WEB SEARCH] Завершено для user_id={user_id}\n{banner}\n")
-    return f"{final_answer}\n\n{sources_block}"
+    return (final_answer, sources_block)
 
 
 
@@ -1978,10 +1977,14 @@ def process_user_queue(user_id, chat_id):
             # Останавливаем typing
             stop_flag[0] = True
             typing_thread.join(timeout=1)
-
-            # Отправляем красиво нарезанными чанками
-            for chunk in split_message(ai_response, 4000):
-                bot.send_message(chat_id, chunk, reply_markup=create_main_menu())
+            if isinstance(ai_response, tuple):
+                final_answer, sources_block = ai_response
+                for chunk in split_message(final_answer, 4000):
+                    bot.send_message(chat_id, chunk, reply_markup=create_main_menu())
+                bot.send_message(chat_id, sources_block, disable_web_page_preview=True, reply_markup=create_main_menu())
+            else:
+                for chunk in split_message(ai_response, 4000):
+                    bot.send_message(chat_id, chunk, reply_markup=create_main_menu())
 
         except Exception as e:
             stop_flag[0] = True
@@ -2277,7 +2280,7 @@ def process_text_message(text, chat_id) -> str:
         ai_response = chat_completion.choices[0].message.content
         output_tokens = len(ai_response)
         if not update_user_tokens(chat_id, 0, output_tokens):
-            return "Ответ слишком длинный для вашего лимита токенов."
+            return "Ответ слишком длинный для вашего лимита токенов. Оформите подписку"
         user_data = load_user_data(chat_id)
         user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001
         save_user_data(user_data)
@@ -2412,4 +2415,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
