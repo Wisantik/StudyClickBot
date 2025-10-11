@@ -647,6 +647,19 @@ def subscription_check_callback(call):
             "Добро пожаловать обратно!", 
             reply_markup=create_main_menu()
         )
+        user_data = load_user_data(user_id)
+        if 'pending_query' in user_data and user_data['pending_query']:
+            pending_text = user_data['pending_query']
+            del user_data['pending_query']
+            save_user_data(user_data)
+            class FakeMessage:
+                def __init__(self, text, from_user, chat):
+                    self.text = text
+                    self.from_user = from_user
+                    self.chat = chat
+            fake_message = FakeMessage(pending_text, call.from_user, call.message.chat)
+            message_queues[user_id].append(fake_message)
+            process_user_queue(user_id, call.message.chat.id)
     else:
         bot.answer_callback_query(
             call.id,
@@ -1995,6 +2008,9 @@ def echo_message(message):
 
     # Проверяем подписку
     if not check_user_subscription(user_id):
+        user_data = load_user_data(user_id)
+        user_data['pending_query'] = message.text
+        save_user_data(user_data)
         bot.send_message(
             chat_id,
             """👋 Привет! Это быстро и бесплатно.
