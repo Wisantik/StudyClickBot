@@ -1327,8 +1327,6 @@ ID: {user_id}
 🏷 Детали расходов:
 💰 Общая сумма: ${user_data['total_spent']:.4f}
 
-📝 Входные токены: {user_data['input_tokens']}
-📝 Выходные токены: {user_data['output_tokens']}
 """
         try:
             bot.edit_message_text(
@@ -1592,8 +1590,6 @@ ID: {user_id}
 🏷 Детали расходов:
 💰 Общая сумма: ${user_data['total_spent']:.4f}
 
-📝 Входные токены: {user_data['input_tokens']}
-📝 Выходные токены: {user_data['output_tokens']}
 """
     bot.send_message(message.chat.id, profile_text, reply_markup=create_profile_menu())
 
