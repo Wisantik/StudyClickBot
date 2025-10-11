@@ -163,27 +163,23 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
         print("[WEB SEARCH] Ничего не найдено по запросу.")
         return "🔍 Не удалось найти актуальные результаты по вашему запросу."
 
-    # Берём топ-3 ссылок
-    top_links = search_results[:3]
-    print(f"[WEB SEARCH] Выбрано top-{len(top_links)} для обработки:")
-    for i, r in enumerate(top_links, start=1):
-        print(f"  {i}. {shorten(r['title'], 120)}")
-        print(f"       → {r['link']}")
-        snippet_clean = r['snippet'].replace('\n', ' ')
-        print(f"      snip: {shorten(snippet_clean, 180)}\n")
-
-
-    # Получаем тексты страниц и печатаем статус каждой загрузки
+    # Пытаемся fetch до 3 успешных, из всех результатов (до 10 attempts max для скорости)
     page_texts = []
-    for i, r in enumerate(top_links, start=1):
+    successful_links = []
+    max_success = 3
+    max_attempts = 10  # лимит на attempts
+    for i, r in enumerate(search_results[:max_attempts], start=1):
         url = r['link']
         print(f"[FETCH] #{i} Загружаем {url} ...")
         text = _fetch_page_content(url)
-        if not text:
+        if text:
+            print(f"[FETCH] #{i} OK: извлечено {len(text)} символов (усечено до 4000 при добавлении в контекст)")
+            page_texts.append(f"Источник: {r['title']} ({r['link']})\n{text}\n")
+            successful_links.append(r)
+            if len(page_texts) >= max_success:
+                break
+        else:
             print(f"[FETCH] #{i} FAILED: не удалось извлечь текст или пустой ответ")
-            continue
-        print(f"[FETCH] #{i} OK: извлечено {len(text)} символов (усечено до 4000 при добавлении в контекст)")
-        page_texts.append(f"Источник: {r['title']} ({r['link']})\n{text}\n")
 
     if not page_texts:
         print("[WEB SEARCH] Ошибка: не удалось получить текст ни с одного из топовых URL.")
@@ -192,8 +188,7 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
     combined_context = "\n\n".join(page_texts)
     # Показываем маленькую выдержку из контекста (без утечки всего текста)
     sample = shorten(combined_context.replace("\n", " "), 400)
-    snippet_clean = r['snippet'].replace('\n', ' ')
-    print(f"      snip: {shorten(snippet_clean, 180)}\n")
+    print(f"      snip: {shorten(sample, 180)}\n")
 
     # Загружаем промпт ассистента
     config = load_assistants_config()
@@ -226,7 +221,7 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
         final_answer = "Произошла ошибка при генерации ответа."
 
     sources_block = "\n\n📚 *Источники:*\n" + "\n".join(
-        [f"🔗 [{r['title']}]({r['link']})" for r in top_links]
+        [f"🔗 [{r['title']}]({r['link']})" for r in successful_links]
     )
 
     print(f"{banner}\n[WEB SEARCH] Завершено для user_id={user_id}\n{banner}\n")
