@@ -702,8 +702,14 @@ def assistants_button_handler(message):
         bot.send_message(
             chat_id=message.chat.id,
             text="Выберите ассистента:",
+            reply_markup=ReplyKeyboardRemove(),  # Убираем кастомную клавиатуру
+            disable_notification=True
+        )
+        bot.send_message(
+            chat_id=message.chat.id,
+            text="Выберите ассистента:",
             reply_markup=create_assistants_menu(),  # Inline-кнопки ассистентов
-            disable_notification=True  # Отключаем уведомление
+            disable_notification=True
         )
     except telebot.apihelper.ApiTelegramException as e:
         print(f"[ERROR] Ошибка в assistants_button_handler: {e}")
