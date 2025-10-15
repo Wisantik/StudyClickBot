@@ -698,18 +698,31 @@ from telebot.types import ReplyKeyboardRemove
 @bot.message_handler(func=lambda message: message.text == "🤖 Ассистенты")
 def assistants_button_handler(message):
     log_command(message.from_user.id, "assistants")
-    # Явно скрываем основную клавиатуру
-    bot.send_message(
-        message.chat.id,
-        "Клавиатура скрыта, выбирайте ассистента:",
-        reply_markup=ReplyKeyboardRemove()  # Убираем ReplyKeyboardMarkup
-    )
-    # Показываем меню ассистентов (inline-кнопки)
-    bot.send_message(
-        message.chat.id,
-        "Выберите ассистента:",
-        reply_markup=create_assistants_menu()
-    )
+    try:
+        bot.send_message(
+            chat_id=message.chat.id,
+            text="Выберите ассистента:",
+            reply_markup=create_assistants_menu(),  # Inline-кнопки ассистентов
+            disable_notification=True  # Отключаем уведомление
+        )
+        # Отправляем сообщение для удаления клавиатуры и сразу его удаляем
+        msg = bot.send_message(
+            chat_id=message.chat.id,
+            text=".",
+            reply_markup=ReplyKeyboardRemove(),  # Убираем основную клавиатуру
+            disable_notification=True
+        )
+        bot.delete_message(
+            chat_id=message.chat.id,
+            message_id=msg.message_id
+        )
+    except telebot.apihelper.ApiTelegramException as e:
+        print(f"[ERROR] Ошибка в assistants_button_handler: {e}")
+        bot.send_message(
+            chat_id=message.chat.id,
+            text="Произошла ошибка. Попробуйте снова.",
+            reply_markup=create_main_menu()
+        )
 # === Обработчик выбора ассистента ===
 @bot.callback_query_handler(func=lambda call: call.data.startswith("select_assistant_"))
 def assistant_callback_handler(call):
