@@ -696,6 +696,13 @@ def show_pay_menu_callback(call):
 @bot.message_handler(func=lambda message: message.text == "🤖 Ассистенты")
 def assistants_button_handler(message):
     log_command(message.from_user.id, "assistants")
+    # Очищаем основную клавиатуру
+    bot.send_message(
+        message.chat.id,
+        "Клавиатура скрыта, выбирайте ассистента:",
+        reply_markup=None  # Убираем основное меню
+    )
+    # Показываем меню ассистентов
     bot.send_message(
         message.chat.id,
         "Выберите ассистента:",
