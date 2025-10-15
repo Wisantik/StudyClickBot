@@ -1240,6 +1240,8 @@ def check_auto_renewal():
 schedule.every(5).minutes.do(check_pending_payments)
 schedule.every().day.at("00:00").do(check_auto_renewal)
 
+from telebot.types import ReplyKeyboardRemove
+
 @bot.callback_query_handler(func=lambda call: call.data in ["show_assistants", "show_experts", "show_support", "cancel_subscription", "back_to_profile"])
 def profile_menu_callback_handler(call):
     log_command(call.from_user.id, call.data)
@@ -1249,19 +1251,39 @@ def profile_menu_callback_handler(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.",
+            text="Ошибка: пользователь не найден. Попробуйте /start.",
             reply_markup=create_main_menu()
         )
         bot.answer_callback_query(call.id)
         return
 
     if call.data == "show_assistants":
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text="Выберите ассистента:",
-            reply_markup=create_assistants_menu()
-        )
+        try:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="Выберите ассистента:",
+                reply_markup=create_assistants_menu()
+            )
+            # Отправляем пустое сообщение с ReplyKeyboardRemove
+            bot.send_message(
+                chat_id=call.message.chat.id,
+                text=".",  # Минимальный текст, чтобы не было пустого сообщения
+                reply_markup=ReplyKeyboardRemove(),
+                disable_notification=True
+            )
+            # Удаляем пустое сообщение, чтобы не засорять чат
+            bot.delete_message(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id + 1
+            )
+        except telebot.apihelper.ApiTelegramException as e:
+            print(f"[ERROR] Ошибка при отправке меню ассистентов: {e}")
+            bot.send_message(
+                chat_id=call.message.chat.id,
+                text="Произошла ошибка. Попробуйте снова.",
+                reply_markup=create_main_menu()
+            )
 
     elif call.data == "show_experts":
         bot.edit_message_text(
@@ -1321,12 +1343,10 @@ def profile_menu_callback_handler(call):
             if remaining_days < 0:
                 remaining_days = 0
 
-        # 🔹 Веб-поиск
         web_search_status = "включён" if user_data['web_search_enabled'] else \
             "выключен" if user_data['subscription_plan'].startswith('plus_') else \
             "недоступен (требуется подписка Plus)"
 
-        # 🔹 Квота токенов
         if user_data['subscription_plan'] in ['plus_trial', 'plus_month']:
             quota_text = "GPT-5: безлимит ✅"
         else:
@@ -1348,19 +1368,18 @@ ID: {user_id}
 
 🏷 Детали расходов:
 💰 Общая сумма: ${user_data['total_spent']:.4f}
-
 """
         try:
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
                 text=profile_text,
-                reply_markup=None  # Убираем inline-кнопки
+                reply_markup=None
             )
             bot.send_message(
                 chat_id=call.message.chat.id,
                 text="Вы вернулись в главное меню",
-                reply_markup=create_main_menu()  # Восстанавливаем основное меню
+                reply_markup=create_main_menu()
             )
         except telebot.apihelper.ApiTelegramException as e:
             print(f"[ERROR] Ошибка редактирования сообщения в back_to_profile: {e}")
