@@ -1355,14 +1355,19 @@ ID: {user_id}
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
                 text=profile_text,
-                reply_markup=create_profile_menu()
+                reply_markup=None  # Убираем inline-кнопки
+            )
+            bot.send_message(
+                chat_id=call.message.chat.id,
+                text="Вы вернулись в главное меню",
+                reply_markup=create_main_menu()  # Восстанавливаем основное меню
             )
         except telebot.apihelper.ApiTelegramException as e:
             print(f"[ERROR] Ошибка редактирования сообщения в back_to_profile: {e}")
             bot.send_message(
                 chat_id=call.message.chat.id,
                 text=profile_text,
-                reply_markup=create_profile_menu()
+                reply_markup=create_main_menu()
             )
 
     bot.answer_callback_query(call.id)
