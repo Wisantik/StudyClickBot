@@ -692,17 +692,19 @@ def show_pay_menu_callback(call):
         reply_markup=create_price_menu(user_data)
     )
 
+from telebot.types import ReplyKeyboardRemove
+
 @bot.message_handler(commands=['assistants'])
 @bot.message_handler(func=lambda message: message.text == "🤖 Ассистенты")
 def assistants_button_handler(message):
     log_command(message.from_user.id, "assistants")
-    # Очищаем основную клавиатуру
+    # Явно скрываем основную клавиатуру
     bot.send_message(
         message.chat.id,
         "Клавиатура скрыта, выбирайте ассистента:",
-        reply_markup=None  # Убираем основное меню
+        reply_markup=ReplyKeyboardRemove()  # Убираем ReplyKeyboardMarkup
     )
-    # Показываем меню ассистентов
+    # Показываем меню ассистентов (inline-кнопки)
     bot.send_message(
         message.chat.id,
         "Выберите ассистента:",
