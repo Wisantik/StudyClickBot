@@ -20,7 +20,7 @@ import tempfile
 from pydub import AudioSegment
 from ddgs import DDGS
 import re
-
+import base64 
 load_dotenv()
 
 # Настройка логирования и окружения
@@ -2337,6 +2337,92 @@ def process_text_message(text, chat_id) -> str:
     except Exception as e:
         return f"Произошла ошибка: {str(e)}"
 
+ # Добавьте в начало файла, если нет
+
+@bot.message_handler(content_types=['photo'])
+def handle_photo(message):
+    user_data = load_user_data(message.from_user.id)
+    if not user_data:
+        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте /start.", reply_markup=None)
+        return
+
+    if user_data.get('subscription_plan') == 'free':
+        bot.reply_to(message, "Для анализа изображений требуется подписка Plus. Выберите тариф: /pay", reply_markup=None)
+        return
+
+    try:
+        # Берём фото наибольшего размера
+        file_info = bot.get_file(message.photo[-1].file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+
+        # Кодируем в base64
+        base64_image = base64.b64encode(downloaded_file).decode('utf-8')
+
+        # Промпт: используем caption или дефолтный
+        caption = (message.caption or "").strip()
+        if caption:
+            question = f"Пользовательский вопрос: {caption}"
+        else:
+            question = "Опиши подробно, что изображено на этой фотографии: объекты, цвета, действия, эмоции и возможный контекст."
+
+        # Промпт ассистента
+        current_assistant = get_user_assistant(message.from_user.id)
+        config = load_assistants_config()
+        assistant_settings = config["assistants"].get(current_assistant, {})
+        prompt = assistant_settings.get("prompt", "Вы просто бот.")
+
+        # Формируем сообщение для OpenAI (мультимодальное)
+        messages = [
+            {"role": "system", "content": prompt},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": question},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
+                    }
+                ]
+            }
+        ]
+
+        # Проверяем токены (примерно: текст + ~1.5x размер фото в символах)
+        input_tokens = len(question) + len(base64_image) * 3 // 4  # Примерная оценка
+        if user_data['subscription_plan'] == 'free':
+            check_and_update_tokens(message.from_user.id)
+            user_data = load_user_data(message.from_user.id)
+            if user_data['daily_tokens'] < input_tokens:
+                bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay", reply_markup=None)
+                return
+        if not update_user_tokens(message.from_user.id, input_tokens, 0):
+            bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay", reply_markup=None)
+            return
+
+        # Отправляем запрос к OpenAI (используем gpt-4o-mini для vision)
+        bot.send_chat_action(message.chat.id, "typing")
+        response = openai.ChatCompletion.create(
+            model="gpt-4o-mini",  # Или "gpt-4-turbo" для лучшего качества
+            messages=messages,
+            max_tokens=1000  # Лимит ответа
+        )
+        ai_response = response.choices[0].message.content
+
+        # Обновляем токены для вывода
+        output_tokens = len(ai_response)
+        update_user_tokens(message.from_user.id, 0, output_tokens)
+
+        # Сохраняем историю (опционально)
+        store_message_in_db(message.chat.id, "user", question)
+        store_message_in_db(message.chat.id, "assistant", ai_response)
+
+        # Отправляем ответ
+        bot.reply_to(message, ai_response, reply_markup=None, parse_mode='HTML' if '<' in ai_response else None)
+
+    except Exception as e:
+        print(f"[ERROR] handle_photo exception: {e}")
+        bot.reply_to(message, f"Ошибка при анализе изображения: {str(e)}. Проверьте формат или попробуйте снова.", reply_markup=None)
 
 @bot.message_handler(content_types=["voice"])
 def voice(message):
