@@ -2005,11 +2005,10 @@ def send_typing(chat_id, stop_flag):
 
 
 def process_user_queue(user_id, chat_id):
-    """Обрабатывает очередь сообщений пользователя по одному за раз."""
     if user_processing[user_id]:
-        return  # уже идёт обработка
+        return
     if not message_queues[user_id]:
-        return  # очередь пуста
+        return
 
     user_processing[user_id] = True
     message = message_queues[user_id].pop(0)
@@ -2021,25 +2020,20 @@ def process_user_queue(user_id, chat_id):
 
         try:
             text = message.text
-
-            # Генерация ответа
             ai_response = process_text_message(text, chat_id)
-
-            # Останавливаем typing
             stop_flag[0] = True
             typing_thread.join(timeout=1)
             if isinstance(ai_response, tuple):
                 final_answer, sources_block = ai_response
                 for chunk in split_message(final_answer, 4000):
-                    bot.send_message(chat_id, chunk, reply_markup=create_main_menu())
-                bot.send_message(chat_id, sources_block, disable_web_page_preview=True, reply_markup=create_main_menu())
+                    bot.send_message(chat_id, chunk, reply_markup=None)  # Изменено
+                bot.send_message(chat_id, sources_block, disable_web_page_preview=True, reply_markup=None)  # Изменено
             else:
                 for chunk in split_message(ai_response, 4000):
-                    bot.send_message(chat_id, chunk, reply_markup=create_main_menu())
-
+                    bot.send_message(chat_id, chunk, reply_markup=None)  # Изменено
         except Exception as e:
             stop_flag[0] = True
-            bot.send_message(chat_id, f"Ошибка при обработке: {e}", reply_markup=create_main_menu())
+            bot.send_message(chat_id, f"Ошибка при обработке: {e}", reply_markup=None)  # Изменено
         finally:
             user_processing[user_id] = False
             if message_queues[user_id]:
@@ -2250,18 +2244,17 @@ def handle_document(message):
         bot.reply_to(message, f"Ошибка при чтении файла: {e}", reply_markup=create_main_menu())
 
 
-# Вспомогательная функция для безопасной отправки больших ответов (чтобы не посылать исходник)
 def send_in_chunks(message, text, chunk_size=4000):
     try:
         for i in range(0, len(text), chunk_size):
-            bot.reply_to(message, text[i:i+chunk_size], reply_markup=create_main_menu())
+            bot.reply_to(message, text[i:i+chunk_size], reply_markup=None)  # Изменено
     except Exception as e:
         print(f"[WARN] sending analysis failed: {e}")
         try:
-            bot.reply_to(message, text, reply_markup=create_main_menu())
+            bot.reply_to(message, text, reply_markup=None)  # Изменено
         except Exception as e2:
             print(f"[ERROR] final send failed: {e2}")
-            bot.reply_to(message, "Ошибка при отправке результата анализа.", reply_markup=create_main_menu())
+            bot.reply_to(message, "Ошибка при отправке результата анализа.", reply_markup=None)  # Изменено
 
 def read_pdf(file):
     content = []
@@ -2373,7 +2366,7 @@ def voice(message):
             bot.reply_to(message, "Текст неразборчив. Попробуйте снова.", reply_markup=create_main_menu())
             return
         ai_response = process_text_message(recognized_text, message.chat.id)
-        bot.reply_to(message, ai_response, reply_markup=create_main_menu())
+        bot.reply_to(message, ai_response, reply_markup=None)
     except Exception as e:
         logging.error(f"Ошибка обработки голосового сообщения: {e}")
         bot.reply_to(message, "Произошла ошибка, попробуйте позже!", reply_markup=create_main_menu())
