@@ -1361,7 +1361,8 @@ def profile_menu_callback_handler(call):
             "выключен" if user_data['subscription_plan'].startswith('plus_') else \
             "недоступен (требуется подписка Plus)"
 
-        if user_data['subscription_plan'] in ['plus_trial', 'plus_month']:
+        # В блоке quota_text
+        if user_data['subscription_plan'] in ['plus_trial', 'plus_month', 'plus']:
             quota_text = "GPT-5: безлимит ✅"
         else:
             quota_text = f"GPT-5: {user_data['daily_tokens']} символов"
@@ -2275,8 +2276,9 @@ def read_docx(file):
 def update_user_tokens(user_id, input_tokens, output_tokens):
     check_and_update_tokens(user_id)
     user_data = load_user_data(user_id)
-    if user_data['subscription_plan'].startswith('plus_'):
-        return True
+    # Расширьте проверку: plus с или без _
+    if user_data['subscription_plan'] in ['plus_trial', 'plus_month', 'plus']:
+        return True  # Безлимит для всех Plus-вариантов
     total_tokens_used = input_tokens + output_tokens
     new_tokens = user_data['daily_tokens'] - total_tokens_used
     if new_tokens < 0:
@@ -2295,13 +2297,22 @@ def process_text_message(text, chat_id) -> str:
     if not user_data:
         return "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
     input_tokens = len(text)
+    
+    # Проверка только для free
     if user_data['subscription_plan'] == 'free':
         check_and_update_tokens(chat_id)
         user_data = load_user_data(chat_id)
         if user_data['daily_tokens'] < input_tokens:
             return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
-    if not update_user_tokens(chat_id, input_tokens, 0):
+    
+    # Для Plus — сразу True, без вызова update_user_tokens
+    if user_data['subscription_plan'] in ['plus_trial', 'plus_month', 'plus']:
+        # Просто обновляем счётчики, но без лимита
+        user_data['input_tokens'] += input_tokens
+        save_user_data(user_data)
+    elif not update_user_tokens(chat_id, input_tokens, 0):
         return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
+    
     config = load_assistants_config()
     current_assistant = get_user_assistant(chat_id)
     assistant_settings = config["assistants"].get(current_assistant, {})
