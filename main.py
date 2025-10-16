@@ -1286,34 +1286,28 @@ def profile_menu_callback_handler(call):
         text = "Выберите эксперта:"
         markup = create_experts_menu()
 
-        try:
-            if getattr(call.message, "content_type", "") == "photo":
-                # 🟢 Если это фото, заменяем медиа на пустое фото с текстом
-                bot.edit_message_media(
-                    chat_id=call.message.chat.id,
-                    message_id=call.message.message_id,
-                    media=types.InputMediaPhoto(
-                        media="https://i.imgur.com/1ZpQZQm.png",  # пустая прозрачная картинка (1x1)
-                        caption=text,
-                        parse_mode="HTML"
-                    ),
-                    reply_markup=markup
-                )
-            else:
+        # 🩵 Если текущее сообщение — фото, Telegram не позволит его редактировать
+        if getattr(call.message, "content_type", "") == "photo":
+            bot.send_message(
+                chat_id=call.message.chat.id,
+                text=text,
+                reply_markup=markup
+            )
+        else:
+            try:
                 bot.edit_message_text(
                     chat_id=call.message.chat.id,
                     message_id=call.message.message_id,
                     text=text,
                     reply_markup=markup
                 )
-        except telebot.apihelper.ApiTelegramException as e:
-            print(f"[WARN] Ошибка при возврате к экспертам: {e}")
-            bot.send_message(
-                chat_id=call.message.chat.id,
-                text=text,
-                reply_markup=markup
-            )
-
+            except telebot.apihelper.ApiTelegramException as e:
+                print(f"[WARN] Ошибка при возврате к экспертам: {e}")
+                bot.send_message(
+                    chat_id=call.message.chat.id,
+                    text=text,
+                    reply_markup=markup
+                )
 
 
     elif call.data == "show_experts":
