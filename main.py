@@ -689,6 +689,7 @@ def show_pay_menu_callback(call):
         message_id=call.message.message_id,
         text=subscription_text,
         parse_mode="HTML",
+        disable_web_page_preview=True,  # 🔹 отключает предпросмотр ссылок
         reply_markup=create_price_menu(user_data)
     )
 
@@ -981,15 +982,17 @@ def get_pay(message):
 ⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
 Покупая, вы соглашаетесь с <a href="https://teletype.in/@st0ckholders_s/1X-lpJhx5rc">офертой</a>
 Отменить можно в любое время после оплаты
-По всем вопросам пишите сюда - <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
-    
+По всем вопросам пишите сюда — <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
+
     user_data = load_user_data(message.from_user.id)
     bot.send_message(
         message.chat.id,
         subscription_text,
         parse_mode="HTML",
+        disable_web_page_preview=True,  # 🔹 отключает предпросмотр ссылок
         reply_markup=create_price_menu(user_data)
     )
+
 
 # ... (остальной код остаётся без изменений)
 import threading
@@ -1279,13 +1282,33 @@ def profile_menu_callback_handler(call):
         bot.answer_callback_query(call.id)
         return
 
-    if call.data == "show_assistants":
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text="Выберите ассистента:",
-            reply_markup=create_assistants_menu()
-        )
+    elif call.data == "show_experts":
+        text = "Выберите эксперта:"
+        markup = create_experts_menu()
+
+        # 🩵 Если текущее сообщение — фото, Telegram не позволит его редактировать
+        if getattr(call.message, "content_type", "") == "photo":
+            bot.send_message(
+                chat_id=call.message.chat.id,
+                text=text,
+                reply_markup=markup
+            )
+        else:
+            try:
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=text,
+                    reply_markup=markup
+                )
+            except telebot.apihelper.ApiTelegramException as e:
+                print(f"[WARN] Ошибка при возврате к экспертам: {e}")
+                bot.send_message(
+                    chat_id=call.message.chat.id,
+                    text=text,
+                    reply_markup=markup
+                )
+
 
     elif call.data == "show_experts":
         bot.edit_message_text(
