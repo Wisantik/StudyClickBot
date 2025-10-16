@@ -822,35 +822,43 @@ def experts_button_handler(message):
         reply_markup=create_experts_menu()
     )
 
-# === Обработчик выбора эксперта ===
 @bot.callback_query_handler(func=lambda call: call.data.startswith("expert_"))
 def expert_callback_handler(call):
     print(f"[DEBUG] Expert callback data: {call.data}")
     try:
         expert_id = int(call.data.split("_")[1])
 
-        # Логируем эксперта в нормализованном виде
+        # Логируем эксперта
         log_command(call.from_user.id, f"expert:{expert_id}")
 
         conn = connect_to_db()
         expert = get_expert_by_id(conn, expert_id)
         conn.close()
+
         if not expert:
             bot.answer_callback_query(call.id, "Эксперт не найден")
             return
+
         expert_id, name, specialization, description, photo_url, telegram_username, contact_info, is_available = expert
+
+        # 🔹 Кнопки под описанием эксперта
         keyboard = types.InlineKeyboardMarkup()
         if telegram_username:
             keyboard.add(types.InlineKeyboardButton(
                 text="Написать эксперту",
                 url=f"https://t.me/{telegram_username.replace('@', '')}"
             ))
+
+        # 🔹 Кнопка назад теперь всегда возвращает к профилю
         keyboard.add(
             types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
         )
+
         message_text = f"<b>{name}</b>\n<i>{specialization}</i>\n\n{description}\n\n"
         if contact_info:
             message_text += f"<b>Контактная информация:</b>\n{contact_info}"
+
+        # 🔹 Отображаем фото, если есть
         if photo_url:
             try:
                 bot.edit_message_media(
@@ -880,10 +888,13 @@ def expert_callback_handler(call):
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
+
         bot.answer_callback_query(call.id)
+
     except ValueError:
         print(f"[ERROR] Неверный формат expert_id в callback: {call.data}")
         bot.answer_callback_query(call.id, "Ошибка при выборе эксперта")
+
 
 @bot.message_handler(commands=['universal'])
 @bot.message_handler(func=lambda message: message.text == "🌍 Универсальный ассистент")
