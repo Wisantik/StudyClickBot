@@ -1375,22 +1375,31 @@ ID: {user_id}
 
 🏷 Детали расходов:
 💰 Общая сумма: ${user_data['total_spent']:.4f}
-
 """
+
         try:
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text=profile_text,
-                reply_markup=create_profile_menu()  # Возвращаем inline-меню профиля вместо главного
-            )
+            # 🩵 Если сообщение было фото — Telegram не даст его редактировать, отправляем новое
+            if call.message.content_type == "photo":
+                bot.send_message(
+                    chat_id=call.message.chat.id,
+                    text=profile_text,
+                    reply_markup=create_profile_menu()
+                )
+            else:
+                bot.edit_message_text(
+                    chat_id=call.message.chat.id,
+                    message_id=call.message.message_id,
+                    text=profile_text,
+                    reply_markup=create_profile_menu()
+                )
         except telebot.apihelper.ApiTelegramException as e:
             print(f"[ERROR] Ошибка редактирования сообщения в back_to_profile: {e}")
             bot.send_message(
                 chat_id=call.message.chat.id,
                 text=profile_text,
-                reply_markup=create_profile_menu()  # Возвращаем inline-меню профиля вместо главного
+                reply_markup=create_profile_menu()
             )
+
 
     bot.answer_callback_query(call.id)
 # helper — делает реальную очистку по user_id
