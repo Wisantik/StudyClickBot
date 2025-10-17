@@ -2487,15 +2487,21 @@ def voice(message):
 
 
 import re
+import time
+import logging
 from math import ceil
+
+# Настройка логгера (можно поместить в начало main.py, если ещё нет)
+logger = logging.getLogger("yt_summary")
+logger.setLevel(logging.DEBUG)
+# если у тебя уже настроен root logger, этого может быть достаточно
 
 # Регекс для извлечения id видео
 _YT_RE = re.compile(
     r'(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)(?P<id>[A-Za-z0-9_-]{11})'
 )
 
-def _chunk_text_by_chars(text: str, max_chars: int = 3000):
-    """Разбивает текст на куски не длиннее max_chars (по символам)."""
+def _chunk_text_by_chars(text: str, max_chars: int = 2500):
     text = text.strip()
     if not text:
         return []
@@ -2503,7 +2509,6 @@ def _chunk_text_by_chars(text: str, max_chars: int = 3000):
     start = 0
     while start < len(text):
         end = min(start + max_chars, len(text))
-        # постараемся не резать посередине слова — ищем ближайший пробел назад (если возможно)
         if end < len(text):
             last_space = text.rfind(" ", start, end)
             if last_space > start:
@@ -2512,15 +2517,14 @@ def _chunk_text_by_chars(text: str, max_chars: int = 3000):
         start = end
     return chunks
 
-def _openai_summarize_chunks(chunks, user_hint=""):
-    """
-    Для каждого куска запрашиваем у OpenAI краткое summary, затем объединяем.
-    Возвращает объединённый итог.
-    """
+def _openai_summarize_chunks_with_logging(chunks, user_hint="", user_id=None):
     chunk_summaries = []
+    start_total = time.time()
     for i, chunk in enumerate(chunks, start=1):
-        prompt = f"""Суммаризируй следующий фрагмент расшифровки YouTube-видео в понятные короткие пункты (3–7 пунктов). 
-Если в тексте есть временные метки — постарайся сохранить их рядом с пунктами.
+        t0 = time.time()
+        logger.debug(f"[user={user_id}] Summarize chunk {i}/{len(chunks)} chars={len(chunk)}")
+        prompt = f"""Суммаризируй следующий фрагмент расшифровки YouTube-видео в понятные короткие пункты (3–7 пунктов).
+Если встречаются временные метки — оставь их рядом с пунктами.
 
 Фрагмент {i}/{len(chunks)}:
 {chunk}
@@ -2535,26 +2539,26 @@ def _openai_summarize_chunks(chunks, user_hint=""):
                     {"role": "system", "content": "Ты помогаешь кратко суммаризировать расшифровки видео."},
                     {"role": "user", "content": prompt}
                 ],
-                max_tokens=800,
+                max_tokens=600,
             )
             summary_text = resp.choices[0].message.content.strip()
+            logger.debug(f"[user={user_id}] Chunk {i} summarized in {time.time()-t0:.2f}s, len={len(summary_text)}")
         except Exception as e:
-            print(f"[ERROR] OpenAI summarization failed for chunk {i}: {e}")
+            logger.exception(f"[user={user_id}] OpenAI summarization failed for chunk {i}: {e}")
             summary_text = "(Ошибка при суммаризации этого фрагмента.)"
         chunk_summaries.append(summary_text)
 
-    # если был только один кусок — возвращаем его summary как итог
     if len(chunk_summaries) == 1:
         return chunk_summaries[0]
 
-    # объединяем промежуточные summaries и делаем общий консолидированный summary
     combined_for_final = "\n\n".join(f"Фрагмент {i+1}:\n{cs}" for i, cs in enumerate(chunk_summaries))
-    final_prompt = f"""Ты получил краткие суммаризации отдельных фрагментов расшифровки видео. 
-Сделай единый сжатый и связный конспект видео (максимум 12 пунктов), устранив повторы, сохранив ключевые идеи и — если возможно — указав ориентировочные временные метки.
+    final_prompt = f"""Ты получил краткие суммаризации отдельных фрагментов расшифровки видео.
+Сделай единый сжатый и связный конспект видео (максимум 12 пунктов), устранив повторы, сохранив ключевые идеи и — если возможно — укажи ориентировочные временные метки.
 Вот суммаризации по фрагментам:
 {combined_for_final}
 """
     try:
+        t0 = time.time()
         resp2 = openai.ChatCompletion.create(
             model="gpt-5-mini-2025-08-07",
             messages=[
@@ -2564,80 +2568,80 @@ def _openai_summarize_chunks(chunks, user_hint=""):
             max_tokens=1000,
         )
         final_summary = resp2.choices[0].message.content.strip()
+        logger.debug(f"[user={user_id}] Final summary generated in {time.time()-t0:.2f}s, len={len(final_summary)}")
     except Exception as e:
-        print(f"[ERROR] OpenAI final summarization failed: {e}")
+        logger.exception(f"[user={user_id}] OpenAI final summarization failed: {e}")
         final_summary = "\n\n".join(chunk_summaries)
 
+    logger.info(f"[user={user_id}] Summarization total time {time.time()-start_total:.2f}s")
     return final_summary
 
-@bot.message_handler(func=lambda message: bool(_YT_RE.search(message.text or "")))
+@bot.message_handler(func=lambda message: bool(message and message.text and _YT_RE.search(message.text)))
 def youtube_link_handler(message):
-    """
-    Обработчик: пришла ссылка на YouTube — пытаемся взять расшифровку и вернуть суммаризацию.
-    """
     user_id = message.from_user.id
     log_command(user_id, "youtube_link")
+    logger.info(f"[user={user_id}] Received potential YouTube link: {message.text[:200]}")
+
     match = _YT_RE.search(message.text or "")
     if not match:
+        logger.debug(f"[user={user_id}] Regex did not find video id")
         return
 
     video_id = match.group("id")
     video_url = f"https://youtu.be/{video_id}"
+    logger.info(f"[user={user_id}] Extracted video_id={video_id}")
 
-    # Информируем пользователя, что работаем
     try:
         bot.send_chat_action(message.chat.id, 'typing')
     except Exception:
         pass
 
-    # Попытаемся получить транскрипт через youtube-transcript-api
+    # 1) Попытка получить транскрипт через youtube-transcript-api
     transcript_text = ""
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        # попытка взять транскрипт (включая auto-generated)
-        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en', 'auto'])
-        # transcript_list — список словарей {'text':.., 'start':.., 'duration':..}
+        logger.debug(f"[user={user_id}] Attempting to get transcript via youtube-transcript-api for {video_id}")
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['ru','en','auto'])
         transcript_text = " ".join(item.get("text","") for item in transcript_list).strip()
+        logger.info(f"[user={user_id}] Transcript fetched, chars={len(transcript_text)} segments={len(transcript_list)}")
     except Exception as e:
-        print(f"[WARN] youtube-transcript-api failed: {e}")
+        logger.warning(f"[user={user_id}] youtube-transcript-api failed or no transcript: {e}")
         transcript_text = ""
 
-    if not transcript_text:
-        # Если не получилось получить через библиотеку — информируем пользователя и даём подсказку
-        bot.reply_to(
-            message,
-            ("Не удалось автоматически получить расшифровку этого видео. "
-             "Часто это происходит, если у видео отключены субтитры или они недоступны для API.\n\n"
-             "Что можно сделать:\n"
-             "• Включить субтитры на YouTube (если они выключены) и попробовать снова;\n"
-             "• прислать стороннюю ссылку на расшифровку (если есть);\n"
-             "• или разрешить боту обработать аудио (это дольше) — тогда пришли команду /yt_download или используй отдельный инструмент."),
-            reply_markup=None
-        )
+    # 2) Если есть расшифровка — суммаризируем
+    if transcript_text:
+        # небольшое сообщение пользователю
+        bot.send_message(message.chat.id, "Найдена расшифровка — начинаю суммаризировать. Это может занять несколько секунд...", disable_web_page_preview=True)
+
+        # разбиваем и логируем
+        chunks = _chunk_text_by_chars(transcript_text, max_chars=2500)
+        logger.debug(f"[user={user_id}] Transcript chunked into {len(chunks)} chunks (approx {sum(len(c) for c in chunks)} chars total)")
+
+        # вызываем openai summarizer с логированием
+        final_summary = _openai_summarize_chunks_with_logging(chunks, user_hint="", user_id=user_id)
+
+        reply_text = f"🔗 <b>Видео</b>: {video_url}\n\n<b>Короткий конспект:</b>\n{final_summary}\n\n— Конец конспекта."
+        try:
+            bot.send_message(message.chat.id, reply_text, parse_mode="HTML", disable_web_page_preview=True)
+            logger.info(f"[user={user_id}] Summary sent, length={len(final_summary)}")
+        except Exception as e:
+            logger.exception(f"[user={user_id}] Failed to send summary message: {e}")
+            bot.send_message(message.chat.id, "Готово, но не удалось отправить форматированный ответ. Вот кратко:\n\n" + final_summary)
+
         return
 
-    # Ограничиваем и разбиваем расшифровку на куски
-    chunks = _chunk_text_by_chars(transcript_text, max_chars=3000)
-    # если очень большой текст, можно сжать через промежуточные summaries
-    # Опционально: если пользователь написал что-то вроде "сделай конспект" в одном сообщении вместе со ссылкой,
-    # можно использовать этот текст как user_hint (но мы не спрашиваем; оставляем пустым)
-    user_hint = ""
-
-    bot.send_message(message.chat.id, "Получена расшифровка — начинаю суммаризировать (это может занять несколько секунд)...")
-
-    final_summary = _openai_summarize_chunks(chunks, user_hint=user_hint)
-
-    # Ограничим длину ответа и отправим
-    reply_text = f"🔗 <b>Видео</b>: {video_url}\n\n" \
-                 f"<b>Короткий конспект:</b>\n{final_summary}\n\n" \
-                 f"— Конец конспекта."
-
-    try:
-        bot.send_message(message.chat.id, reply_text, parse_mode="HTML", disable_web_page_preview=True)
-    except Exception as e:
-        print(f"[ERROR] Ошибка отправки summary: {e}")
-        # на случай ошибок — шлём текст без HTML
-        bot.send_message(message.chat.id, f"Короткий конспект:\n\n{final_summary}")
+    # 3) Если транскрипта нет — не делаем шумный web.search автоматически.
+    #    Даём пользователю понятную инструкцию и опции.
+    logger.info(f"[user={user_id}] No transcript available for {video_id}. Offering user options.")
+    bot.send_message(
+        message.chat.id,
+        ("Не удалось автоматически получить расшифровку этого видео — возможно у видео отключены субтитры или они недоступны.\n\n"
+         "Варианты:\n"
+         "1) Включи субтитры на YouTube (если это твое видео) и пришли ссылку снова;\n"
+         "2) Если хочешь, я могу попытаться скачать аудио и распознать его (это дольше и требует дополнительных прав/зависимостей). Напиши: /yt_transcribe_audio\n"
+         "3) Пришли, пожалуйста, стороннюю расшифровку или тайм-коды, если есть."),
+        disable_web_page_preview=True
+    )
 
 
 def handler(event, context):
