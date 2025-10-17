@@ -918,35 +918,35 @@ def youtube_link_handler(message):
 
     transcript_text = ""
 
-# 🔹 1. Попробуем взять субтитры
-try:
-    print(f"[YouTube] Пытаюсь получить субтитры для {video_id}")
+    # 🔹 1. Попробуем взять субтитры
+    try:
+        print(f"[YouTube] Пытаюсь получить субтитры для {video_id}")
 
-    # Для новых версий API
-    if hasattr(YouTubeTranscriptApi, "list_transcripts"):
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        try:
-            transcript = transcript_list.find_transcript(['ru', 'en', 'auto'])
-            entries = transcript.fetch()
+        # Для новых версий API
+        if hasattr(YouTubeTranscriptApi, "list_transcripts"):
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            try:
+                transcript = transcript_list.find_transcript(['ru', 'en', 'auto'])
+                entries = transcript.fetch()
+                transcript_text = " ".join(x['text'] for x in entries)
+                print(f"[YouTube] (new API) Успешно получено {len(transcript_text)} символов расшифровки.")
+            except Exception as e:
+                print(f"[YouTube] Ошибка new API: {e}")
+                transcript_text = ""
+
+        # Для старых версий API
+        elif hasattr(YouTubeTranscriptApi, "get_transcript"):
+            entries = YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en', 'auto'])
             transcript_text = " ".join(x['text'] for x in entries)
-            print(f"[YouTube] (new API) Успешно получено {len(transcript_text)} символов расшифровки.")
-        except Exception as e:
-            print(f"[YouTube] Ошибка new API: {e}")
+            print(f"[YouTube] (old API) Успешно получено {len(transcript_text)} символов расшифровки.")
+
+        else:
+            print("[YouTube] Неизвестная версия youtube-transcript-api, нет list_transcripts и get_transcript.")
             transcript_text = ""
 
-    # Для старых версий API
-    elif hasattr(YouTubeTranscriptApi, "get_transcript"):
-        entries = YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en', 'auto'])
-        transcript_text = " ".join(x['text'] for x in entries)
-        print(f"[YouTube] (old API) Успешно получено {len(transcript_text)} символов расшифровки.")
-
-    else:
-        print("[YouTube] Неизвестная версия youtube-transcript-api, нет list_transcripts и get_transcript.")
+    except Exception as e:
+        print(f"[YouTube] Ошибка получения субтитров: {e}")
         transcript_text = ""
-
-except Exception as e:
-    print(f"[YouTube] Ошибка получения субтитров: {e}")
-    transcript_text = ""
 
 
     # 🔹 2. Если субтитров нет — распознаём аудио
