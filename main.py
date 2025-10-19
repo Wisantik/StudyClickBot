@@ -901,21 +901,20 @@ import yt_dlp
 _YT_RE = re.compile(r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)(?P<id>[A-Za-z0-9_-]{11})")
 
 def chunk_text(text, size=2500, overlap=200):
-    """Разбивает текст на чанки с перекрытием для лучшей coherentности."""
+    """Разбивает текст на чанки с перекрытием."""
     text = text.strip()
     chunks = []
     start = 0
     while start < len(text):
         end = min(start + size, len(text))
         chunks.append(text[start:end])
-        start = end - overlap if end - overlap > start else end  # Избегаем зацикливания
+        start = end - overlap if end - overlap > start else end
     return chunks
 
 @bot.message_handler(func=lambda message: bool(_YT_RE.search(message.text or "")))
 def youtube_link_handler(message):
-    # Проверка подписки (как в других хендлерах)
     user_id = message.from_user.id
-    user_data = load_user_data(user_id)  # Твоя функция для загрузки данных пользователя
+    user_data = load_user_data(user_id)
     if user_data['subscription_plan'] == 'free':
         bot.reply_to(message, "Для суммаризации YouTube требуется подписка Plus. Выберите тариф: /pay")
         return
@@ -927,158 +926,134 @@ def youtube_link_handler(message):
 
     video_id = match.group("id")
     video_url = f"https://youtu.be/{video_id}"
-    print(f"[YouTube] Получена ссылка от {user_id}: {video_url}")
+    print(f"[YouTube] Получена ссылка: {video_url}")
 
     bot.send_chat_action(message.chat.id, "typing")
     bot.reply_to(message, "🎬 Получаю субтитры или аудио...")
 
     transcript_text = ""
 
-    # 1) Попытка получить субтитры (быстрее и точнее, чем аудио)
-    try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        # Предпочтительно русский, fallback на английский или авто-субтитры
-        try:
-            transcript = transcript_list.find_transcript(['ru']) or transcript_list.find_transcript(['en']) or transcript_list.find_generated_transcript(['ru', 'en'])
-        except NoTranscriptFound:
-            transcript = transcript_list.find_generated_transcript(['en-US'])  # Fallback на авто
-        transcript_data = transcript.fetch()
-        transcript_text = "\n".join([item['text'] for item in transcript_data])
-        print(f"[YouTube] Субтитры получены, длина текста: {len(transcript_text)} символов")
-    except (TranscriptsDisabled, NoTranscriptFound):
-        print("[YouTube] Субтитры отключены или не найдены.")
-    except Exception as e:
-        print(f"[YouTube] Ошибка при получении субтитров: {e}")
+    # 1) Получаем субтитры через yt-dlp (поддерживает авто-субтитры)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        subs_path = os.path.join(tmpdir, f"{video_id}.ru.vtt")  # Предпочтительно русский
+        ydl_opts_subs = {
+            'skip_download': True,
+            'writesubtitles': True,
+            'writeautomaticsub': True,
+            'subtitleslangs': ['ru', 'en'],  # Русский, fallback английский
+            'subtitlesformat': 'vtt',
+            'outtmpl': os.path.join(tmpdir, '%(id)s'),
+            'quiet': True,
+            'no_warnings': True,
+        }
 
-    # 2) Если субтитров нет — скачиваем аудио через yt-dlp и распознаём
-    if not transcript_text.strip():
-        print("[YouTube] Нет субтитров, запускаю аудио-распознавание через Whisper (yt-dlp)...")
-        bot.reply_to(message, "🎧 Нет субтитров — скачиваю аудио и распознаю (это может занять время)...")
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts_subs) as ydl:
+                info = ydl.extract_info(video_url, download=True)
+                print(f"[YouTube] yt-dlp для субтитров: {info.get('subtitles')}")
+
+            # Ищем скачанный файл субтитров
+            subs_candidates = [f for f in os.listdir(tmpdir) if f.endswith(('.vtt', '.srt'))]
+            if subs_candidates:
+                subs_path = os.path.join(tmpdir, subs_candidates[0])
+                with open(subs_path, 'r', encoding='utf-8') as f:
+                    transcript_text = f.read().strip()
+                print(f"[YouTube] Субтитры получены из {subs_path}, длина: {len(transcript_text)}")
+            else:
+                print("[YouTube] Субтитры не найдены через yt-dlp.")
+        except Exception as e:
+            print(f"[YouTube] Ошибка субтитров: {e}")
+
+    # 2) Если субтитров нет — аудио + Whisper
+    if not transcript_text:
+        print("[YouTube] Нет субтитров, скачиваю аудио...")
+        bot.reply_to(message, "🎧 Скачиваю аудио и распознаю...")
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            out_template = os.path.join(tmpdir, f"{video_id}.%(ext)s")
-            ydl_opts = {
+            audio_template = os.path.join(tmpdir, f"{video_id}.%(ext)s")
+            ydl_opts_audio = {
                 'format': 'bestaudio/best',
-                'outtmpl': out_template,
+                'outtmpl': audio_template,
                 'quiet': True,
                 'no_warnings': True,
-                'postprocessors': [{
-                    'key': 'FFmpegExtractAudio',
-                    'preferredcodec': 'mp3',
-                    'preferredquality': '192',
-                }],
+                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
             }
 
             try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(video_url, download=True)
-                    print(f"[YouTube] yt-dlp завершил, info id={info.get('id')}, ext={info.get('ext')}")
+                with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
+                    ydl.download([video_url])
 
-                # Ищем аудио-файл в tmpdir
-                audio_candidates = [f for f in os.listdir(tmpdir) if f.endswith(('.mp3', '.m4a', '.webm', '.wav', '.opus', '.aac'))]
-                print(f"[YouTube] Содержимое tmpdir: {os.listdir(tmpdir)}")
-                print(f"[YouTube] Найденные кандидаты: {audio_candidates}")
-
+                audio_candidates = [f for f in os.listdir(tmpdir) if f.endswith('.mp3')]
                 if not audio_candidates:
-                    raise FileNotFoundError(f"Аудио-файл не найден в {tmpdir} после yt-dlp")
+                    raise FileNotFoundError("Аудио не скачано.")
 
-                audio_path = os.path.join(tmpdir, audio_candidates[0])  # Берём первый (обычно mp3)
-                print(f"[YouTube] Использую аудио-файл: {audio_path}")
+                audio_path = os.path.join(tmpdir, audio_candidates[0])
+                print(f"[YouTube] Аудио: {audio_path}")
 
-                # Проверка наличия ffmpeg
-                try:
-                    subprocess.run(["ffmpeg", "-version"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                except (FileNotFoundError, subprocess.CalledProcessError):
-                    raise RuntimeError("ffmpeg не установлен или не в PATH. Установи в Docker!")
+                # Конвертация в WAV
+                processed_path = os.path.join(tmpdir, f"{video_id}_conv.wav")
+                ffmpeg_cmd = ["ffmpeg", "-y", "-i", audio_path, "-ac", "1", "-ar", "16000", "-b:a", "64k", processed_path]
+                subprocess.run(ffmpeg_cmd, check=True)
+                print(f"[YouTube] Конвертировано: {processed_path}")
 
-                # Конвертация в WAV 16k mono, если файл >25MB или не WAV (для стабильности Whisper)
-                file_size = os.path.getsize(audio_path)
-                print(f"[YouTube] Размер аудио: {file_size} байт")
-                MAX_BYTES = 25 * 1024 * 1024  # Лимит Whisper
-                processed_path = audio_path
-                if file_size > MAX_BYTES or not audio_path.lower().endswith(".wav"):
-                    processed_path = os.path.join(tmpdir, f"{video_id}_conv.wav")
-                    ffmpeg_cmd = ["ffmpeg", "-y", "-i", audio_path, "-ac", "1", "-ar", "16000", "-b:a", "64k", processed_path]
-                    print(f"[YouTube] Запускаю ffmpeg: {' '.join(ffmpeg_cmd)}")
-                    subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    print(f"[YouTube] Конвертация завершена: {processed_path}, размер: {os.path.getsize(processed_path)} байт")
+                # Whisper с retry
+                @retry(stop=stop_after_attempt(5), wait=wait_fixed(3))
+                def transcribe():
+                    with open(processed_path, "rb") as f:
+                        return openai_client.audio.transcriptions.create(model="whisper-1", file=f, language="ru")
 
-                # Транскрипция с retry (3 попытки с паузой 2 сек) на случай 500
-                @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
-                def transcribe_audio():
-                    with open(processed_path, "rb") as audio_file:
-                        return openai_client.audio.transcriptions.create(
-                            model="whisper-1",
-                            file=audio_file,
-                            language="ru"  # Предпочтительно русский, или "en" для fallback
-                        )
-
-                transcript_obj = transcribe_audio()
+                transcript_obj = transcribe()
                 transcript_text = transcript_obj.text
-                print(f"[YouTube] Whisper успешно распознал, длина текста: {len(transcript_text)} символов")
-
+                print(f"[YouTube] Whisper OK, длина: {len(transcript_text)}")
             except Exception as e:
-                print(f"[YouTube] Ошибка при скачивании/распознавании: {e}")
-                bot.reply_to(message, "❌ Не удалось скачать/распознать аудио. Проверь ffmpeg, OpenAI ключ или подожди (серверная ошибка).")
+                print(f"[YouTube] Ошибка аудио/Whisper: {e}")
+                bot.reply_to(message, "❌ Ошибка распознавания. Попробуй позже.")
                 return
 
-    # 3) Если текст получен — отправляем .txt и суммируем
-    if not transcript_text.strip():
-        bot.reply_to(message, "❌ Не удалось получить текст видео (нет субтитров/аудио).")
+    # 3) Обработка текста (отправка .txt и суммаризация)
+    if not transcript_text:
+        bot.reply_to(message, "❌ Текст не получен.")
         return
 
-    # Отправка полной расшифровки как .txt (опционально, но полезно)
+    # Отправка .txt
     try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".txt", mode="w", encoding="utf-8") as tf:
+        with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", encoding="utf-8", delete=False) as tf:
             tf.write(transcript_text)
         with open(tf.name, "rb") as f:
-            bot.send_document(message.chat.id, f, caption="Полная расшифровка видео (.txt)")
+            bot.send_document(message.chat.id, f, caption="Расшифровка (.txt)")
         os.remove(tf.name)
     except Exception as e:
-        print(f"[YouTube] Ошибка отправки .txt: {e}")
+        print(f"[YouTube] Ошибка .txt: {e}")
 
-    # Суммаризация: разбиваем на чанки и обрабатываем
-    bot.reply_to(message, "✍️ Начинаю суммаризацию видео...")
+    # Суммаризация
+    bot.reply_to(message, "✍️ Суммаризация...")
     chunks = chunk_text(transcript_text)
     summaries = []
-    for i, chunk in enumerate(chunks, start=1):
-        print(f"[YouTube] Суммаризация части {i}/{len(chunks)} (длина чанка: {len(chunk)} символов).")
+    for i, chunk in enumerate(chunks, 1):
         try:
             resp = openai_client.chat.completions.create(
-                model="gpt-4o-mini",  # Актуальная модель; верни на "gpt-5-mini-2025-08-07" если нужно
-                messages=[
-                    {"role": "system", "content": "Ты делаешь краткие конспекты видео."},
-                    {"role": "user", "content": f"Сделай краткий конспект фрагмента расшифровки видео:\n\n{chunk}"}
-                ],
+                model="gpt-4o-mini",
+                messages=[{"role": "system", "content": "Краткий конспект видео-фрагмента."}, {"role": "user", "content": chunk}],
                 max_tokens=700,
             )
             summaries.append(resp.choices[0].message.content.strip())
         except Exception as e:
-            print(f"[YouTube] Ошибка суммаризации части {i}: {e}")
-            summaries.append("(Ошибка при обработке этого фрагмента.)")
+            print(f"[YouTube] Ошибка чанка {i}: {e}")
+            summaries.append("(Ошибка.)")
 
-    # Финальное объединение суммаризаций в один текст
+    # Финал
     try:
         combined = "\n\n".join(summaries)
         resp_final = openai_client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[
-                {"role": "system", "content": "Ты объединяешь краткие конспекты в единый структурированный текст."},
-                {"role": "user", "content": f"Объедини и сожми конспекты в общий итоговый текст:\n\n{combined}"}
-            ],
+            messages=[{"role": "system", "content": "Объедини в coherent конспект."}, {"role": "user", "content": combined}],
             max_tokens=900,
         )
         final_summary = resp_final.choices[0].message.content.strip()
     except Exception as e:
-        print(f"[YouTube] Ошибка финальной суммаризации: {e}")
         final_summary = "\n\n".join(summaries)
 
-    print(f"[YouTube] Конспект готов, длина: {len(final_summary)} символов.")
-    bot.reply_to(
-        message,
-        f"📺 <b>Видео:</b> {video_url}\n\n<b>Краткий конспект:</b>\n{final_summary}",
-        parse_mode="HTML"
-    )
+    bot.reply_to(message, f"📺 Видео: {video_url}\n\nКонспект:\n{final_summary}", parse_mode="HTML")
 
 
 @bot.message_handler(commands=['universal'])
