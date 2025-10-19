@@ -1055,15 +1055,31 @@ def youtube_link_handler(message):
                     audio_path = mp3_candidates[0]
 
                 print(f"[YouTube] Использую аудио-файл для распознавания: {audio_path}")
-
+                from openai import OpenAI
                 # отправляем файл в OpenAI Whisper (в зависимости от версии клиента)
                 with open(audio_path, "rb") as audio_file:
+                try:
                     print("[YouTube] Отправляю аудио на распознавание (Whisper)...")
-                    try:
-                        # новый/возможный интерфейс
-                        transcript_obj = openai.Audio.transcriptions.create(model="whisper-1", file=audio_file)
-                        # попробуем получить текст
-                        transcript_text = getattr(transcript_obj, "text", None) or transcript_obj.get("text", "")
+
+                    # Старый интерфейс OpenAI (0.28.0)
+                    # Метод Audio.transcribe напрямую вызывает Whisper
+                    audio_file.seek(0)
+                    transcript_obj = openai.Audio.transcribe("whisper-1", audio_file)
+
+                    # transcript_obj — это dict, где нужный текст лежит в ключе "text"
+                    if isinstance(transcript_obj, dict):
+                        transcript_text = transcript_obj.get("text", "")
+                    else:
+                        transcript_text = getattr(transcript_obj, "text", "")
+
+                    print(f"[YouTube] Whisper успешно распознал {len(transcript_text)} символов текста.")
+
+                except Exception as e:
+                    print(f"[YouTube] Ошибка при вызове Whisper (old SDK): {e}")
+                    transcript_text = ""
+
+
+
                         print(f"[YouTube] (whisper API) Распознано {len(transcript_text)} символов текста.")
                     except AttributeError:
                         # fallback для других версий openai
