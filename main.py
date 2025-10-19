@@ -918,36 +918,91 @@ def youtube_link_handler(message):
 
     bot.send_message(message.chat.id, "🎬 Получаю субтитры или аудио...")
 
+    import subprocess
+
+    # --- Начало блока безопасной отправки аудио в Whisper/OpenAI ---
     transcript_text = ""
 
-    # ---- 1) попытка взять субтитры (совместимо со старыми и новыми версиями библиотеки) ----
     try:
-        from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+        # 1) логируем путь и размер
+        file_size = os.path.getsize(audio_path)
+        print(f"[YouTube] Аудио: {audio_path}, size={file_size} bytes")
 
-        print(f"[YouTube] Пытаюсь получить субтитры для {video_id}")
-        if hasattr(YouTubeTranscriptApi, "list_transcripts"):
-            # новая схема API
-            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        # 2) если файл большой (>25 MB) или не в хорошей частоте, перекодируем в моно WAV 16k
+        need_transcode = False
+        MAX_BYTES = 25 * 1024 * 1024  # 25 MB порог (подстраховка)
+        if file_size > MAX_BYTES:
+            print(f"[YouTube] Файл >{MAX_BYTES} байт — будет переконвертирован для уменьшения размера.")
+            need_transcode = True
+
+        # всегда лучше отправлять WAV/16k mono для стабильности — опция: перекодировать если формат не wav
+        if not audio_path.lower().endswith(".wav"):
+            need_transcode = True
+
+        processed_path = audio_path
+        if need_transcode:
+            processed_path = os.path.join(tmpdir, f"{video_id}_conv.wav")
+            ffmpeg_cmd = [
+                "ffmpeg", "-y",
+                "-i", audio_path,
+                "-ac", "1",        # mono
+                "-ar", "16000",    # 16 kHz
+                "-b:a", "64k",     # битрейт
+                processed_path
+            ]
+            print(f"[YouTube] Запускаю ffmpeg: {' '.join(ffmpeg_cmd)}")
             try:
-                transcript = transcript_list.find_transcript(['ru', 'en', 'auto'])
-                entries = transcript.fetch()
-                transcript_text = " ".join(x['text'] for x in entries)
-                print(f"[YouTube] (new API) Успешно получено {len(transcript_text)} символов расшифровки.")
-            except NoTranscriptFound:
-                print("[YouTube] (new API) Транскрипт не найден.")
-        elif hasattr(YouTubeTranscriptApi, "get_transcript"):
-            # старый API
-            entries = YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en', 'auto'])
-            transcript_text = " ".join(x['text'] for x in entries)
-            print(f"[YouTube] (old API) Успешно получено {len(transcript_text)} символов расшифровки.")
-        else:
-            print("[YouTube] Неизвестная версия youtube-transcript-api: нет list_transcripts и get_transcript.")
-            transcript_text = ""
-    except TranscriptsDisabled:
-        print("[YouTube] Субтитры у видео отключены (TranscriptsDisabled).")
-    except Exception as e:
-        print(f"[YouTube] Ошибка получения субтитров: {e}")
+                subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                print(f"[YouTube] Конвертация завершена: {processed_path}, size={os.path.getsize(processed_path)}")
+            except subprocess.CalledProcessError as cpe:
+                print(f"[YouTube] ffmpeg вернул ошибку: {cpe.stderr.decode('utf-8', errors='ignore')}")
+                raise RuntimeError("ffmpeg failed to transcode audio")
+
+        # 3) Открываем (в бинарном режиме) и пробуем несколько способов отправки в OpenAI
+        with open(processed_path, "rb") as audio_file:
+            # DEBUG: проверь, что файл не пустой
+            audio_file.seek(0, os.SEEK_END)
+            size_check = audio_file.tell()
+            audio_file.seek(0)
+            print(f"[YouTube] Открыт файл для отправки, bytes={size_check}")
+
+            # Попытка 1: новый интерфейс openai.Audio.transcribe (современный)
+            try:
+                print("[YouTube] Попытка: openai.Audio.transcribe('whisper-1', file)")
+                audio_file.seek(0)
+                resp = openai.Audio.transcribe("whisper-1", audio_file)  # новый интерфейс
+                # resp может быть dict или объект — достаём текст
+                transcript_text = resp.get("text") if isinstance(resp, dict) else getattr(resp, "text", "")
+                print(f"[YouTube] Whisper (transcribe) success, chars={len(transcript_text)}")
+            except Exception as e1:
+                print(f"[YouTube] Попытка 1 failed: {e1}")
+                # Попытка 2: старый/альтернативный интерфейс
+                try:
+                    audio_file.seek(0)
+                    print("[YouTube] Попытка: openai.Audio.transcriptions.create(model='whisper-1', file=...)")
+                    # Если у тебя в окружении старый клиент — этот вызов может работать
+                    resp2 = openai.Audio.transcriptions.create(model="whisper-1", file=audio_file)
+                    transcript_text = getattr(resp2, "text", None) or resp2.get("text", "")
+                    print(f"[YouTube] Whisper (transcriptions.create) success, chars={len(transcript_text)}")
+                except Exception as e2:
+                    print(f"[YouTube] Попытка 2 failed: {e2}")
+                    # Попытка 3: ещё один возможный интерфейс
+                    try:
+                        audio_file.seek(0)
+                        print("[YouTube] Попытка: openai.transcriptions.create(file=...) (fallback via requests)")
+                        # Можно сделать прямой HTTP-запрос к OpenAI API если SDK несовместим (опционально)
+                        # Но чтобы не усложнять — пробуем последний общий fallback ниже:
+                        raise RuntimeError("All OpenAI client attempts failed.")
+                    except Exception as e3:
+                        print(f"[YouTube] Все попытки распознавания не удались: {e3}")
+                        transcript_text = ""
+    except Exception as exc:
+        print(f"[YouTube] Ошибка при обработке/распознавании аудио: {exc}")
+        # для пользователя
+        bot.send_message(message.chat.id, "❌ Ошибка при распознавании аудио. Проверь, установлен ли ffmpeg и актуальна ли версия openai-python.")
         transcript_text = ""
+    # --- Конец блока ---
+
 
     # ---- 2) если субтитров нет — скачиваем аудио через yt-dlp и ищем реальный mp3 файл ----
     if not transcript_text.strip():
