@@ -1033,19 +1033,22 @@ def youtube_link_handler(message):
                     print(f"[YouTube] yt-dlp завершил, info id={info.get('id')}, ext={info.get('ext')}")
 
                 # ищем mp3 в tmpdir
+                print(f"[YouTube] Содержимое tmpdir: {os.listdir(tmpdir)}")
                 mp3_candidates = glob.glob(os.path.join(tmpdir, f"{video_id}*.mp3"))
+
                 if not mp3_candidates:
-                    # если mp3 нет, ищем любые аудио-кандидаты
+                    print("[YouTube] mp3-файл не найден, ищу любые аудио...")
                     for ext in ("*.mp3", "*.m4a", "*.webm", "*.wav", "*.opus", "*.aac"):
                         mp3_candidates.extend(glob.glob(os.path.join(tmpdir, ext)))
 
-                print(f"[YouTube] Содержимое tmpdir: {os.listdir(tmpdir)}")
                 print(f"[YouTube] Найденные кандидаты: {mp3_candidates}")
 
                 if not mp3_candidates:
-                    raise FileNotFoundError(f"No audio file found in {tmpdir} after yt-dlp")
+                    print(f"[YouTube] ❌ Нет аудиофайлов в {tmpdir}")
+                    bot.send_message(message.chat.id, "❌ Не удалось скачать аудио с YouTube.")
+                    return
 
-                # выбираем mp3 если есть, иначе первый файл
+                # Берём первый подходящий файл
                 audio_path = None
                 for p in mp3_candidates:
                     if p.lower().endswith(".mp3"):
@@ -1055,7 +1058,7 @@ def youtube_link_handler(message):
                     audio_path = mp3_candidates[0]
 
                 print(f"[YouTube] Использую аудио-файл для распознавания: {audio_path}")
-                from openai import OpenAI
+                
                 # отправляем файл в OpenAI Whisper (в зависимости от версии клиента)
                 with open(audio_path, "rb") as audio_file:
                     try:
