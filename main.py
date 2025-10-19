@@ -901,8 +901,9 @@ import subprocess
 import glob
 import time
 import yt_dlp
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from tenacity import retry, stop_after_attempt, wait_fixed
-import webvtt  # Для VTT
+import webvtt  # Для VTT, если нужно
 
 _YT_RE = re.compile(r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)(?P<id>[A-Za-z0-9_-]{11})")
 
@@ -938,51 +939,67 @@ def youtube_link_handler(message):
 
     transcript_text = ""
 
-    # 1) Subs с фиксом 429
-    with tempfile.TemporaryDirectory() as tmpdir:
-        out_template = os.path.join(tmpdir, '%(id)s.%(ext)s')
-        ydl_opts_subs = {
-            'writeautomaticsub': True,
-            'writesubtitles': True,
-            'subtitleslangs': ['ru', 'en'],
-            'subtitlesformat': 'vtt/srt/best',
-            'skip_download': True,
-            'outtmpl': out_template,
-            'quiet': True,
-            'no_warnings': True,
-            'convert_subs': 'srt',
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'sleep_interval': 5,
-            'max_sleep_interval': 10,
-        }
+    # 1) Transcript API (primary, для auto/manual subs)
+    try:
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        # Русский priority, fallback en/auto
+        transcript = transcript_list.find_generated_transcript(['ru']) or transcript_list.find_transcript(['ru']) or \
+                     transcript_list.find_generated_transcript(['en']) or transcript_list.find_transcript(['en'])
+        transcript_data = transcript.fetch()
+        transcript_text = ' '.join([item['text'] for item in transcript_data]).strip()
+        print(f"[YouTube] Transcript API: Subs получены, длина: {len(transcript_text)}")
+    except (TranscriptsDisabled, NoTranscriptFound):
+        print("[YouTube] Transcript API: Subs отключены/не найдены.")
+    except Exception as e:
+        print(f"[YouTube] Transcript API ошибка: {e}")
 
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts_subs) as ydl:
-                info = ydl.extract_info(video_url, download=True)
-                print(f"[YouTube] Auto-captions: {info.get('automatic_captions', {})}")
-                print(f"[YouTube] Subs: {info.get('subtitles', {})}")
+    # 2) Fallback yt-dlp subs
+    if not transcript_text:
+        print("[YouTube] Transcript API не сработал, пробую yt-dlp subs...")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_template = os.path.join(tmpdir, '%(id)s.%(ext)s')
+            ydl_opts_subs = {
+                'writeautomaticsub': True,
+                'writesubtitles': True,
+                'subtitleslangs': ['ru', 'en'],
+                'subtitlesformat': 'vtt/srt/best',
+                'skip_download': True,
+                'outtmpl': out_template,
+                'quiet': True,
+                'no_warnings': True,
+                'convert_subs': 'srt',
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'sleep_interval': 5,
+                'max_sleep_interval': 10,
+            }
 
-            subs_candidates = glob.glob(os.path.join(tmpdir, f"{video_id}*.srt")) + glob.glob(os.path.join(tmpdir, f"{video_id}*.vtt"))
-            if subs_candidates:
-                subs_path = subs_candidates[0]
-                print(f"[YouTube] Subs файл: {subs_path}")
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts_subs) as ydl:
+                    info = ydl.extract_info(video_url, download=True)
+                    print(f"[YouTube] Auto-captions: {info.get('automatic_captions', {})}")
+                    print(f"[YouTube] Subs: {info.get('subtitles', {})}")
 
-                if subs_path.endswith('.vtt'):
-                    vtt = webvtt.read(subs_path)
-                    transcript_text = ' '.join(caption.text for caption in vtt).strip()
+                subs_candidates = glob.glob(os.path.join(tmpdir, f"{video_id}*.srt")) + glob.glob(os.path.join(tmpdir, f"{video_id}*.vtt"))
+                if subs_candidates:
+                    subs_path = subs_candidates[0]
+                    print(f"[YouTube] yt-dlp subs файл: {subs_path}")
+
+                    if subs_path.endswith('.vtt'):
+                        vtt = webvtt.read(subs_path)
+                        transcript_text = ' '.join(caption.text for caption in vtt).strip()
+                    else:
+                        with open(subs_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        transcript_text = re.sub(r'^\d+\n\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}\n', '', content, flags=re.MULTILINE)
+                        transcript_text = re.sub(r'\n+', ' ', transcript_text).strip()
+
+                    print(f"[YouTube] yt-dlp subs получены, длина: {len(transcript_text)}")
                 else:
-                    with open(subs_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    transcript_text = re.sub(r'^\d+\n\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}\n', '', content, flags=re.MULTILINE)
-                    transcript_text = re.sub(r'\n+', ' ', transcript_text).strip()
+                    print("[YouTube] yt-dlp subs не скачаны.")
+            except Exception as e:
+                print(f"[YouTube] yt-dlp subs ошибка: {e}")
 
-                print(f"[YouTube] Subs получены, длина: {len(transcript_text)}")
-            else:
-                print("[YouTube] Subs не скачаны — возможно, лимит, подожди.")
-        except Exception as e:
-            print(f"[YouTube] Ошибка subs: {e}")
-
-    # 2) Fallback аудио + Whisper (старый SDK, с retry)
+    # 3) Fallback аудио + Whisper
     if not transcript_text:
         print("[YouTube] Нет subs, скачиваю аудио...")
         bot.reply_to(message, "🎧 Скачиваю аудио и распознаю...")
@@ -1028,7 +1045,7 @@ def youtube_link_handler(message):
                 bot.reply_to(message, "❌ Ошибка. Попробуй позже или проверь ключ OpenAI.")
                 return
 
-    # 3) Обработка текста
+    # 4) Обработка текста
     if not transcript_text:
         bot.reply_to(message, "❌ Текст не получен.")
         return
@@ -1069,7 +1086,6 @@ def youtube_link_handler(message):
         final_summary = "\n\n".join(summaries)
 
     bot.reply_to(message, f"📺 Видео: {video_url}\n\nКонспект:\n{final_summary}", parse_mode="HTML")
-
 @bot.message_handler(commands=['universal'])
 @bot.message_handler(func=lambda message: message.text == "🌍 Универсальный ассистент")
 def universal_assistant_handler(message):
