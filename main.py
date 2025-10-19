@@ -899,13 +899,10 @@ import os
 import tempfile
 import subprocess
 import glob
-import time  # Для пауз
+import time
 import yt_dlp
-from openai import OpenAI
 from tenacity import retry, stop_after_attempt, wait_fixed
-import webvtt  # Для парсинга VTT
-
-openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+import webvtt  # Для VTT
 
 _YT_RE = re.compile(r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)(?P<id>[A-Za-z0-9_-]{11})")
 
@@ -941,7 +938,7 @@ def youtube_link_handler(message):
 
     transcript_text = ""
 
-    # 1) Получаем субтитры с фиксом для 429 (пауза, user-agent)
+    # 1) Subs с фиксом 429
     with tempfile.TemporaryDirectory() as tmpdir:
         out_template = os.path.join(tmpdir, '%(id)s.%(ext)s')
         ydl_opts_subs = {
@@ -954,18 +951,17 @@ def youtube_link_handler(message):
             'quiet': True,
             'no_warnings': True,
             'convert_subs': 'srt',
-            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',  # Фикс 429
-            'sleep_interval': 5,  # Пауза между запросами
+            'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'sleep_interval': 5,
             'max_sleep_interval': 10,
         }
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts_subs) as ydl:
                 info = ydl.extract_info(video_url, download=True)
-                print(f"[YouTube] Доступные auto-captions: {info.get('automatic_captions', {})}")
-                print(f"[YouTube] Доступные subs: {info.get('subtitles', {})}")
+                print(f"[YouTube] Auto-captions: {info.get('automatic_captions', {})}")
+                print(f"[YouTube] Subs: {info.get('subtitles', {})}")
 
-            # Ищем subs
             subs_candidates = glob.glob(os.path.join(tmpdir, f"{video_id}*.srt")) + glob.glob(os.path.join(tmpdir, f"{video_id}*.vtt"))
             if subs_candidates:
                 subs_path = subs_candidates[0]
@@ -978,16 +974,15 @@ def youtube_link_handler(message):
                     with open(subs_path, 'r', encoding='utf-8') as f:
                         content = f.read()
                     transcript_text = re.sub(r'^\d+\n\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}\n', '', content, flags=re.MULTILINE)
-                    transcript_text = re.sub(r'\n+', '\n', transcript_text).strip()
+                    transcript_text = re.sub(r'\n+', ' ', transcript_text).strip()
 
                 print(f"[YouTube] Subs получены, длина: {len(transcript_text)}")
             else:
-                print("[YouTube] Subs не скачаны — возможно, 429, подожди 5-10 мин.")
+                print("[YouTube] Subs не скачаны — возможно, лимит, подожди.")
         except Exception as e:
             print(f"[YouTube] Ошибка subs: {e}")
-            time.sleep(10)  # Пауза на случай 429
 
-    # 2) Fallback на аудио + Whisper
+    # 2) Fallback аудио + Whisper (старый SDK, с retry)
     if not transcript_text:
         print("[YouTube] Нет subs, скачиваю аудио...")
         bot.reply_to(message, "🎧 Скачиваю аудио и распознаю...")
@@ -1023,10 +1018,10 @@ def youtube_link_handler(message):
                 @retry(stop=stop_after_attempt(5), wait=wait_fixed(3))
                 def transcribe():
                     with open(processed_path, "rb") as f:
-                        return openai_client.audio.transcriptions.create(model="whisper-1", file=f, language="ru")
+                        return openai.Audio.transcribe(model="whisper-1", file=f, language="ru")
 
                 transcript_obj = transcribe()
-                transcript_text = transcript_obj.text
+                transcript_text = transcript_obj['text']
                 print(f"[YouTube] Whisper OK, длина: {len(transcript_text)}")
             except Exception as e:
                 print(f"[YouTube] Ошибка аудио/Whisper: {e}")
@@ -1052,29 +1047,28 @@ def youtube_link_handler(message):
     summaries = []
     for i, chunk in enumerate(chunks, 1):
         try:
-            resp = openai_client.chat.completions.create(
+            resp = openai.ChatCompletion.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "system", "content": "Краткий конспект фрагмента."}, {"role": "user", "content": chunk}],
                 max_tokens=700,
             )
-            summaries.append(resp.choices[0].message.content.strip())
+            summaries.append(resp.choices[0].message['content'].strip())
         except Exception as e:
             print(f"[YouTube] Ошибка чанка {i}: {e}")
             summaries.append("(Ошибка.)")
 
     try:
         combined = "\n\n".join(summaries)
-        resp_final = openai_client.chat.completions.create(
+        resp_final = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": "Объедини в coherent текст."}, {"role": "user", "content": combined}],
             max_tokens=900,
         )
-        final_summary = resp_final.choices[0].message.content.strip()
+        final_summary = resp_final.choices[0].message['content'].strip()
     except Exception as e:
         final_summary = "\n\n".join(summaries)
 
     bot.reply_to(message, f"📺 Видео: {video_url}\n\nКонспект:\n{final_summary}", parse_mode="HTML")
-
 
 @bot.message_handler(commands=['universal'])
 @bot.message_handler(func=lambda message: message.text == "🌍 Универсальный ассистент")
