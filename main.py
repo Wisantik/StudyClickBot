@@ -1058,28 +1058,25 @@ def youtube_link_handler(message):
                 from openai import OpenAI
                 # отправляем файл в OpenAI Whisper (в зависимости от версии клиента)
                 with open(audio_path, "rb") as audio_file:
-                try:
-                    print("[YouTube] Отправляю аудио на распознавание (Whisper)...")
+                    try:
+                        print("[YouTube] Отправляю аудио на распознавание (Whisper)...")
 
-                    # Старый интерфейс OpenAI (0.28.0)
-                    # Метод Audio.transcribe напрямую вызывает Whisper
-                    audio_file.seek(0)
-                    transcript_obj = openai.Audio.transcribe("whisper-1", audio_file)
+                        # Старый интерфейс OpenAI (0.28.0)
+                        # Метод Audio.transcribe напрямую вызывает Whisper
+                        audio_file.seek(0)
+                        transcript_obj = openai.Audio.transcribe("whisper-1", audio_file)
 
-                    # transcript_obj — это dict, где нужный текст лежит в ключе "text"
-                    if isinstance(transcript_obj, dict):
-                        transcript_text = transcript_obj.get("text", "")
-                    else:
-                        transcript_text = getattr(transcript_obj, "text", "")
+                        # transcript_obj — это dict, где нужный текст лежит в ключе "text"
+                        if isinstance(transcript_obj, dict):
+                            transcript_text = transcript_obj.get("text", "")
+                        else:
+                            transcript_text = getattr(transcript_obj, "text", "")
 
-                    print(f"[YouTube] Whisper успешно распознал {len(transcript_text)} символов текста.")
+                        print(f"[YouTube] Whisper успешно распознал {len(transcript_text)} символов текста.")
 
-                except Exception as e:
-                    print(f"[YouTube] Ошибка при вызове Whisper (old SDK): {e}")
-                    transcript_text = ""
-
-
-
+                    except Exception as e:
+                        print(f"[YouTube] Ошибка при вызове Whisper (old SDK): {e}")
+                        transcript_text = ""
                         print(f"[YouTube] (whisper API) Распознано {len(transcript_text)} символов текста.")
                     except AttributeError:
                         # fallback для других версий openai
