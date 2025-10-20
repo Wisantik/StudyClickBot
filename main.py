@@ -901,7 +901,7 @@ import subprocess
 import glob
 import time
 import yt_dlp
-from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled  # Только эти импорты
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 from tenacity import retry, stop_after_attempt, wait_fixed
 
 _YT_RE = re.compile(r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)(?P<id>[A-Za-z0-9_-]{11})")
@@ -938,21 +938,21 @@ def youtube_link_handler(message):
 
     transcript_text = ""
 
-    # 1) youtube-transcript-api: Основной метод без прокси для auto/manual subs
-    @retry(stop=stop_after_attempt(3), wait=wait_fixed(5))
+    # 1) youtube-transcript-api с усиленным retry
+    @retry(stop=stop_after_attempt(5), wait=wait_fixed(5))
     def get_transcript_retry():
         return YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en'])
 
     try:
         transcript = get_transcript_retry()
         transcript_text = ' '.join([item['text'] for item in transcript]).strip()
-        print(f"[YouTube] youtube-transcript-api: Получено {len(transcript_text)} символов")
+        print(f"[YouTube] Transcript API: Получено {len(transcript_text)} символов")
     except (NoTranscriptFound, TranscriptsDisabled):
-        print("[YouTube] youtube-transcript-api: Субтитры не найдены/отключены.")
+        print("[YouTube] Transcript API: Субтитры не найдены/отключены.")
     except Exception as e:
-        print(f"[YouTube] youtube-transcript-api ошибка: {e}")
+        print(f"[YouTube] Transcript API ошибка: {e}")
 
-    # 2) Fallback: yt-dlp для субтитров (с фиксами для 429)
+    # 2) Fallback yt-dlp subs с фиксом 429
     if not transcript_text:
         print("[YouTube] Fallback: yt-dlp субтитры...")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -968,8 +968,8 @@ def youtube_link_handler(message):
                 'no_warnings': True,
                 'convert_subs': 'srt',
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'sleep_interval': 5,
-                'max_sleep_interval': 10,
+                'sleep_interval': 10,  # Увеличил паузу для 429
+                'max_sleep_interval': 20,
             }
 
             try:
@@ -989,7 +989,7 @@ def youtube_link_handler(message):
             except Exception as e:
                 print(f"[YouTube] yt-dlp subs ошибка: {e}")
 
-    # 3) Fallback: Аудио + Whisper с разбиением на chunks (для лимита 25MB)
+    # 3) Fallback: Аудио + Whisper с разбиением на chunks
     if not transcript_text:
         print("[YouTube] Нет субтитров, аудио + Whisper...")
         bot.reply_to(message, "🎧 Скачиваю аудио и распознаю (1-5 мин для длинных видео)...")
@@ -1000,7 +1000,7 @@ def youtube_link_handler(message):
                 'outtmpl': audio_template,
                 'quiet': True,
                 'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                'sleep_interval': 5,
+                'sleep_interval': 10,
             }
             try:
                 with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
@@ -1011,7 +1011,7 @@ def youtube_link_handler(message):
                     raise FileNotFoundError("Аудио не скачано")
                 audio_path = audio_candidates[0]
 
-                # Разбиение на chunks по 600 сек (10 мин)
+                # Разбиение на chunks по 600 сек (10 мин, ~20MB)
                 chunk_dir = os.path.join(tmpdir, "chunks")
                 os.makedirs(chunk_dir, exist_ok=True)
                 ffmpeg_split_cmd = ["ffmpeg", "-i", audio_path, "-f", "segment", "-segment_time", "600", "-c", "copy", os.path.join(chunk_dir, "chunk%03d.mp3")]
@@ -1025,7 +1025,7 @@ def youtube_link_handler(message):
                     ffmpeg_cmd = ["ffmpeg", "-y", "-i", chunk_path, "-ac", "1", "-ar", "16000", "-b:a", "64k", processed_chunk]
                     subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-                    @retry(stop=stop_after_attempt(5), wait=wait_fixed(3))
+                    @retry(stop=stop_after_attempt(5), wait=wait_fixed(5))
                     def transcribe_chunk():
                         with open(processed_chunk, "rb") as f:
                             return openai.Audio.transcribe("whisper-1", f, language="ru")
@@ -1096,7 +1096,7 @@ def youtube_link_handler(message):
         parse_mode="HTML"
     )
 
-    
+
 @bot.message_handler(commands=['universal'])
 @bot.message_handler(func=lambda message: message.text == "🌍 Универсальный ассистент")
 def universal_assistant_handler(message):
