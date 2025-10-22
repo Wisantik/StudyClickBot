@@ -23,6 +23,8 @@ import re
 import base64 
 load_dotenv()
 import glob
+import pandas as pd  # Для XLSX и CSV
+import csv
 
 # Настройка логирования и окружения
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
@@ -2399,14 +2401,14 @@ def handle_document(message):
                 content = read_docx(docx_file)
         elif file_extension == 'xlsx':
             with io.BytesIO(downloaded_file) as xlsx_file:
-                df = pd.read_excel(xlsx_file, sheet_name=None)  # Читаем все листы
+                df = pd.read_excel(xlsx_file, sheet_name=None)
                 content = ""
                 for sheet_name, sheet_df in df.items():
-                    content += f"Лист: {sheet_name}\n{sheet_df.to_string()}\n\n"  # Конвертим в текст
+                    content += f"Лист: {sheet_name}\n{sheet_df.to_string()}\n\n"
         elif file_extension == 'csv':
             with io.BytesIO(downloaded_file) as csv_file:
                 df = pd.read_csv(csv_file)
-                content = df.to_string()  # Конвертим в текст
+                content = df.to_string()
         else:
             bot.reply_to(message, "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx, .xlsx, .csv.", reply_markup=create_main_menu())
             return
@@ -2433,8 +2435,18 @@ def handle_document(message):
 
             combined = assistant_header + f"[Файл: {message.document.file_name}]\n\n{content}\n\nВопрос: {caption}"
 
+            # Отключаем веб-поиск для документов (фикс проблемы)
+            original_web_enabled = user_data.get('web_search_enabled', False)
+            user_data['web_search_enabled'] = False  # Временно отключаем
+            save_user_data(user_data)  # Сохраняем временно
+
             bot.send_chat_action(message.chat.id, "typing")
             ai_response = process_text_message(combined, message.chat.id)
+
+            # Восстанавливаем оригинальное значение
+            user_data['web_search_enabled'] = original_web_enabled
+            save_user_data(user_data)
+
             send_in_chunks(message, ai_response)
             return
 
