@@ -2373,7 +2373,6 @@ def _analyze_chunks_with_ai(chunks: list, filename: str, message, user_query: st
     return final_analysis
 
 
-# Новый хендлер документов — сохраняет файл в user_data + отвечает с учётом подписи (caption) или даёт аналитический ответ
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
     user_data = load_user_data(message.from_user.id)
@@ -2435,18 +2434,8 @@ def handle_document(message):
 
             combined = assistant_header + f"[Файл: {message.document.file_name}]\n\n{content}\n\nВопрос: {caption}"
 
-            # Отключаем веб-поиск для документов (фикс проблемы)
-            original_web_enabled = user_data.get('web_search_enabled', False)
-            user_data['web_search_enabled'] = False  # Временно отключаем
-            save_user_data(user_data)  # Сохраняем временно
-
             bot.send_chat_action(message.chat.id, "typing")
-            ai_response = process_text_message(combined, message.chat.id)
-
-            # Восстанавливаем оригинальное значение
-            user_data['web_search_enabled'] = original_web_enabled
-            save_user_data(user_data)
-
+            ai_response = process_text_message(combined, message.chat.id, disable_web=True)  # Отключаем веб-поиск
             send_in_chunks(message, ai_response)
             return
 
@@ -2507,7 +2496,7 @@ def update_user_tokens(user_id, input_tokens, output_tokens):
 def generate_referral_link(user_id):
     return f"https://t.me/fiinny_bot?start={user_id}"
 
-def process_text_message(text, chat_id) -> str:
+def process_text_message(text, chat_id, disable_web=False) -> str:
     user_data = load_user_data(chat_id)
     if not user_data:
         return "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
@@ -2533,7 +2522,7 @@ def process_text_message(text, chat_id) -> str:
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
-    if user_data['web_search_enabled'] or needs_web_search(text):
+    if not disable_web and (user_data['web_search_enabled'] or needs_web_search(text)):
         if user_data['subscription_plan'] == 'free':
             return "Веб-поиск доступен только с подпиской Plus. Выберите тариф: /pay"
         print("[DEBUG] Выполняется веб-поиск")
@@ -2562,8 +2551,6 @@ def process_text_message(text, chat_id) -> str:
         return ai_response
     except Exception as e:
         return f"Произошла ошибка: {str(e)}"
-
- # Добавьте в начало файла, если нет
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
