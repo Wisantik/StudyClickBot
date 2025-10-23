@@ -1,7 +1,7 @@
 import logging
 import telebot
 import os
-import openai
+from openai import OpenAI  # Новый SDK
 import json
 from typing import Final
 from telebot.types import BotCommand
@@ -25,6 +25,9 @@ load_dotenv()
 import glob
 import pandas as pd  # Для XLSX и CSV
 import csv
+
+# Настройка OpenAI клиента
+openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
 # Настройка логирования и окружения
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
@@ -54,7 +57,6 @@ logger = telebot.logger
 telebot.logger.setLevel(logging.INFO)
 pay_token = os.getenv('PAY_TOKEN')
 bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
-openai.api_key = os.getenv('OPENAI_API_KEY')
 
 # Настройка ЮKassa
 Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
@@ -213,8 +215,8 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
 """
     print("[WEB SEARCH] Генерируем ответ через OpenAI (промпт сформирован).")
     try:
-        chat_completion = openai.ChatCompletion.create(
-            model="gpt-5-mini-2025-08-07",
+        chat_completion = openai_client.chat.completions.create(  # Новый SDK
+            model="gpt-4o-mini",
             messages=[{"role": "system", "content": full_prompt}]
         )
         final_answer = chat_completion.choices[0].message.content
@@ -229,7 +231,6 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
 
     print(f"{banner}\n[WEB SEARCH] Завершено для user_id={user_id}\n{banner}\n")
     return (final_answer, sources_block)
-
 
 
 
@@ -2499,58 +2500,98 @@ def generate_referral_link(user_id):
 def process_text_message(text, chat_id, disable_web=False) -> str:
     user_data = load_user_data(chat_id)
     if not user_data:
-        return "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
+        return "Ошибка: пользователь не найден. Попробуйте /start."
+
     input_tokens = len(text)
     
-    # Проверка только для free
     if user_data['subscription_plan'] == 'free':
         check_and_update_tokens(chat_id)
         user_data = load_user_data(chat_id)
         if user_data['daily_tokens'] < input_tokens:
-            return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
+            return "Лимит токенов исчерпан. Попробуйте завтра или подписку: /pay"
     
-    # Для Plus — сразу True, без вызова update_user_tokens
     if user_data['subscription_plan'] in ['plus_trial', 'plus_month', 'plus']:
-        # Просто обновляем счётчики, но без лимита
         user_data['input_tokens'] += input_tokens
         save_user_data(user_data)
     elif not update_user_tokens(chat_id, input_tokens, 0):
-        return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
+        return "Лимит токенов исчерпан. Попробуйте завтра или подписку: /pay"
     
     config = load_assistants_config()
     current_assistant = get_user_assistant(chat_id)
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
-    if not disable_web and (user_data['web_search_enabled'] or needs_web_search(text)):
-        if user_data['subscription_plan'] == 'free':
-            return "Веб-поиск доступен только с подпиской Plus. Выберите тариф: /pay"
-        print("[DEBUG] Выполняется веб-поиск")
-        # Исправленный вызов: передайте все требуемые аргументы (user_id=chat_id, query=text, assistant_key=current_assistant)
-        # Также напрямую возвращайте результат, чтобы избежать двойной генерации ИИ
-        return _perform_web_search(chat_id, text, current_assistant)
+    # Tools для function calling (веб-поиск)
+    tools = []
+    if not disable_web and user_data.get('web_search_enabled', False):
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "Выполни веб-поиск, если запрос требует свежей информации, новостей или данных из интернета.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Поисковый запрос."}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
+        ]
 
-    # Если веб-поиск не нужен, продолжайте с обычной генерацией (без изменений)
     input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
     history = get_chat_history(chat_id)
     history.append({"role": "user", "content": input_text})
+
     try:
-        chat_completion = openai.ChatCompletion.create(
-            model="gpt-5-mini-2025-08-07",
-            messages=history
-        )
-        ai_response = chat_completion.choices[0].message.content
+        @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+        def call_model(messages, tools=None):
+            return openai_client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                tools=tools if tools else None,
+                tool_choice="auto" if tools else None
+            )
+
+        response = call_model(history, tools)
+
+        # Если tool call
+        if response.choices[0].message.tool_calls:
+            tool_call = response.choices[0].message.tool_calls[0]
+            if tool_call.function.name == "web_search":
+                args = json.loads(tool_call.function.arguments)
+                query = args['query']
+                print(f"[DEBUG] Модель вызвала веб-поиск: {query}")
+
+                search_result = _perform_web_search(chat_id, query, current_assistant)
+
+                history.append(response.choices[0].message)
+                history.append({
+                    "role": "tool",
+                    "content": str(search_result),
+                    "tool_call_id": tool_call.id
+                })
+
+                response = call_model(history)
+                ai_response = response.choices[0].message.content
+            else:
+                ai_response = "Неизвестный tool."
+        else:
+            ai_response = response.choices[0].message.content
+
         output_tokens = len(ai_response)
-        if not update_user_tokens(chat_id, 0, output_tokens):
-            return "Ответ слишком длинный для вашего лимита токенов. Оформите подписку"
-        user_data = load_user_data(chat_id)
+        update_user_tokens(chat_id, 0, output_tokens)
+
         user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001
         save_user_data(user_data)
         store_message_in_db(chat_id, "user", input_text)
         store_message_in_db(chat_id, "assistant", ai_response)
+
         return ai_response
     except Exception as e:
-        return f"Произошла ошибка: {str(e)}"
+        return f"Ошибка: {str(e)}"
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
@@ -2564,27 +2605,22 @@ def handle_photo(message):
         return
 
     try:
-        # Берём фото наибольшего размера
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
-        # Кодируем в base64
         base64_image = base64.b64encode(downloaded_file).decode('utf-8')
 
-        # Промпт: используем caption или дефолтный
         caption = (message.caption or "").strip()
         if caption:
             question = f"Пользовательский вопрос: {caption}"
         else:
             question = "Опиши подробно, что изображено на этой фотографии: объекты, цвета, действия, эмоции и возможный контекст."
 
-        # Промпт ассистента
         current_assistant = get_user_assistant(message.from_user.id)
         config = load_assistants_config()
         assistant_settings = config["assistants"].get(current_assistant, {})
         prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
-        # Формируем сообщение для OpenAI (мультимодальное)
         messages = [
             {"role": "system", "content": prompt},
             {
@@ -2601,8 +2637,7 @@ def handle_photo(message):
             }
         ]
 
-        # Проверяем токены (примерно: текст + ~1.5x размер фото в символах)
-        input_tokens = len(question) + len(base64_image) * 3 // 4  # Примерная оценка
+        input_tokens = len(question) + len(base64_image) * 3 // 4
         if user_data['subscription_plan'] == 'free':
             check_and_update_tokens(message.from_user.id)
             user_data = load_user_data(message.from_user.id)
@@ -2613,24 +2648,20 @@ def handle_photo(message):
             bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay", reply_markup=None)
             return
 
-        # Отправляем запрос к OpenAI (используем gpt-4o-mini для vision)
         bot.send_chat_action(message.chat.id, "typing")
-        response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",  # Или "gpt-4-turbo" для лучшего качества
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
             messages=messages,
-            max_tokens=1000  # Лимит ответа
+            max_tokens=1000
         )
         ai_response = response.choices[0].message.content
 
-        # Обновляем токены для вывода
         output_tokens = len(ai_response)
         update_user_tokens(message.from_user.id, 0, output_tokens)
 
-        # Сохраняем историю (опционально)
         store_message_in_db(message.chat.id, "user", question)
         store_message_in_db(message.chat.id, "assistant", ai_response)
 
-        # Отправляем ответ
         bot.reply_to(message, ai_response, reply_markup=None, parse_mode='HTML' if '<' in ai_response else None)
 
     except Exception as e:
@@ -2653,11 +2684,11 @@ def voice(message):
             wav_temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             audio.export(wav_temp_file.name, format="wav")
             with open(wav_temp_file.name, 'rb') as wav_file:
-                response = openai.Audio.transcribe(
+                response = openai_client.audio.transcriptions.create(  # Новый SDK
                     model="whisper-1",
                     file=wav_file
                 )
-        recognized_text = response['text'].strip()
+        recognized_text = response.text.strip()
         if len(recognized_text) > 1000000:
             bot.reply_to(message, "Текст слишком длинный, сократите его.", reply_markup=create_main_menu())
             return
@@ -2669,7 +2700,6 @@ def voice(message):
     except Exception as e:
         logging.error(f"Ошибка обработки голосового сообщения: {e}")
         bot.reply_to(message, "Произошла ошибка, попробуйте позже!", reply_markup=create_main_menu())
-
 
 def handler(event, context):
     try:
