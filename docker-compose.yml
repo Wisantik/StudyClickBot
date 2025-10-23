@@ -38,7 +38,7 @@ services:
       - redis  
     volumes:
       - .:/app
-    restart: unless-stopped
+    restart: "no"  # Измените с unless-stopped на "no" — чтобы не рестартовал автоматически
 
 volumes:
   postgres_data:
