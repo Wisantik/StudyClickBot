@@ -1,7 +1,7 @@
 import logging
 import telebot
 import os
-from openai import OpenAI  # Новый SDK
+import openai  # Старый SDK (0.28.0)
 import json
 from typing import Final
 from telebot.types import BotCommand
@@ -27,7 +27,7 @@ import pandas as pd  # Для XLSX и CSV
 import csv
 
 # Настройка OpenAI клиента
-openai_client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+openai.api_key = os.getenv('OPENAI_API_KEY')
 
 # Настройка логирования и окружения
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
