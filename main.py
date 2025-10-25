@@ -1,7 +1,9 @@
 import logging
 import telebot
 import os
-import openai  # Старый SDK (0.28.0)
+import openai as openai_pkg
+from openai import OpenAI as OpenAINew
+import httpx
 import json
 from typing import Final
 from telebot.types import BotCommand
@@ -26,8 +28,113 @@ import glob
 import pandas as pd  # Для XLSX и CSV
 import csv
 
-# Настройка OpenAI клиента
-openai.api_key = os.getenv('OPENAI_API_KEY')
+# Настройка OpenAI клиента (новый SDK с явным httpx клиентом)
+print('[OpenAI] Инициализация OpenAI клиента...')
+openai_client = None
+try:
+    # Создаём явный httpx клиент и передаём его в OpenAI, чтобы избежать проблем
+    # когда SDK пытается конструировать httpx.Client с неподдерживаемыми kwargs (например, proxies).
+    httpx_client = httpx.Client(timeout=30.0)
+    openai_client = OpenAINew(api_key=os.getenv('OPENAI_API_KEY'), http_client=httpx_client)
+    print('[OpenAI] OpenAI (new SDK) успешно инициализирован с кастомным httpx клиентом')
+except Exception as e:
+    print(f"[OpenAI][ERROR] Не удалось инициализировать OpenAI new SDK: {e}")
+    print('[OpenAI] Пытаемся fallback на модульное API (legacy)')
+    try:
+        openai_pkg.api_key = os.getenv('OPENAI_API_KEY')
+        print('[OpenAI] Legacy openai модуль настроен (api_key установлен)')
+    except Exception as e2:
+        print(f"[OpenAI][ERROR] fallback тоже упал: {e2}")
+
+# --- Совместимость: патчим старые вызовы openai.ChatCompletion.create и openai.Audio.transcribe
+def _make_resp_like_old(resp_text: str):
+    # Возвращаем минимально совместимый объект с .choices[0].message['content']
+    choice = type('Choice', (), {})()
+    choice.message = {'content': resp_text}
+    resp_obj = type('Resp', (), {})()
+    resp_obj.choices = [choice]
+    return resp_obj
+
+class ChatCompletionCompat:
+    @staticmethod
+    def create(*args, **kwargs):
+        print('[OpenAI][DEBUG] ChatCompletion.create called with', {k: type(v) for k,v in kwargs.items()})
+        if openai_client:
+            try:
+                resp = call_chat_completion_new(**kwargs)
+                # новый SDK возвращает объект, у которого бывает choices[0].message.content
+                try:
+                    text = resp.choices[0].message.content
+                except Exception:
+                    # более гибкий извлекатор
+                    try:
+                        text = resp.choices[0].message['content']
+                    except Exception:
+                        text = str(resp)
+                print('[OpenAI][DEBUG] ChatCompletion (new) OK')
+                return _make_resp_like_old(text)
+            except Exception as e:
+                print(f'[OpenAI][ERROR] ChatCompletion (new) failed: {e}')
+                raise
+        else:
+            print('[OpenAI][DEBUG] Using legacy openai.ChatCompletion.create')
+            return openai_pkg.ChatCompletion.create(*args, **kwargs)
+
+def _audio_transcribe_compat(model, file_obj, **kwargs):
+    print(f'[OpenAI][DEBUG] Audio.transcribe called model={model}, kwargs={kwargs}')
+    if openai_client:
+        try:
+            resp = call_audio_transcription_new(model=model, file=file_obj, **kwargs)
+            # новый SDK может вернуть объект с атрибутом 'text' или индексируемым результатом
+            text = getattr(resp, 'text', None)
+            if text is None:
+                try:
+                    text = resp['text']
+                except Exception:
+                    text = str(resp)
+            print('[OpenAI][DEBUG] Audio.transcribe (new) OK')
+            return {'text': text}
+        except Exception as e:
+            print(f'[OpenAI][ERROR] Audio.transcribe (new) failed: {e}')
+            raise
+    else:
+        print('[OpenAI][DEBUG] Using legacy openai.Audio.transcribe')
+        return openai_pkg.Audio.transcribe(model, file_obj, **kwargs)
+
+# Применяем monkeypatch к модулю openai для совместимости с оставшимся кодом
+try:
+    openai_pkg.ChatCompletion = ChatCompletionCompat
+    openai_pkg.Audio = type('AudioMod', (), {'transcribe': staticmethod(_audio_transcribe_compat)})
+    # Экспортируем удобное имя `openai` чтобы старый код, который использует `openai.ChatCompletion` работал без правок
+    openai = openai_pkg
+    print('[OpenAI] Monkeypatch ChatCompletion and Audio.transcribe applied for backwards compatibility')
+except Exception as e:
+    print(f'[OpenAI][WARN] Не удалось применить monkeypatch: {e}')
+
+# --- Утилиты-обёртки с логированием для прямых вызовов new SDK
+def call_chat_completion_new(**kwargs):
+    print('[OpenAI][CALL] chat.completions.create kwargs keys:', list(kwargs.keys()))
+    if not openai_client:
+        raise RuntimeError('openai_client is not initialized (new SDK)')
+    try:
+        resp = openai_client.chat.completions.create(**kwargs)
+        print('[OpenAI][CALL] chat.completions.create succeeded')
+        return resp
+    except Exception as e:
+        print(f'[OpenAI][ERROR] chat.completions.create exception: {e}')
+        raise
+
+def call_audio_transcription_new(model, file, **kwargs):
+    print(f'[OpenAI][CALL] audio.transcriptions.create model={model}, kwargs={list(kwargs.keys())}')
+    if not openai_client:
+        raise RuntimeError('openai_client is not initialized (new SDK)')
+    try:
+        resp = openai_client.audio.transcriptions.create(model=model, file=file, **kwargs)
+        print('[OpenAI][CALL] audio.transcriptions.create succeeded')
+        return resp
+    except Exception as e:
+        print(f'[OpenAI][ERROR] audio.transcriptions.create exception: {e}')
+        raise
 
 # Настройка логирования и окружения
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
@@ -215,7 +322,7 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
 """
     print("[WEB SEARCH] Генерируем ответ через OpenAI (промпт сформирован).")
     try:
-        chat_completion = openai_client.chat.completions.create(  # Новый SDK
+        chat_completion = call_chat_completion_new(  # Новый SDK
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": full_prompt}]
         )
@@ -2548,7 +2655,7 @@ def process_text_message(text, chat_id, disable_web=False) -> str:
     try:
         @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
         def call_model(messages, tools=None):
-            return openai_client.chat.completions.create(
+            return call_chat_completion_new(
                 model="gpt-4o-mini",
                 messages=messages,
                 tools=tools if tools else None,
@@ -2648,21 +2755,21 @@ def handle_photo(message):
             bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay", reply_markup=None)
             return
 
-        bot.send_chat_action(message.chat.id, "typing")
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            max_tokens=1000
-        )
-        ai_response = response.choices[0].message.content
+            bot.send_chat_action(message.chat.id, "typing")
+            response = call_chat_completion_new(
+                model="gpt-4o-mini",
+                messages=messages,
+                max_tokens=1000
+            )
+            ai_response = response.choices[0].message.content
 
-        output_tokens = len(ai_response)
-        update_user_tokens(message.from_user.id, 0, output_tokens)
+            output_tokens = len(ai_response)
+            update_user_tokens(message.from_user.id, 0, output_tokens)
 
-        store_message_in_db(message.chat.id, "user", question)
-        store_message_in_db(message.chat.id, "assistant", ai_response)
+            store_message_in_db(message.chat.id, "user", question)
+            store_message_in_db(message.chat.id, "assistant", ai_response)
 
-        bot.reply_to(message, ai_response, reply_markup=None, parse_mode='HTML' if '<' in ai_response else None)
+            bot.reply_to(message, ai_response, reply_markup=None, parse_mode='HTML' if '<' in ai_response else None)
 
     except Exception as e:
         print(f"[ERROR] handle_photo exception: {e}")
@@ -2684,7 +2791,7 @@ def voice(message):
             wav_temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             audio.export(wav_temp_file.name, format="wav")
             with open(wav_temp_file.name, 'rb') as wav_file:
-                response = openai_client.audio.transcriptions.create(  # Новый SDK
+                response = call_audio_transcription_new(
                     model="whisper-1",
                     file=wav_file
                 )
