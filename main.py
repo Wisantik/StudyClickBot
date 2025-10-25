@@ -25,7 +25,7 @@ load_dotenv()
 import glob
 import pandas as pd  # Для XLSX и CSV
 import csv
-
+#привет
 # Настройка OpenAI клиента
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
