@@ -905,7 +905,7 @@ import glob
 import time
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
-from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential, RetryError
 
 _YT_RE = re.compile(r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)(?P<id>[A-Za-z0-9_-]{11})")
 
@@ -944,12 +944,20 @@ def youtube_link_handler(message):
     # 1) Transcript API с усиленным retry (exponential backoff)
     @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=4, max=10))
     def get_transcript_retry():
-        return YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en', 'ru-RU', 'en-US'])
+        try:
+            return YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en', 'ru-RU', 'en-US'])
+        except Exception as e:
+            print(f"[YouTube] Ошибка в get_transcript_retry: {e}")
+            raise  # Пробрасываем ошибку для retry
 
     try:
-        transcript = get_transcript_retry()
-        transcript_text = ' '.join([item['text'] for item in transcript]).strip()
-        print(f"[YouTube] Transcript API: Получено {len(transcript_text)} символов")
+        try:
+            transcript = get_transcript_retry()
+            transcript_text = ' '.join([item['text'] for item in transcript]).strip()
+            print(f"[YouTube] Transcript API: Получено {len(transcript_text)} символов")
+        except RetryError as e:
+            print(f"[YouTube] RetryError после всех попыток: {e}")
+            raise
     except (NoTranscriptFound, TranscriptsDisabled):
         print("[YouTube] Transcript API: Субтитры не найдены/отключены.")
     except Exception as e:
