@@ -32,10 +32,23 @@ import csv
 print('[OpenAI] Инициализация OpenAI клиента...')
 openai_client = None
 try:
-    # Создаём явный httpx клиент и передаём его в OpenAI, чтобы избежать проблем
-    # когда SDK пытается конструировать httpx.Client с неподдерживаемыми kwargs (например, proxies).
-    httpx_client = httpx.Client(timeout=30.0)
-    openai_client = OpenAINew(api_key=os.getenv('OPENAI_API_KEY'), http_client=httpx_client)
+    # Собираем ключ и базовый URL (если прокси используется)
+    api_key = os.getenv('OPENAI_API_KEY')
+    base_url = os.getenv('OPENAI_BASE_URL')
+    # Логируем факт наличия ключа, но НЕ печатаем полный ключ (маскируем)
+    if api_key:
+        masked = api_key[:6] + '...' + api_key[-4:]
+        print(f"[OpenAI] FOUND OPENAI_API_KEY (masked): {masked} length={len(api_key)}")
+    else:
+        print('[OpenAI][WARN] OPENAI_API_KEY is not set in environment')
+    if base_url:
+        print(f"[OpenAI] Using OPENAI_BASE_URL={base_url}")
+    # Создаём явный httpx клиент и передаём его в OpenAI. Если указан base_url — используем его.
+    if base_url:
+        httpx_client = httpx.Client(timeout=30.0, base_url=base_url)
+    else:
+        httpx_client = httpx.Client(timeout=30.0)
+    openai_client = OpenAINew(api_key=api_key, http_client=httpx_client)
     print('[OpenAI] OpenAI (new SDK) успешно инициализирован с кастомным httpx клиентом')
 except Exception as e:
     print(f"[OpenAI][ERROR] Не удалось инициализировать OpenAI new SDK: {e}")
