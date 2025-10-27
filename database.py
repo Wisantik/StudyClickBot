@@ -52,7 +52,6 @@ def create_subscription_tables(connection):
                 );
             """)
             connection.commit()
-            print("Таблицы для подписок созданы или уже существуют.")
     except Exception as e:
         print(f"Ошибка при создании таблиц подписок: {e}")
         connection.rollback()
@@ -404,7 +403,6 @@ def check_and_create_columns(connection):
                 ADD COLUMN IF NOT EXISTS payment_method_id VARCHAR(255);
             """)
             connection.commit()
-            print("Таблицы созданы или уже существуют, столбцы проверены и добавлены при необходимости.")
         except Exception as e:
             print(f"Ошибка при создании таблиц или добавлении столбцов: {e}")
             connection.rollback()
@@ -414,7 +412,6 @@ def load_assistants_config():
     cache_key = 'assistants_config'
     cached_config = r.get(cache_key)
     if cached_config:
-        print("Конфигурация ассистентов получена из Redis.")
         return json.loads(cached_config)
     try:
         connection = connect_to_db()

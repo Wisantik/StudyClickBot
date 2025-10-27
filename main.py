@@ -39,7 +39,6 @@ openai.api_key = os.getenv("OPENAI_API_KEY")  # оставляем для обр
 
 
 # Настройка логирования и окружения
-print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 connect_to_db()
 
 MIN_TOKENS_THRESHOLD: Final = 5000
@@ -70,9 +69,6 @@ bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
 # Настройка ЮKassa
 Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
 Configuration.secret_key = os.getenv("YOOKASSA_SECRET_KEY")
-
-print(f"[DEBUG] ShopID: {Configuration.account_id}")
-print(f"[DEBUG] YOOKASSA_SECRET_KEY: {os.getenv('YOOKASSA_SECRET_KEY')}")
 
 # ======== WEB SEARCH (DDGS) ========
 import json
@@ -2779,9 +2775,7 @@ def main():
             if count == 0:
                 logger.warning("Таблица 'assistants' пуста! Добавь ассистентов через SQL.")
             else:
-                logger.info("Обновляем кэш ассистентов...")
                 refresh_assistants_cache(conn)
-            logger.info("Обновляем список экспертов...")
             insert_initial_experts(conn)
             check_experts_in_database(conn)
             assistants_config = load_assistants_config()
@@ -2801,7 +2795,6 @@ def main():
     # Запуск polling в цикле для устойчивости
     while True:
         try:
-            logger.info("Starting polling...")
             bot.polling(non_stop=True, timeout=60)
         except Exception as e:
             logger.error(f"Ошибка в polling: {e}")
