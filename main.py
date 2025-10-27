@@ -25,7 +25,7 @@ load_dotenv()
 import glob
 import pandas as pd  # Для XLSX и CSV
 import csv
-#привет
+import tenacity
 # Настройка OpenAI клиента
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
@@ -947,7 +947,7 @@ def youtube_link_handler(message):
         try:
             return YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en', 'ru-RU', 'en-US'])
         except Exception as e:
-            print(f"[YouTube] Ошибка в get_transcript_retry: {e}")
+            print(f"[YouTube] Внутренняя ошибка get_transcript_retry ({type(e).__name__}): {str(e)}")
             raise  # Пробрасываем ошибку для retry
 
     try:
@@ -955,13 +955,18 @@ def youtube_link_handler(message):
             transcript = get_transcript_retry()
             transcript_text = ' '.join([item['text'] for item in transcript]).strip()
             print(f"[YouTube] Transcript API: Получено {len(transcript_text)} символов")
-        except RetryError as e:
-            print(f"[YouTube] RetryError после всех попыток: {e}")
+        except RetryError as re:
+            if re._last_exception is not None:
+                print(f"[YouTube] RetryError после всех попыток, последняя ошибка ({type(re._last_exception).__name__}): {str(re._last_exception)}")
+            else:
+                print(f"[YouTube] RetryError после всех попыток: {str(re)}")
             raise
     except (NoTranscriptFound, TranscriptsDisabled):
         print("[YouTube] Transcript API: Субтитры не найдены/отключены.")
     except Exception as e:
-        print(f"[YouTube] Transcript API ошибка: {e}")
+        print(f"[YouTube] Ошибка Transcript API ({type(e).__name__}): {str(e)}")
+        if isinstance(e, NameError):
+            print(f"[YouTube] NameError локация: {e.__traceback__.tb_frame.f_code.co_filename}:{e.__traceback__.tb_lineno}")
 
     # 2) Fallback yt-dlp subs с фиксом 429 (exponential backoff, force-ipv4)
     if not transcript_text:
