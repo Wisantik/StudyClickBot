@@ -29,6 +29,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    environment:
+      - OPENAI_API_KEY=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
     container_name: telegram_bot
     env_file:
       - .env

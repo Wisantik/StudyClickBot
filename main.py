@@ -28,8 +28,13 @@ import csv
 from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential, RetryError
 from openai import OpenAI
 
-# Настройка OpenAI клиента (новый SDK)
-openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    print("[ERROR] Переменная OPENAI_API_KEY не найдена!")
+else:
+    print(f"[DEBUG] OpenAI API Key найден: {api_key[:8]}...{api_key[-4:]}")
+
+openai_client = OpenAI(api_key=api_key)
 openai.api_key = os.getenv("OPENAI_API_KEY")  # оставляем для обратной совместимости
 
 
