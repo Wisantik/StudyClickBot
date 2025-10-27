@@ -1,9 +1,7 @@
 import logging
 import telebot
 import os
-import openai as openai_pkg
-from openai import OpenAI as OpenAINew
-import httpx
+import openai  # Старый SDK (0.28.0)
 import json
 from typing import Final
 from telebot.types import BotCommand
@@ -27,137 +25,20 @@ load_dotenv()
 import glob
 import pandas as pd  # Для XLSX и CSV
 import csv
+from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential, RetryError
+from openai import OpenAI
 
-# Настройка OpenAI клиента (новый SDK с явным httpx клиентом)
-print('[OpenAI] Инициализация OpenAI клиента...')
-openai_client = None
-try:
-    # Собираем ключ (используем только прямое подключение к OpenAI; прокси удалён)
-    api_key = os.getenv('OPENAI_API_KEY')
-    # Логируем факт наличия ключа, но НЕ печатаем полный ключ (маскируем)
-    if api_key:
-        masked = api_key[:6] + '...' + api_key[-4:]
-        print(f"[OpenAI] FOUND OPENAI_API_KEY (masked): {masked} length={len(api_key)}")
-    else:
-        print('[OpenAI][WARN] OPENAI_API_KEY is not set in environment')
+api_key = os.getenv("OPENAI_API_KEY")
+if not api_key:
+    print("[ERROR] Переменная OPENAI_API_KEY не найдена!")
+else:
+    print(f"[DEBUG] OpenAI API Key найден: {api_key[:8]}...{api_key[-4:]}")
 
-    # Всегда устанавливаем legacy api_key для модуля openai (фоллбек для существующих вызовов)
-    try:
-        openai_pkg.api_key = api_key
-    except Exception:
-        pass
+openai_client = OpenAI(api_key=api_key)
+openai.api_key = os.getenv("OPENAI_API_KEY")  # оставляем для обратной совместимости
 
-    # Если ключ есть — добавим заголовок Authorization в httpx клиент, чтобы не полагаться
-    # на внутренние механизмы SDK (защитит от случаев, когда ключ не передаётся далее).
-    default_headers = {}
-    if api_key:
-        default_headers['Authorization'] = f"Bearer {api_key}"
-
-    # Создаём явный httpx клиент (без прокси/base_url) и передаём его в OpenAI.
-    httpx_client = httpx.Client(timeout=30.0, headers=default_headers)
-    openai_client = OpenAINew(api_key=api_key, http_client=httpx_client)
-    print('[OpenAI] OpenAI (new SDK) успешно инициализирован с кастомным httpx клиентом')
-except Exception as e:
-    print(f"[OpenAI][ERROR] Не удалось инициализировать OpenAI new SDK: {e}")
-    print('[OpenAI] Пытаемся fallback на модульное API (legacy)')
-    try:
-        openai_pkg.api_key = os.getenv('OPENAI_API_KEY')
-        print('[OpenAI] Legacy openai модуль настроен (api_key установлен)')
-    except Exception as e2:
-        print(f"[OpenAI][ERROR] fallback тоже упал: {e2}")
-
-# --- Совместимость: патчим старые вызовы openai.ChatCompletion.create и openai.Audio.transcribe
-def _make_resp_like_old(resp_text: str):
-    # Возвращаем минимально совместимый объект с .choices[0].message['content']
-    choice = type('Choice', (), {})()
-    choice.message = {'content': resp_text}
-    resp_obj = type('Resp', (), {})()
-    resp_obj.choices = [choice]
-    return resp_obj
-
-class ChatCompletionCompat:
-    @staticmethod
-    def create(*args, **kwargs):
-        print('[OpenAI][DEBUG] ChatCompletion.create called with', {k: type(v) for k,v in kwargs.items()})
-        if openai_client:
-            try:
-                resp = call_chat_completion_new(**kwargs)
-                # новый SDK возвращает объект, у которого бывает choices[0].message.content
-                try:
-                    text = resp.choices[0].message.content
-                except Exception:
-                    # более гибкий извлекатор
-                    try:
-                        text = resp.choices[0].message['content']
-                    except Exception:
-                        text = str(resp)
-                print('[OpenAI][DEBUG] ChatCompletion (new) OK')
-                return _make_resp_like_old(text)
-            except Exception as e:
-                print(f'[OpenAI][ERROR] ChatCompletion (new) failed: {e}')
-                raise
-        else:
-            print('[OpenAI][DEBUG] Using legacy openai.ChatCompletion.create')
-            return openai_pkg.ChatCompletion.create(*args, **kwargs)
-
-def _audio_transcribe_compat(model, file_obj, **kwargs):
-    print(f'[OpenAI][DEBUG] Audio.transcribe called model={model}, kwargs={kwargs}')
-    if openai_client:
-        try:
-            resp = call_audio_transcription_new(model=model, file=file_obj, **kwargs)
-            # новый SDK может вернуть объект с атрибутом 'text' или индексируемым результатом
-            text = getattr(resp, 'text', None)
-            if text is None:
-                try:
-                    text = resp['text']
-                except Exception:
-                    text = str(resp)
-            print('[OpenAI][DEBUG] Audio.transcribe (new) OK')
-            return {'text': text}
-        except Exception as e:
-            print(f'[OpenAI][ERROR] Audio.transcribe (new) failed: {e}')
-            raise
-    else:
-        print('[OpenAI][DEBUG] Using legacy openai.Audio.transcribe')
-        return openai_pkg.Audio.transcribe(model, file_obj, **kwargs)
-
-# Применяем monkeypatch к модулю openai для совместимости с оставшимся кодом
-try:
-    openai_pkg.ChatCompletion = ChatCompletionCompat
-    openai_pkg.Audio = type('AudioMod', (), {'transcribe': staticmethod(_audio_transcribe_compat)})
-    # Экспортируем удобное имя `openai` чтобы старый код, который использует `openai.ChatCompletion` работал без правок
-    openai = openai_pkg
-    print('[OpenAI] Monkeypatch ChatCompletion and Audio.transcribe applied for backwards compatibility')
-except Exception as e:
-    print(f'[OpenAI][WARN] Не удалось применить monkeypatch: {e}')
-
-# --- Утилиты-обёртки с логированием для прямых вызовов new SDK
-def call_chat_completion_new(**kwargs):
-    print('[OpenAI][CALL] chat.completions.create kwargs keys:', list(kwargs.keys()))
-    if not openai_client:
-        raise RuntimeError('openai_client is not initialized (new SDK)')
-    try:
-        resp = openai_client.chat.completions.create(**kwargs)
-        print('[OpenAI][CALL] chat.completions.create succeeded')
-        return resp
-    except Exception as e:
-        print(f'[OpenAI][ERROR] chat.completions.create exception: {e}')
-        raise
-
-def call_audio_transcription_new(model, file, **kwargs):
-    print(f'[OpenAI][CALL] audio.transcriptions.create model={model}, kwargs={list(kwargs.keys())}')
-    if not openai_client:
-        raise RuntimeError('openai_client is not initialized (new SDK)')
-    try:
-        resp = openai_client.audio.transcriptions.create(model=model, file=file, **kwargs)
-        print('[OpenAI][CALL] audio.transcriptions.create succeeded')
-        return resp
-    except Exception as e:
-        print(f'[OpenAI][ERROR] audio.transcriptions.create exception: {e}')
-        raise
 
 # Настройка логирования и окружения
-print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 connect_to_db()
 
 MIN_TOKENS_THRESHOLD: Final = 5000
@@ -188,9 +69,6 @@ bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
 # Настройка ЮKassa
 Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
 Configuration.secret_key = os.getenv("YOOKASSA_SECRET_KEY")
-
-print(f"[DEBUG] ShopID: {Configuration.account_id}")
-print(f"[DEBUG] YOOKASSA_SECRET_KEY: {os.getenv('YOOKASSA_SECRET_KEY')}")
 
 # ======== WEB SEARCH (DDGS) ========
 import json
@@ -342,7 +220,7 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
 """
     print("[WEB SEARCH] Генерируем ответ через OpenAI (промпт сформирован).")
     try:
-        chat_completion = call_chat_completion_new(  # Новый SDK
+        chat_completion = openai_client.chat.completions.create(  # Новый SDK
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": full_prompt}]
         )
@@ -1032,7 +910,7 @@ import glob
 import time
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
-from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential
+
 
 _YT_RE = re.compile(r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)(?P<id>[A-Za-z0-9_-]{11})")
 
@@ -1071,16 +949,29 @@ def youtube_link_handler(message):
     # 1) Transcript API с усиленным retry (exponential backoff)
     @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=4, max=10))
     def get_transcript_retry():
-        return YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en', 'ru-RU', 'en-US'])
+        try:
+            return YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en', 'ru-RU', 'en-US'])
+        except Exception as e:
+            print(f"[YouTube] Внутренняя ошибка get_transcript_retry ({type(e).__name__}): {str(e)}")
+            raise  # Пробрасываем ошибку для retry
 
     try:
-        transcript = get_transcript_retry()
-        transcript_text = ' '.join([item['text'] for item in transcript]).strip()
-        print(f"[YouTube] Transcript API: Получено {len(transcript_text)} символов")
+        try:
+            transcript = get_transcript_retry()
+            transcript_text = ' '.join([item['text'] for item in transcript]).strip()
+            print(f"[YouTube] Transcript API: Получено {len(transcript_text)} символов")
+        except RetryError as re:
+            if re._last_exception is not None:
+                print(f"[YouTube] RetryError после всех попыток, последняя ошибка ({type(re._last_exception).__name__}): {str(re._last_exception)}")
+            else:
+                print(f"[YouTube] RetryError после всех попыток: {str(re)}")
+            raise
     except (NoTranscriptFound, TranscriptsDisabled):
         print("[YouTube] Transcript API: Субтитры не найдены/отключены.")
     except Exception as e:
-        print(f"[YouTube] Transcript API ошибка: {e}")
+        print(f"[YouTube] Ошибка Transcript API ({type(e).__name__}): {str(e)}")
+        if isinstance(e, NameError):
+            print(f"[YouTube] NameError локация: {e.__traceback__.tb_frame.f_code.co_filename}:{e.__traceback__.tb_lineno}")
 
     # 2) Fallback yt-dlp subs с фиксом 429 (exponential backoff, force-ipv4)
     if not transcript_text:
@@ -2675,7 +2566,7 @@ def process_text_message(text, chat_id, disable_web=False) -> str:
     try:
         @retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
         def call_model(messages, tools=None):
-            return call_chat_completion_new(
+            return openai_client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=messages,
                 tools=tools if tools else None,
@@ -2775,21 +2666,21 @@ def handle_photo(message):
             bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay", reply_markup=None)
             return
 
-            bot.send_chat_action(message.chat.id, "typing")
-            response = call_chat_completion_new(
-                model="gpt-4o-mini",
-                messages=messages,
-                max_tokens=1000
-            )
-            ai_response = response.choices[0].message.content
+        bot.send_chat_action(message.chat.id, "typing")
+        response = openai_client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            max_tokens=1000
+        )
+        ai_response = response.choices[0].message.content
 
-            output_tokens = len(ai_response)
-            update_user_tokens(message.from_user.id, 0, output_tokens)
+        output_tokens = len(ai_response)
+        update_user_tokens(message.from_user.id, 0, output_tokens)
 
-            store_message_in_db(message.chat.id, "user", question)
-            store_message_in_db(message.chat.id, "assistant", ai_response)
+        store_message_in_db(message.chat.id, "user", question)
+        store_message_in_db(message.chat.id, "assistant", ai_response)
 
-            bot.reply_to(message, ai_response, reply_markup=None, parse_mode='HTML' if '<' in ai_response else None)
+        bot.reply_to(message, ai_response, reply_markup=None, parse_mode='HTML' if '<' in ai_response else None)
 
     except Exception as e:
         print(f"[ERROR] handle_photo exception: {e}")
@@ -2811,7 +2702,7 @@ def voice(message):
             wav_temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             audio.export(wav_temp_file.name, format="wav")
             with open(wav_temp_file.name, 'rb') as wav_file:
-                response = call_audio_transcription_new(
+                response = openai_client.audio.transcriptions.create(  # Новый SDK
                     model="whisper-1",
                     file=wav_file
                 )
@@ -2869,7 +2760,6 @@ def check_experts_in_database(connection):
         cursor.execute("SELECT expert_id, name, specialization FROM experts;")
 
 def main():
-    logger.info("Bot started")
     conn = None
     max_retries = 5
     for attempt in range(max_retries):
@@ -2884,9 +2774,7 @@ def main():
             if count == 0:
                 logger.warning("Таблица 'assistants' пуста! Добавь ассистентов через SQL.")
             else:
-                logger.info("Обновляем кэш ассистентов...")
                 refresh_assistants_cache(conn)
-            logger.info("Обновляем список экспертов...")
             insert_initial_experts(conn)
             check_experts_in_database(conn)
             assistants_config = load_assistants_config()
@@ -2906,7 +2794,6 @@ def main():
     # Запуск polling в цикле для устойчивости
     while True:
         try:
-            logger.info("Starting polling...")
             bot.polling(non_stop=True, timeout=60)
         except Exception as e:
             logger.error(f"Ошибка в polling: {e}")
