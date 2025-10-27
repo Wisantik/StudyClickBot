@@ -25,7 +25,7 @@ load_dotenv()
 import glob
 import pandas as pd  # Для XLSX и CSV
 import csv
-import tenacity
+from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential, RetryError
 # Настройка OpenAI клиента
 openai.api_key = os.getenv('OPENAI_API_KEY')
 
@@ -905,7 +905,7 @@ import glob
 import time
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
-from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential, RetryError
+
 
 _YT_RE = re.compile(r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)(?P<id>[A-Za-z0-9_-]{11})")
 
