@@ -26,8 +26,12 @@ import glob
 import pandas as pd  # Для XLSX и CSV
 import csv
 from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential, RetryError
-# Настройка OpenAI клиента
-openai.api_key = os.getenv('OPENAI_API_KEY')
+from openai import OpenAI
+
+# Настройка OpenAI клиента (новый SDK)
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai.api_key = os.getenv("OPENAI_API_KEY")  # оставляем для обратной совместимости
+
 
 # Настройка логирования и окружения
 print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
