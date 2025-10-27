@@ -2760,7 +2760,6 @@ def check_experts_in_database(connection):
         cursor.execute("SELECT expert_id, name, specialization FROM experts;")
 
 def main():
-    logger.info("Bot started")
     conn = None
     max_retries = 5
     for attempt in range(max_retries):
