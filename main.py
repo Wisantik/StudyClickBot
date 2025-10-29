@@ -1053,6 +1053,11 @@ def youtube_link_handler(message):
 
                 transcript_text = ' '.join(transcript_parts).strip()
                 print(f"[YouTube] Whisper полная длина: {len(transcript_text)}")
+            except RetryError as re:
+                inner_error = re.last_attempt.exception() if re.last_attempt else re
+                print(f"[ERROR] RetryError в Whisper (YouTube): {inner_error}")
+                bot.reply_to(message, "❌ Не удалось получить текст видео. Попробуйте позже или другой ролик.")
+                return
             except Exception as e:
                 print(f"[YouTube] Whisper ошибка: {e}")
                 bot.reply_to(message, "❌ Не удалось получить текст видео. Попробуйте позже или другой ролик.")
@@ -2602,6 +2607,13 @@ def process_text_message(text, chat_id, disable_web=False) -> str:
         store_message_in_db(chat_id, "assistant", ai_response)
 
         return ai_response
+    except RetryError as re:
+        inner_error = re.last_attempt.exception() if re.last_attempt else re
+        print(f"[ERROR] RetryError в process_text_message: {inner_error}")
+        if isinstance(inner_error, openai.AuthenticationError):
+            return "Ошибка аутентификации API. Обратитесь в поддержку."
+        else:
+            return "Произошла ошибка при генерации ответа. Попробуйте позже."
     except openai.AuthenticationError as e:
         print(f"[ERROR] AuthenticationError: {e} - Проверьте API key!")
         return "Ошибка аутентификации. Обратитесь в поддержку."
