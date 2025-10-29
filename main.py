@@ -1,7 +1,7 @@
 import logging
 import telebot
 import os
-import openai  # Старый SDK (0.28.0)
+from openai import OpenAI  # Только новый SDK
 import json
 from typing import Final
 from telebot.types import BotCommand
@@ -20,13 +20,14 @@ import tempfile
 from pydub import AudioSegment
 from ddgs import DDGS
 import re
-import base64 
+import base64
 load_dotenv()
 import glob
 import pandas as pd  # Для XLSX и CSV
 import csv
 from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential, RetryError
-from openai import OpenAI
+import yt_dlp
+from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 
 api_key = os.getenv("OPENAI_API_KEY")
 if not api_key:
@@ -35,8 +36,6 @@ else:
     print(f"[DEBUG] OpenAI API Key найден: {api_key[:8]}...{api_key[-4:]}")
 
 openai_client = OpenAI(api_key=api_key)
-openai.api_key = os.getenv("OPENAI_API_KEY")  # оставляем для обратной совместимости
-
 
 # Настройка логирования и окружения
 connect_to_db()
@@ -154,7 +153,6 @@ def _fetch_page_content(url: str) -> str:
         print(f"[ERROR] Ошибка при загрузке {url}: {e}")
         return ""
 
-
 def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
     """
     Расширенный веб-поиск: печатает подробности запроса, выбранные топ-3 ссылки,
@@ -220,7 +218,7 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
 """
     print("[WEB SEARCH] Генерируем ответ через OpenAI (промпт сформирован).")
     try:
-        chat_completion = openai_client.chat.completions.create(  # Новый SDK
+        chat_completion = openai_client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[{"role": "system", "content": full_prompt}]
         )
@@ -236,6 +234,7 @@ def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
 
     print(f"{banner}\n[WEB SEARCH] Завершено для user_id={user_id}\n{banner}\n")
     return (final_answer, sources_block)
+
 
 
 
@@ -956,22 +955,15 @@ def youtube_link_handler(message):
             raise  # Пробрасываем ошибку для retry
 
     try:
-        try:
-            transcript = get_transcript_retry()
-            transcript_text = ' '.join([item['text'] for item in transcript]).strip()
-            print(f"[YouTube] Transcript API: Получено {len(transcript_text)} символов")
-        except RetryError as re:
-            if re._last_exception is not None:
-                print(f"[YouTube] RetryError после всех попыток, последняя ошибка ({type(re._last_exception).__name__}): {str(re._last_exception)}")
-            else:
-                print(f"[YouTube] RetryError после всех попыток: {str(re)}")
-            raise
+        transcript = get_transcript_retry()
+        transcript_text = ' '.join([item['text'] for item in transcript]).strip()
+        print(f"[YouTube] Transcript API: Получено {len(transcript_text)} символов")
     except (NoTranscriptFound, TranscriptsDisabled):
         print("[YouTube] Transcript API: Субтитры не найдены/отключены.")
+    except RetryError as re:
+        print(f"[YouTube] Ошибка Transcript API после retry: {str(re.last_attempt.exception())}")
     except Exception as e:
         print(f"[YouTube] Ошибка Transcript API ({type(e).__name__}): {str(e)}")
-        if isinstance(e, NameError):
-            print(f"[YouTube] NameError локация: {e.__traceback__.tb_frame.f_code.co_filename}:{e.__traceback__.tb_lineno}")
 
     # 2) Fallback yt-dlp subs с фиксом 429 (exponential backoff, force-ipv4)
     if not transcript_text:
@@ -1050,20 +1042,24 @@ def youtube_link_handler(message):
                     @retry(stop=stop_after_attempt(5), wait=wait_fixed(5))
                     def transcribe_chunk():
                         with open(processed_chunk, "rb") as f:
-                            return openai.Audio.transcribe("whisper-1", f, language="ru")
+                            return openai_client.audio.transcriptions.create(
+                                model="whisper-1",
+                                file=f,
+                                language="ru"
+                            )
 
                     obj = transcribe_chunk()
-                    transcript_parts.append(obj['text'].strip())
+                    transcript_parts.append(obj.text.strip())
 
                 transcript_text = ' '.join(transcript_parts).strip()
                 print(f"[YouTube] Whisper полная длина: {len(transcript_text)}")
             except Exception as e:
                 print(f"[YouTube] Whisper ошибка: {e}")
-                bot.reply_to(message, "❌ Не удалось получить текст видео. Попробуй позже.")
+                bot.reply_to(message, "❌ Не удалось получить текст видео. Попробуйте позже или другой ролик.")
                 return
 
     if not transcript_text:
-        bot.reply_to(message, "❌ Текст видео недоступен.")
+        bot.reply_to(message, "❌ Текст видео недоступен. Попробуйте другой ролик.")
         return
 
     # Суммаризация (без .txt файла)
@@ -1072,7 +1068,7 @@ def youtube_link_handler(message):
     summaries = []
     for i, chunk in enumerate(chunks, 1):
         try:
-            resp = openai.ChatCompletion.create(
+            resp = openai_client.chat.completions.create(  # Новый SDK
                 model="gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": "Сделай краткий конспект фрагмента видео."},
@@ -1080,7 +1076,7 @@ def youtube_link_handler(message):
                 ],
                 max_tokens=700
             )
-            summaries.append(resp.choices[0].message['content'].strip())
+            summaries.append(resp.choices[0].message.content.strip())
         except Exception as e:
             print(f"[YouTube] Чанк {i} ошибка: {e}")
             summaries.append("Ошибка обработки фрагмента.")
@@ -1088,7 +1084,7 @@ def youtube_link_handler(message):
     # Итоговая суммаризация
     try:
         combined = "\n\n".join(summaries)
-        resp_final = openai.ChatCompletion.create(
+        resp_final = openai_client.chat.completions.create(  # Новый SDK
             model="gpt-4o-mini",
             messages=[
                 {"role": "system", "content": "Объедини конспекты в coherent итоговый конспект видео."},
@@ -1096,7 +1092,7 @@ def youtube_link_handler(message):
             ],
             max_tokens=1200
         )
-        final_summary = resp_final.choices[0].message['content'].strip()
+        final_summary = resp_final.choices[0].message.content.strip()
     except Exception as e:
         print(f"[YouTube] Финал ошибка: {e}")
         final_summary = "\n\n".join(summaries)
@@ -2265,7 +2261,8 @@ def process_user_queue(user_id, chat_id):
                     bot.send_message(chat_id, chunk, reply_markup=None)  # Изменено
         except Exception as e:
             stop_flag[0] = True
-            bot.send_message(chat_id, f"Ошибка при обработке: {e}", reply_markup=None)  # Изменено
+            print(f"[ERROR] Ошибка обработки сообщения user_id={user_id}: {e}")  # Только в консоль
+            bot.send_message(chat_id, "Произошла ошибка. Попробуйте повторить запрос позже или обратитесь в поддержку.", reply_markup=None)  # Дружественное сообщение
         finally:
             user_processing[user_id] = False
             if message_queues[user_id]:
@@ -2334,18 +2331,14 @@ def _analyze_chunks_with_ai(chunks: list, filename: str, message, user_query: st
         if user_query:
             prompt = (
                 f"[Файл: {filename}] Часть {idx+1}/{total}.\n"
-                f""
-                "\n\n"
+                f"Извлеки релевантные факты/данные для вопроса: {user_query}\n\n"
                 f"{chunk}\n\n"
-                ""
             )
         else:
             prompt = (
                 f"[Файл: {filename}] Часть {idx+1}/{total}.\n"
-                "\n"
-                "\n\n"
+                f"Извлеки ключевые факты, числа, имена, даты, выводы из этой части.\n\n"
                 f"{chunk}\n\n"
-                ""
             )
 
         # показать typing
@@ -2392,6 +2385,7 @@ def _analyze_chunks_with_ai(chunks: list, filename: str, message, user_query: st
     return final_analysis
 
 
+# Новый хендлер документов — сохраняет файл в user_data + отвечает с учётом подписи (caption) или даёт аналитический ответ
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
     user_data = load_user_data(message.from_user.id)
@@ -2419,14 +2413,14 @@ def handle_document(message):
                 content = read_docx(docx_file)
         elif file_extension == 'xlsx':
             with io.BytesIO(downloaded_file) as xlsx_file:
-                df = pd.read_excel(xlsx_file, sheet_name=None)
+                df = pd.read_excel(xlsx_file, sheet_name=None)  # Читаем все листы
                 content = ""
                 for sheet_name, sheet_df in df.items():
-                    content += f"Лист: {sheet_name}\n{sheet_df.to_string()}\n\n"
+                    content += f"Лист: {sheet_name}\n{sheet_df.to_string()}\n\n"  # Конвертим в текст
         elif file_extension == 'csv':
             with io.BytesIO(downloaded_file) as csv_file:
                 df = pd.read_csv(csv_file)
-                content = df.to_string()
+                content = df.to_string()  # Конвертим в текст
         else:
             bot.reply_to(message, "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx, .xlsx, .csv.", reply_markup=create_main_menu())
             return
@@ -2454,7 +2448,7 @@ def handle_document(message):
             combined = assistant_header + f"[Файл: {message.document.file_name}]\n\n{content}\n\nВопрос: {caption}"
 
             bot.send_chat_action(message.chat.id, "typing")
-            ai_response = process_text_message(combined, message.chat.id, disable_web=True)  # Отключаем веб-поиск
+            ai_response = process_text_message(combined, message.chat.id)
             send_in_chunks(message, ai_response)
             return
 
@@ -2466,7 +2460,7 @@ def handle_document(message):
         send_in_chunks(message, final_analysis)
     except Exception as e:
         print(f"[ERROR] handle_document: {e}")
-        bot.reply_to(message, f"Ошибка при чтении файла: {str(e)}", reply_markup=create_main_menu())
+        bot.reply_to(message, f"Ошибка при чтении файла. Попробуйте позже.", reply_markup=create_main_menu())
 
 def send_in_chunks(message, text, chunk_size=4000):
     try:
@@ -2608,8 +2602,14 @@ def process_text_message(text, chat_id, disable_web=False) -> str:
         store_message_in_db(chat_id, "assistant", ai_response)
 
         return ai_response
+    except openai.AuthenticationError as e:
+        print(f"[ERROR] AuthenticationError: {e} - Проверьте API key!")
+        return "Ошибка аутентификации. Обратитесь в поддержку."
     except Exception as e:
-        return f"Ошибка: {str(e)}"
+        print(f"[ERROR] Ошибка в process_text_message: {e}")
+        return "Произошла ошибка при генерации ответа. Попробуйте позже."
+
+ # Добавьте в начало файла, если нет
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
@@ -2623,22 +2623,27 @@ def handle_photo(message):
         return
 
     try:
+        # Берём фото наибольшего размера
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
 
+        # Кодируем в base64
         base64_image = base64.b64encode(downloaded_file).decode('utf-8')
 
+        # Промпт: используем caption или дефолтный
         caption = (message.caption or "").strip()
         if caption:
             question = f"Пользовательский вопрос: {caption}"
         else:
             question = "Опиши подробно, что изображено на этой фотографии: объекты, цвета, действия, эмоции и возможный контекст."
 
+        # Промпт ассистента
         current_assistant = get_user_assistant(message.from_user.id)
         config = load_assistants_config()
         assistant_settings = config["assistants"].get(current_assistant, {})
         prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
+        # Формируем сообщение для OpenAI (мультимодальное)
         messages = [
             {"role": "system", "content": prompt},
             {
@@ -2655,7 +2660,8 @@ def handle_photo(message):
             }
         ]
 
-        input_tokens = len(question) + len(base64_image) * 3 // 4
+        # Проверяем токены (примерно: текст + ~1.5x размер фото в символах)
+        input_tokens = len(question) + len(base64_image) * 3 // 4  # Примерная оценка
         if user_data['subscription_plan'] == 'free':
             check_and_update_tokens(message.from_user.id)
             user_data = load_user_data(message.from_user.id)
@@ -2666,25 +2672,29 @@ def handle_photo(message):
             bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay", reply_markup=None)
             return
 
+        # Отправляем запрос (используем gpt-4o-mini для vision)
         bot.send_chat_action(message.chat.id, "typing")
         response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-4o-mini",  # Или "gpt-4-turbo" для лучшего качества
             messages=messages,
-            max_tokens=1000
+            max_tokens=1000  # Лимит ответа
         )
         ai_response = response.choices[0].message.content
 
+        # Обновляем токены для вывода
         output_tokens = len(ai_response)
         update_user_tokens(message.from_user.id, 0, output_tokens)
 
+        # Сохраняем историю (опционально)
         store_message_in_db(message.chat.id, "user", question)
         store_message_in_db(message.chat.id, "assistant", ai_response)
 
+        # Отправляем ответ
         bot.reply_to(message, ai_response, reply_markup=None, parse_mode='HTML' if '<' in ai_response else None)
 
     except Exception as e:
         print(f"[ERROR] handle_photo exception: {e}")
-        bot.reply_to(message, f"Ошибка при анализе изображения: {str(e)}. Проверьте формат или попробуйте снова.", reply_markup=None)
+        bot.reply_to(message, f"Ошибка при анализе изображения. Попробуйте позже.", reply_markup=None)
 
 @bot.message_handler(content_types=["voice"])
 def voice(message):
@@ -2702,7 +2712,7 @@ def voice(message):
             wav_temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             audio.export(wav_temp_file.name, format="wav")
             with open(wav_temp_file.name, 'rb') as wav_file:
-                response = openai_client.audio.transcriptions.create(  # Новый SDK
+                response = openai_client.audio.transcriptions.create(
                     model="whisper-1",
                     file=wav_file
                 )
@@ -2716,8 +2726,9 @@ def voice(message):
         ai_response = process_text_message(recognized_text, message.chat.id)
         bot.reply_to(message, ai_response, reply_markup=None)
     except Exception as e:
-        logging.error(f"Ошибка обработки голосового сообщения: {e}")
-        bot.reply_to(message, "Произошла ошибка, попробуйте позже!", reply_markup=create_main_menu())
+        print(f"[ERROR] Ошибка обработки голосового сообщения: {e}")
+        bot.reply_to(message, "Произошла ошибка при распознавании голоса. Попробуйте позже!", reply_markup=create_main_menu())
+
 
 def handler(event, context):
     try:
@@ -2760,6 +2771,7 @@ def check_experts_in_database(connection):
         cursor.execute("SELECT expert_id, name, specialization FROM experts;")
 
 def main():
+    logger.info("Bot started")
     conn = None
     max_retries = 5
     for attempt in range(max_retries):
@@ -2774,7 +2786,9 @@ def main():
             if count == 0:
                 logger.warning("Таблица 'assistants' пуста! Добавь ассистентов через SQL.")
             else:
+                logger.info("Обновляем кэш ассистентов...")
                 refresh_assistants_cache(conn)
+            logger.info("Обновляем список экспертов...")
             insert_initial_experts(conn)
             check_experts_in_database(conn)
             assistants_config = load_assistants_config()
@@ -2794,6 +2808,7 @@ def main():
     # Запуск polling в цикле для устойчивости
     while True:
         try:
+            logger.info("Starting polling...")
             bot.polling(non_stop=True, timeout=60)
         except Exception as e:
             logger.error(f"Ошибка в polling: {e}")
