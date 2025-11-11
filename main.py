@@ -902,7 +902,7 @@ import glob
 import time
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
-from tenacity import retry, stop_after_attempt, wait_fixed
+from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential
 
 _YT_RE = re.compile(r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)(?P<id>[A-Za-z0-9_-]{11})")
 
@@ -938,10 +938,10 @@ def youtube_link_handler(message):
 
     transcript_text = ""
 
-    # 1) youtube-transcript-api с усиленным retry
-    @retry(stop=stop_after_attempt(5), wait=wait_fixed(5))
+    # 1) Transcript API с усиленным retry (exponential backoff)
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=4, max=10))
     def get_transcript_retry():
-        return YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en'])
+        return YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en', 'ru-RU', 'en-US'])
 
     try:
         transcript = get_transcript_retry()
@@ -952,7 +952,7 @@ def youtube_link_handler(message):
     except Exception as e:
         print(f"[YouTube] Transcript API ошибка: {e}")
 
-    # 2) Fallback yt-dlp subs с фиксом 429
+    # 2) Fallback yt-dlp subs с фиксом 429 (exponential backoff, force-ipv4)
     if not transcript_text:
         print("[YouTube] Fallback: yt-dlp субтитры...")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -968,8 +968,9 @@ def youtube_link_handler(message):
                 'no_warnings': True,
                 'convert_subs': 'srt',
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'sleep_interval': 10,  # Увеличил паузу для 429
-                'max_sleep_interval': 20,
+                'sleep_interval': 10,  # Увеличил паузу
+                'max_sleep_interval': 30,
+                'forceipv4': True,  # Фикс для некоторых сетей
             }
 
             try:
@@ -989,7 +990,7 @@ def youtube_link_handler(message):
             except Exception as e:
                 print(f"[YouTube] yt-dlp subs ошибка: {e}")
 
-    # 3) Fallback: Аудио + Whisper с разбиением на chunks
+    # 3) Fallback: Аудио + Whisper с разбиением
     if not transcript_text:
         print("[YouTube] Нет субтитров, аудио + Whisper...")
         bot.reply_to(message, "🎧 Скачиваю аудио и распознаю (1-5 мин для длинных видео)...")
@@ -1011,7 +1012,7 @@ def youtube_link_handler(message):
                     raise FileNotFoundError("Аудио не скачано")
                 audio_path = audio_candidates[0]
 
-                # Разбиение на chunks по 600 сек (10 мин, ~20MB)
+                # Разбиение на chunks по 600 сек (10 мин)
                 chunk_dir = os.path.join(tmpdir, "chunks")
                 os.makedirs(chunk_dir, exist_ok=True)
                 ffmpeg_split_cmd = ["ffmpeg", "-i", audio_path, "-f", "segment", "-segment_time", "600", "-c", "copy", os.path.join(chunk_dir, "chunk%03d.mp3")]
@@ -1044,18 +1045,7 @@ def youtube_link_handler(message):
         bot.reply_to(message, "❌ Текст видео недоступен.")
         return
 
-    # Отправка .txt
-    try:
-        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", suffix=".txt", delete=False) as tf:
-            tf.write(transcript_text)
-            txt_path = tf.name
-        with open(txt_path, "rb") as f:
-            bot.send_document(message.chat.id, f, caption="📄 Полная расшифровка")
-        os.unlink(txt_path)
-    except Exception as e:
-        print(f"[YouTube] .txt ошибка: {e}")
-
-    # Суммаризация
+    # Суммаризация (без .txt файла)
     bot.reply_to(message, "✍️ Суммаризирую...")
     chunks = chunk_text(transcript_text)
     summaries = []
