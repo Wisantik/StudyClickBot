@@ -24,8 +24,6 @@ import base64
 load_dotenv()
 import glob
 
-# Настройка логирования и окружения
-print(f"Connecting to DB: {os.getenv('DB_NAME')}, User: {os.getenv('DB_USER')}, Host: {os.getenv('DB_HOST')}")
 connect_to_db()
 
 MIN_TOKENS_THRESHOLD: Final = 5000
@@ -57,9 +55,6 @@ openai.api_key = os.getenv('OPENAI_API_KEY')
 # Настройка ЮKassa
 Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
 Configuration.secret_key = os.getenv("YOOKASSA_SECRET_KEY")
-
-print(f"[DEBUG] ShopID: {Configuration.account_id}")
-print(f"[DEBUG] YOOKASSA_SECRET_KEY: {os.getenv('YOOKASSA_SECRET_KEY')}")
 
 # ======== WEB SEARCH (DDGS) ========
 import json
@@ -505,7 +500,6 @@ def setup_bot_commands():
     ]
     try:
         bot.set_my_commands(commands)
-        print("Команды бота успешно настроены")
     except Exception as e:
         print(f"Ошибка при настройке команд: {e}")
 
@@ -916,6 +910,8 @@ def chunk_text(text, size=2500, overlap=200):
         start = end - overlap if end - overlap > start else end
     return chunks
 
+import concurrent.futures  # Добавь в импорт
+
 @bot.message_handler(func=lambda message: bool(_YT_RE.search(message.text or "")))
 def youtube_link_handler(message):
     user_id = message.from_user.id
@@ -933,75 +929,42 @@ def youtube_link_handler(message):
     video_url = f"https://youtu.be/{video_id}"
     print(f"[YouTube] Получена ссылка: {video_url}")
 
+    # Уведомление сразу
+    bot.reply_to(message, "🎥 Суммаризация видео началась... Это может занять 1-5 минут. Ждите!")
     bot.send_chat_action(message.chat.id, "typing")
-    bot.reply_to(message, "🎬 Получаю субтитры или аудио...")
 
     transcript_text = ""
 
-    # 1) Transcript API с усиленным retry (exponential backoff)
-    @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=4, max=10))
+    # 1) Transcript API с улучшенным retry (основной быстрый вариант)
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=2, max=10))
     def get_transcript_retry():
-        return YouTubeTranscriptApi.get_transcript(video_id, languages=['ru', 'en', 'ru-RU', 'en-US'])
+        try:
+            # Пробуем auto-detect или несколько языков
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            transcript = transcript_list.find_generated_transcript(['ru', 'en']) or transcript_list.find_transcript(['ru', 'en'])
+            return transcript.fetch()
+        except:
+            raise
 
     try:
         transcript = get_transcript_retry()
         transcript_text = ' '.join([item['text'] for item in transcript]).strip()
         print(f"[YouTube] Transcript API: Получено {len(transcript_text)} символов")
-    except (NoTranscriptFound, TranscriptsDisabled):
-        print("[YouTube] Transcript API: Субтитры не найдены/отключены.")
     except Exception as e:
-        print(f"[YouTube] Transcript API ошибка: {e}")
+        print(f"[YouTube] Transcript API ошибка: {e}. Переходим к Whisper.")
 
-    # 2) Fallback yt-dlp subs с фиксом 429 (exponential backoff, force-ipv4)
-    if not transcript_text:
-        print("[YouTube] Fallback: yt-dlp субтитры...")
-        with tempfile.TemporaryDirectory() as tmpdir:
-            out_template = os.path.join(tmpdir, '%(id)s.%(ext)s')
-            ydl_opts_subs = {
-                'writeautomaticsub': True,
-                'writesubtitles': True,
-                'subtitleslangs': ['ru', 'en'],
-                'subtitlesformat': 'vtt/srt/best',
-                'skip_download': True,
-                'outtmpl': out_template,
-                'quiet': True,
-                'no_warnings': True,
-                'convert_subs': 'srt',
-                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                'sleep_interval': 10,  # Увеличил паузу
-                'max_sleep_interval': 30,
-                'forceipv4': True,  # Фикс для некоторых сетей
-            }
-
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts_subs) as ydl:
-                    info = ydl.extract_info(video_url, download=True)
-                    print(f"[YouTube] yt-dlp auto-captions: {info.get('automatic_captions', {})}")
-
-                subs_candidates = glob.glob(os.path.join(tmpdir, f"{video_id}*.srt")) + glob.glob(os.path.join(tmpdir, f"{video_id}*.vtt"))
-                if subs_candidates:
-                    subs_path = subs_candidates[0]
-                    print(f"[YouTube] yt-dlp subs файл: {subs_path}")
-                    with open(subs_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    transcript_text = re.sub(r'^\d+\n\d{2}:\d{2}:\d{2},\d{3} --> \d{2}:\d{2}:\d{2},\d{3}\n', '', content, flags=re.MULTILINE)
-                    transcript_text = re.sub(r'\n+', ' ', transcript_text).strip()
-                    print(f"[YouTube] yt-dlp subs получено: {len(transcript_text)} символов")
-            except Exception as e:
-                print(f"[YouTube] yt-dlp subs ошибка: {e}")
-
-    # 3) Fallback: Аудио + Whisper с разбиением
+    # 2) Если нет — сразу Whisper (без yt-dlp)
     if not transcript_text:
         print("[YouTube] Нет субтитров, аудио + Whisper...")
-        bot.reply_to(message, "🎧 Скачиваю аудио и распознаю (1-5 мин для длинных видео)...")
         with tempfile.TemporaryDirectory() as tmpdir:
             audio_template = os.path.join(tmpdir, f"{video_id}.%(ext)s")
             ydl_opts_audio = {
                 'format': 'bestaudio/best',
                 'outtmpl': audio_template,
                 'quiet': True,
-                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '192'}],
-                'sleep_interval': 10,
+                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '64'}],  # Уменьшил качество для скорости
+                'sleep_interval': 5,  # Задержка для rate limit
+                'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             }
             try:
                 with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
@@ -1012,27 +975,23 @@ def youtube_link_handler(message):
                     raise FileNotFoundError("Аудио не скачано")
                 audio_path = audio_candidates[0]
 
-                # Разбиение на chunks по 600 сек (10 мин)
+                # Разбиение на чанки по 300 сек (5 мин) для ускорения
                 chunk_dir = os.path.join(tmpdir, "chunks")
                 os.makedirs(chunk_dir, exist_ok=True)
-                ffmpeg_split_cmd = ["ffmpeg", "-i", audio_path, "-f", "segment", "-segment_time", "600", "-c", "copy", os.path.join(chunk_dir, "chunk%03d.mp3")]
+                ffmpeg_split_cmd = ["ffmpeg", "-i", audio_path, "-f", "segment", "-segment_time", "300", "-c", "copy", os.path.join(chunk_dir, "chunk%03d.mp3")]
                 subprocess.run(ffmpeg_split_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 chunks = sorted(glob.glob(os.path.join(chunk_dir, "chunk*.mp3")))
 
+                # Параллельная транскрипция чанков
                 transcript_parts = []
-                for i, chunk_path in enumerate(chunks, 1):
-                    print(f"[YouTube] Whisper chunk {i}/{len(chunks)}")
-                    processed_chunk = os.path.join(tmpdir, f"chunk{i}_conv.wav")
-                    ffmpeg_cmd = ["ffmpeg", "-y", "-i", chunk_path, "-ac", "1", "-ar", "16000", "-b:a", "64k", processed_chunk]
-                    subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:  # До 4 потоков
+                    futures = []
+                    for i, chunk_path in enumerate(chunks, 1):
+                        print(f"[YouTube] Whisper chunk {i}/{len(chunks)} queued")
+                        futures.append(executor.submit(transcribe_audio_chunk, chunk_path, tmpdir, i))
 
-                    @retry(stop=stop_after_attempt(5), wait=wait_fixed(5))
-                    def transcribe_chunk():
-                        with open(processed_chunk, "rb") as f:
-                            return openai.Audio.transcribe("whisper-1", f, language="ru")
-
-                    obj = transcribe_chunk()
-                    transcript_parts.append(obj['text'].strip())
+                    for future in concurrent.futures.as_completed(futures):
+                        transcript_parts.append(future.result())
 
                 transcript_text = ' '.join(transcript_parts).strip()
                 print(f"[YouTube] Whisper полная длина: {len(transcript_text)}")
@@ -1057,7 +1016,7 @@ def youtube_link_handler(message):
                     {"role": "system", "content": "Сделай краткий конспект фрагмента видео."},
                     {"role": "user", "content": chunk}
                 ],
-                max_tokens=700
+                max_tokens=500  # Уменьшил для скорости
             )
             summaries.append(resp.choices[0].message['content'].strip())
         except Exception as e:
@@ -1073,7 +1032,7 @@ def youtube_link_handler(message):
                 {"role": "system", "content": "Объедини конспекты в coherent итоговый конспект видео."},
                 {"role": "user", "content": combined}
             ],
-            max_tokens=1200
+            max_tokens=800  # Уменьшил
         )
         final_summary = resp_final.choices[0].message['content'].strip()
     except Exception as e:
@@ -1086,6 +1045,19 @@ def youtube_link_handler(message):
         parse_mode="HTML"
     )
 
+# Вспомогательная функция для параллелизма
+def transcribe_audio_chunk(chunk_path, tmpdir, i):
+    processed_chunk = os.path.join(tmpdir, f"chunk{i}_conv.wav")
+    ffmpeg_cmd = ["ffmpeg", "-y", "-i", chunk_path, "-ac", "1", "-ar", "16000", "-b:a", "32k", processed_chunk]  # Низкий bitrate для скорости
+    subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(3))
+    def transcribe_chunk():
+        with open(processed_chunk, "rb") as f:
+            return openai.Audio.transcribe("whisper-1", f, language="ru")
+
+    obj = transcribe_chunk()
+    return obj['text'].strip()
 
 @bot.message_handler(commands=['universal'])
 @bot.message_handler(func=lambda message: message.text == "🌍 Универсальный ассистент")
@@ -2735,9 +2707,9 @@ def main():
             if count == 0:
                 logger.warning("Таблица 'assistants' пуста! Добавь ассистентов через SQL.")
             else:
-                logger.info("Обновляем кэш ассистентов...")
+
                 refresh_assistants_cache(conn)
-            logger.info("Обновляем список экспертов...")
+
             insert_initial_experts(conn)
             check_experts_in_database(conn)
             assistants_config = load_assistants_config()
@@ -2757,7 +2729,7 @@ def main():
     # Запуск polling в цикле для устойчивости
     while True:
         try:
-            logger.info("Starting polling...")
+
             bot.polling(non_stop=True, timeout=60)
         except Exception as e:
             logger.error(f"Ошибка в polling: {e}")
