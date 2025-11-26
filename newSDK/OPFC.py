@@ -7,11 +7,14 @@ import re
 import sys
 import os
 
-# Добавляем точный путь к новому openai в sys.path (на первое место, чтобы перекрыть глобальный старый)
+# Получаем абсолютный путь к директории newSDK/openai (где лежит новый openai пакет)
 new_openai_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'openai'))
-sys.path.insert(0, new_openai_path)
 
-# Теперь импортируем — Python возьмёт локальный новый пакет
+# Вставляем этот путь на ПЕРВОЕ место в sys.path, чтобы перекрыть глобальный старый openai
+if new_openai_path not in sys.path:
+    sys.path.insert(0, new_openai_path)
+
+# Теперь импортируем — Python возьмёт ЛОКАЛЬНЫЙ новый пакет из newSDK/openai/openai
 import openai
 from openai import OpenAI
 
