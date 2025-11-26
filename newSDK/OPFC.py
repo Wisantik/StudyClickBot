@@ -7,9 +7,12 @@ import re
 import sys
 import os
 
-# Добавляем путь к установленному openai в sys.path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'openai'))
+# Добавляем точный путь к новому openai в sys.path (на первое место, чтобы перекрыть глобальный старый)
+new_openai_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'openai'))
+sys.path.insert(0, new_openai_path)
 
+# Теперь импортируем — Python возьмёт локальный новый пакет
+import openai
 from openai import OpenAI
 
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))  # Используем переменную из env (как в main.py)
