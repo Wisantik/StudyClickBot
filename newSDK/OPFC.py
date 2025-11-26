@@ -6,17 +6,20 @@ import re
 
 import sys
 import os
+import importlib
 
-# Получаем абсолютный путь к директории newSDK/openai (где лежит новый openai пакет)
+# Абсолютный путь к newSDK/openai (где лежит новый openai)
 new_openai_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'openai'))
 
-# Вставляем этот путь на ПЕРВОЕ место в sys.path, чтобы перекрыть глобальный старый openai
+# Вставляем путь на первое место в sys.path
 if new_openai_path not in sys.path:
     sys.path.insert(0, new_openai_path)
 
-# Теперь импортируем — Python возьмёт ЛОКАЛЬНЫЙ новый пакет из newSDK/openai/openai
-import openai
-from openai import OpenAI
+# Импортируем модуль 'openai' из локального пути (как openai_new, чтобы избежать конфликта)
+openai_new = importlib.import_module('openai')
+
+# Достаём класс OpenAI из нового модуля
+OpenAI = openai_new.OpenAI
 
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))  # Используем переменную из env (как в main.py)
 
