@@ -23,7 +23,7 @@ import re
 import base64
 load_dotenv()
 import glob
-
+from newSDK.OPFC import run_fc, needs_web_search
 connect_to_db()
 
 MIN_TOKENS_THRESHOLD: Final = 5000
@@ -55,180 +55,6 @@ openai.api_key = os.getenv('OPENAI_API_KEY')
 # Настройка ЮKassa
 Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
 Configuration.secret_key = os.getenv("YOOKASSA_SECRET_KEY")
-
-# ======== WEB SEARCH (DDGS) ========
-import json
-from textwrap import shorten
-
-def _call_search_api(search_query):
-    """Выполняет поиск через DDGS и выводит красиво отформатированные принты."""
-    banner = "="*60
-    print(f"\n{banner}\n[DDGS SEARCH] Запрос -> {search_query}\n{banner}")
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(search_query, region="ru-ru", safesearch="moderate", max_results=None))
-
-        print(f"[DDGS] Всего результатов получено сырой выдачей: {len(results)}")
-
-        formatted_results = []
-        filtered_out = []
-        for i, result in enumerate(results, start=1):
-            title = result.get('title')
-            href = result.get('href')
-            body = result.get('body', '') or ""
-            reason = None
-            if not title:
-                reason = "no title"
-            elif not href:
-                reason = "no href"
-            elif href.endswith("wiktionary.org/wiki/"):
-                reason = "wiktionary filter"
-            if reason:
-                filtered_out.append((i, href, reason))
-                continue
-
-            formatted = {
-                'title': title,
-                'snippet': body,
-                'link': href
-            }
-            formatted_results.append(formatted)
-
-        print(f"[DDGS] После фильтрации: {len(formatted_results)} результатов (отфильтровано: {len(filtered_out)})")
-
-        # печатаем краткий список найденных ссылок
-        if formatted_results:
-            print("\n[DDGS] Список найденных ссылок (index, title, link, snippet...):")
-            max_to_show = 5
-            for idx, r in enumerate(formatted_results[:max_to_show], start=1):
-                snippet_clean = r['snippet'].replace('\n', ' ')
-                print(f" {idx:>2}. {shorten(r['title'], 100)}")
-                print(f"      → {r['link']}")
-                print(f"      snip: {shorten(snippet_clean, 180)}\n")
-            if len(formatted_results) > max_to_show:
-                print(f"  ... и ещё {len(formatted_results) - max_to_show} результатов скрыто.\n")
-        else:
-            print("[DDGS] Нет отфильтрованных результатов для показа.")
-
-
-        if filtered_out:
-            print("[DDGS] Отфильтрованные элементы:")
-            for idx, href, why in filtered_out[:10]:
-                print(f"  - raw#{idx}: {href} (reason: {why})")
-            if len(filtered_out) > 10:
-                print(f"  ...и ещё {len(filtered_out)-10} элементов отфильтровано.")
-
-        print(f"{banner}\n")
-        return formatted_results
-
-    except Exception as e:
-        print(f"[ERROR][DDGS] Ошибка при выполнении веб-поиска: {e}")
-        return []
-
-from bs4 import BeautifulSoup
-
-def _fetch_page_content(url: str) -> str:
-    """Скачивает и очищает контент страницы."""
-    try:
-        headers = {"User-Agent": "Mozilla/5.0"}
-        html = requests.get(url, headers=headers, timeout=10).text
-        soup = BeautifulSoup(html, "html.parser")
-        # Извлекаем только текст из параграфов
-        text = ' '.join(p.get_text() for p in soup.find_all('p'))
-        return text[:4000]  # ограничение по длине
-    except Exception as e:
-        print(f"[ERROR] Ошибка при загрузке {url}: {e}")
-        return ""
-
-
-def _perform_web_search(user_id: int, query: str, assistant_key: str) -> str:
-    """
-    Расширенный веб-поиск: печатает подробности запроса, выбранные топ-3 ссылки,
-    статусы загрузки страниц и формирует контекст для ИИ.
-    """
-    banner = "-"*60
-    print(f"\n{banner}\n[WEB SEARCH] user_id={user_id} assistant={assistant_key}")
-    cleaned_query = re.sub(
-        r'^(привет|здравствуй|как дела|найди|найди мне)\s+',
-        '', query, flags=re.IGNORECASE
-    ).strip()
-    search_query = f"{cleaned_query} lang:ru"
-    print(f"[WEB SEARCH] Отправляем в DDGS: \"{search_query}\"")
-    search_results = _call_search_api(search_query)
-    if not search_results:
-        print("[WEB SEARCH] Ничего не найдено по запросу.")
-        return "🔍 Не удалось найти актуальные результаты по вашему запросу."
-
-    # Пытаемся fetch до 3 успешных, из всех результатов (до 10 attempts max для скорости)
-    page_texts = []
-    successful_links = []
-    max_success = 3
-    max_attempts = 10  # лимит на attempts
-    for i, r in enumerate(search_results[:max_attempts], start=1):
-        url = r['link']
-        print(f"[FETCH] #{i} Загружаем {url} ...")
-        text = _fetch_page_content(url)
-        if text:
-            print(f"[FETCH] #{i} OK: извлечено {len(text)} символов (усечено до 4000 при добавлении в контекст)")
-            page_texts.append(f"Источник: {r['title']} ({r['link']})\n{text}\n")
-            successful_links.append(r)
-            if len(page_texts) >= max_success:
-                break
-        else:
-            print(f"[FETCH] #{i} FAILED: не удалось извлечь текст или пустой ответ")
-
-    if not page_texts:
-        print("[WEB SEARCH] Ошибка: не удалось получить текст ни с одного из топовых URL.")
-        return "🔍 Нашлись ссылки, но не удалось загрузить содержимое страниц."
-
-    combined_context = "\n\n".join(page_texts)
-    # Показываем маленькую выдержку из контекста (без утечки всего текста)
-    sample = shorten(combined_context.replace("\n", " "), 400)
-    print(f"      snip: {shorten(sample, 180)}\n")
-
-    # Загружаем промпт ассистента
-    config = load_assistants_config()
-    assistant_settings = config["assistants"].get(assistant_key, {})
-    assistant_prompt = assistant_settings.get("prompt", "Вы просто бот.")
-    print(f"[WEB SEARCH] Промпт ассистента загружен ({len(assistant_prompt)} символов)")
-
-    full_prompt = f"""{assistant_prompt}
-
-Пользователь задал вопрос:
-"{query}"
-
-Я нашёл следующую информацию в интернете:
-
-{combined_context}
-
-Используя эти источники, дай развёрнутый, связный и точный ответ.
-Если источники противоречат — укажи это.
-"""
-    print("[WEB SEARCH] Генерируем ответ через OpenAI (промпт сформирован).")
-    try:
-        chat_completion = openai.ChatCompletion.create(
-            model="gpt-5-mini-2025-08-07",
-            messages=[{"role": "system", "content": full_prompt}]
-        )
-        final_answer = chat_completion.choices[0].message.content
-        print("[WEB SEARCH] Ответ от OpenAI получен.")
-    except Exception as e:
-        print(f"[ERROR][OpenAI] Ошибка при генерации: {e}")
-        final_answer = "Произошла ошибка при генерации ответа."
-
-    sources_block = "\n\n📚 *Источники:*\n" + "\n".join(
-        [f"🔗 [{r['title']}]({r['link']})" for r in successful_links]
-    )
-
-    print(f"{banner}\n[WEB SEARCH] Завершено для user_id={user_id}\n{banner}\n")
-    return (final_answer, sources_block)
-
-
-
-
-def needs_web_search(message: str) -> bool:
-    keywords = ["найди", "что сейчас", "новости", "поиск", "в интернете", "актуально"]
-    return any(kw in message.lower() for kw in keywords)
 
 class ExceptionHandler:
     def handle(self, exception):
@@ -2124,27 +1950,6 @@ def process_broadcast(message):
 
     bot.send_message(message.chat.id, f"✅ Рассылка завершена.\nУспешно: {success}\nОшибок: {failed}")
 
-
-def perform_web_search(query: str) -> str:
-    endpoint = "https://api.bing.microsoft.com/v7.0/search"
-    headers = {"Ocp-Apim-Subscription-Key": BING_API_KEY}
-    params = {"q": query, "count": 3, "textDecorations": False, "textFormat": "Raw"}
-    try:
-        response = requests.get(endpoint, headers=headers, params=params)
-        data = response.json()
-        web_pages = data.get("webPages", {}).get("value", [])
-        if not web_pages:
-            return "Нет результатов из веб-поиска."
-        results = "\n".join([f"{item['name']}: {item['url']}" for item in web_pages])
-        return results
-    except Exception as e:
-        print(f"[ОТЛАДКА] Ошибка Bing Search: {str(e)}")
-        return "Ошибка при поиске в интернете."
-
-def needs_web_search(message: str) -> bool:
-    keywords = ["найди", "что сейчас", "новости", "поиск", "в интернете", "актуально"]
-    return any(kw in message.lower() for kw in keywords)
-
 from threading import Thread
 from collections import defaultdict
 import time
@@ -2503,10 +2308,27 @@ def process_text_message(text, chat_id) -> str:
     if user_data['web_search_enabled'] or needs_web_search(text):
         if user_data['subscription_plan'] == 'free':
             return "Веб-поиск доступен только с подпиской Plus. Выберите тариф: /pay"
-        print("[DEBUG] Выполняется веб-поиск")
-        # Исправленный вызов: передайте все требуемые аргументы (user_id=chat_id, query=text, assistant_key=current_assistant)
-        # Также напрямую возвращайте результат, чтобы избежать двойной генерации ИИ
-        return _perform_web_search(chat_id, text, current_assistant)
+        
+        # Подготавливаем для FC (без старого поиска)
+        try:
+            ai_response = run_fc(user_id=chat_id, query=text, assistant_key=current_assistant)
+        except Exception as e:
+            return f"Ошибка веб-поиска: {e}"
+        
+        # Обновляем токены (примерно, т.к. FC может использовать больше; посчитайте реальные из response.usage если нужно)
+        output_tokens = len(ai_response)
+        if not update_user_tokens(chat_id, 0, output_tokens):
+            return "Ответ слишком длинный для вашего лимита токенов. Оформите подписку"
+        
+        user_data = load_user_data(chat_id)
+        user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001
+        save_user_data(user_data)
+        
+        # История (если нужно сохранить)
+        store_message_in_db(chat_id, "user", text)
+        store_message_in_db(chat_id, "assistant", ai_response)
+        
+        return ai_response
 
     # Если веб-поиск не нужен, продолжайте с обычной генерацией (без изменений)
     input_text = f"{prompt}\n\nUser: {text}\nAssistant:"

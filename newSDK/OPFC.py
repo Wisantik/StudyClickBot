@@ -1,0 +1,171 @@
+import json
+from textwrap import shorten
+from bs4 import BeautifulSoup
+import requests
+import re
+
+from .openai import OpenAI  # Новый SDK
+
+client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))  # Используем переменную из env (как в main.py)
+
+# ======== WEB SEARCH (DDGS) ======== (переносим сюда старые функции, но адаптируем для FC)
+def _call_search_api(search_query):
+    """Выполняет поиск через DDGS и возвращает форматированные результаты."""
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(search_query, region="ru-ru", safesearch="moderate", max_results=None))
+        
+        formatted_results = []
+        for result in results:
+            title = result.get('title')
+            href = result.get('href')
+            body = result.get('body', '') or ""
+            if title and href and not href.endswith("wiktionary.org/wiki/"):
+                formatted = {
+                    'title': title,
+                    'snippet': body,
+                    'link': href
+                }
+                formatted_results.append(formatted)
+        
+        return formatted_results
+    except Exception as e:
+        return []  # Без принтов, чтобы не засорять (логируем в main если нужно)
+
+def _fetch_page_content(url: str) -> str:
+    """Скачивает и очищает контент страницы."""
+    try:
+        headers = {"User-Agent": "Mozilla/5.0"}
+        html = requests.get(url, headers=headers, timeout=10).text
+        soup = BeautifulSoup(html, "html.parser")
+        text = ' '.join(p.get_text() for p in soup.find_all('p'))
+        return text[:4000]  # ограничение по длине
+    except Exception:
+        return ""
+
+def _perform_web_search(query: str) -> str:
+    """Выполняет веб-поиск и возвращает объединённый контекст (без AI-генерации здесь)."""
+    cleaned_query = re.sub(
+        r'^(привет|здравствуй|как дела|найди|найди мне)\s+',
+        '', query, flags=re.IGNORECASE
+    ).strip()
+    search_query = f"{cleaned_query} lang:ru"
+    search_results = _call_search_api(search_query)
+    if not search_results:
+        return "🔍 Не удалось найти актуальные результаты по вашему запросу."
+
+    page_texts = []
+    successful_links = []
+    max_success = 3
+    max_attempts = 10
+    for r in search_results[:max_attempts]:
+        url = r['link']
+        text = _fetch_page_content(url)
+        if text:
+            page_texts.append(f"Источник: {r['title']} ({r['link']})\n{text}\n")
+            successful_links.append(r)
+            if len(page_texts) >= max_success:
+                break
+
+    if not page_texts:
+        return "🔍 Нашлись ссылки, но не удалось загрузить содержимое страниц."
+
+    combined_context = "\n\n".join(page_texts)
+    sources_block = "\n\n📚 *Источники:*\n" + "\n".join(
+        [f"🔗 [{r['title']}]({r['link']})" for r in successful_links]
+    )
+    
+    return combined_context + sources_block  # Возвращаем только контекст + источники (AI обработает в FC)
+
+# ======== TOOLS для Function Calling ========
+tools = [
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Выполняет веб-поиск по запросу пользователя, если в сообщении есть ключевые слова вроде 'найди', 'что сейчас', 'новости', 'поиск', 'в интернете', 'актуально' или если ответ требует актуальной информации из интернета. Возвращает релевантный контекст и источники.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Поисковый запрос (очищенный от приветствий, на русском, с добавлением 'lang:ru' для релевантности)."
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    }
+]
+
+# ======== FUNCTION CALLING RUNNER ========
+def run_fc(user_id: int, query: str, assistant_key: str, model: str = "gpt-4o-mini") -> str:
+    """
+    Запускает Function Calling для веб-поиска.
+    - Формирует messages на основе промпта ассистента + запроса пользователя.
+    - Если модель вызывает tool, выполняет _perform_web_search.
+    - Затем генерирует финальный ответ на основе контекста.
+    - Возвращает финальный ответ (str).
+    """
+    # Загружаем промпт ассистента (из конфига, но поскольку конфиг в main.py, предполагаем, что assistant_prompt передаётся или загружается здесь; для простоты используем placeholder)
+    # В реальности: или импортируйте load_assistants_config из main, или передавайте prompt как параметр (рекомендую добавить в вызов run_fc)
+    # Но для этого примера: загружаем конфиг здесь (дублируем импорт, но ок для изоляции)
+    from assistance import load_assistants_config  # Предполагаем, что assistance.py доступен (импортируйте если нужно)
+    config = load_assistants_config()
+    assistant_settings = config["assistants"].get(assistant_key, {})
+    assistant_prompt = assistant_settings.get("prompt", "Вы просто бот.")
+
+    # Формируем messages
+    messages = [
+        {"role": "system", "content": assistant_prompt},
+        {"role": "user", "content": query}
+    ]
+
+    # Первый вызов: с tools
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        tools=tools,
+        tool_choice="auto"  # Авто-выбор: модель решает, нужен ли tool
+    )
+
+    response_message = response.choices[0].message
+    tool_calls = response_message.tool_calls
+
+    if tool_calls:
+        # Добавляем ответ модели в историю
+        messages.append(response_message)
+        
+        for tool_call in tool_calls:
+            if tool_call.function.name == "web_search":
+                # Парсим аргументы
+                function_args = json.loads(tool_call.function.arguments)
+                search_query = function_args.get("query")
+                
+                # Выполняем поиск
+                search_result = _perform_web_search(search_query)
+                
+                # Добавляем результат tool в историю
+                messages.append({
+                    "tool_call_id": tool_call.id,
+                    "role": "tool",
+                    "name": "web_search",
+                    "content": search_result
+                })
+        
+        # Второй вызов: с результатами tool для финальной генерации
+        second_response = client.chat.completions.create(
+            model=model,
+            messages=messages
+        )
+        final_answer = second_response.choices[0].message.content
+    else:
+        # Если tool не нужен — берём прямой ответ
+        final_answer = response_message.content
+
+    return final_answer
+
+# ======== ПЕРЕНЕСЁННАЯ ФУНКЦИЯ ========
+def needs_web_search(message: str) -> bool:
+    keywords = ["найди", "что сейчас", "новости", "поиск", "в интернете", "актуально"]
+    return any(kw in message.lower() for kw in keywords)
