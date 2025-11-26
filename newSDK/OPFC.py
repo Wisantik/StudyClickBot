@@ -6,17 +6,23 @@ import re
 
 import sys
 import os
-import importlib
+import importlib.util
 
-# Абсолютный путь к newSDK/openai (где лежит новый openai)
-new_openai_path = os.path.abspath(os.path.join(os.path.dirname(__file__), 'openai'))
+# Абсолютный путь к директории newSDK/openai (где лежит новый openai пакет)
+new_openai_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'openai'))
 
-# Вставляем путь на первое место в sys.path
-if new_openai_path not in sys.path:
-    sys.path.insert(0, new_openai_path)
+# Путь к __init__.py нового openai (в newSDK/openai/openai/__init__.py)
+new_openai_init_path = os.path.join(new_openai_dir, 'openai', '__init__.py')
 
-# Импортируем модуль 'openai' из локального пути (как openai_new, чтобы избежать конфликта)
-openai_new = importlib.import_module('openai')
+# Проверяем, существует ли файл (для отладки, можно убрать позже)
+if not os.path.exists(new_openai_init_path):
+    raise FileNotFoundError(f"Не найден __init__.py в {new_openai_init_path}")
+
+# Загружаем модуль из конкретного файла под новым именем 'openai_new'
+spec = importlib.util.spec_from_file_location("openai_new", new_openai_init_path)
+openai_new = importlib.util.module_from_spec(spec)
+sys.modules["openai_new"] = openai_new  # Добавляем в sys.modules под новым именем (избегаем конфликта)
+spec.loader.exec_module(openai_new)
 
 # Достаём класс OpenAI из нового модуля
 OpenAI = openai_new.OpenAI
