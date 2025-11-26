@@ -4,7 +4,13 @@ from bs4 import BeautifulSoup
 import requests
 import re
 
-from .openai import OpenAI  # Новый SDK
+import sys
+import os
+
+# Добавляем путь к установленному openai в sys.path
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'openai'))
+
+from openai import OpenAI
 
 client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))  # Используем переменную из env (как в main.py)
 
