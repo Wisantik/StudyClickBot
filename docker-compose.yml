@@ -12,18 +12,22 @@ services:
 
   db:
     image: postgres:13
-    stop_grace_period: 30s
     container_name: postgres_db
+    stop_grace_period: 30s
+
     environment:
       PGDATA: /var/lib/postgresql/data
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+
     volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./pg_hba.conf:/etc/postgresql/pg_hba.conf
+      - postgres_data:/var/lib/postgresql/data     # данные
+      - ./pg_hba.conf:/var/lib/postgresql/data/pg_hba.conf  # путь, где Postgres реально ищет файл
+
     expose:
-      - "5432"
+      - "5432"   # порт доступен ТОЛЬКО внутри docker, наружу не торчит
+
     restart: unless-stopped
 
   telegram_bot:

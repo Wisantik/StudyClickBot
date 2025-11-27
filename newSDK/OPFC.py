@@ -11,7 +11,6 @@ import importlib.util
 # Путь к директории newSDK/openai
 new_openai_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'new_openai'))
 
-
 # Пробуем найти __init__.py в openai/openai/__init__.py
 new_openai_init_path = os.path.join(new_openai_dir, 'openai', '__init__.py')
 
