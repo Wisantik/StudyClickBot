@@ -8,19 +8,17 @@ import sys
 import os
 import importlib.util
 
-# Путь к директории newSDK/openai
-new_openai_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'newSDK'))
+# Путь к директории newSDK (где лежит папка openai)
+new_openai_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
 
-
-# Пробуем найти __init__.py в openai/openai/__init__.py
+# Путь к openai/__init__.py внутри newSDK
 new_openai_init_path = os.path.join(new_openai_dir, 'openai', '__init__.py')
 
-# Если не найден, пробуем в openai/__init__.py
 if not os.path.exists(new_openai_init_path):
-    new_openai_init_path = os.path.join(new_openai_dir, '__init__.py')
-
-if not os.path.exists(new_openai_init_path):
-    raise FileNotFoundError(f"Не найден __init__.py в {new_openai_init_path}. Переустанови pip install openai -t newSDK/openai")
+    raise FileNotFoundError(
+        f"Не найден __init__.py в {new_openai_init_path}. "
+        f"Ты должен установить SDK так: pip install openai -t newSDK"
+    )
 
 # Загружаем
 spec = importlib.util.spec_from_file_location("openai_new", new_openai_init_path)
@@ -30,9 +28,9 @@ spec.loader.exec_module(openai_new)
 
 OpenAI = getattr(openai_new, 'OpenAI', None)
 if OpenAI is None:
-    raise AttributeError("OpenAI не найден — проверь версию пакета (должен быть >=1.0)")
+    raise AttributeError("OpenAI не найден — проверь версию пакета (>=1.0)")
 
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))  # Используем переменную из env (как в main.py)
+client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
 # ======== WEB SEARCH (DDGS) ======== (переносим сюда старые функции, но адаптируем для FC)
 def _call_search_api(search_query):
