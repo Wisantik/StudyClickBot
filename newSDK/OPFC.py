@@ -4,21 +4,89 @@ from bs4 import BeautifulSoup
 import requests
 import re
 
-import sys
 import os
+import sys
+import types
 
-# Абсолютный путь к newSDK
+# Убедимся, что newSDK в PYTHONPATH (чтобы локальная папка openai импортировалась)
 sdk_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '.'))
-
-# Добавляем newSDK в PYTHONPATH
 if sdk_path not in sys.path:
     sys.path.insert(0, sdk_path)
 
-# Теперь просто импортируем openai как пакет
-import openai
+# Попытка импортировать пакет openai (локальный в newSDK/openai или установленный)
+try:
+    import openai
+except Exception as e:
+    raise ImportError("Не удалось импортировать 'openai'. Убедись, что в newSDK/ есть папка openai или установи пакет: pip install --upgrade openai -t newSDK") from e
 
-OpenAI = openai.OpenAI
-client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+# Если это новая версия (v2+) с классом OpenAI — используем её прямо
+if hasattr(openai, "OpenAI"):
+    OpenAI = openai.OpenAI
+    client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+else:
+    # Legacy wrapper: оборачиваем старый openai (v<=1.x) чтобы обеспечить
+    # интерфейс client.chat.completions.create(...) и нормализованный ответ.
+    class _LegacyWrapper:
+        def __init__(self, api_key=None):
+            self._mod = openai
+            self._mod.api_key = api_key or os.getenv('OPENAI_API_KEY')
+
+            # создаём объект client.chat.completions.create
+            self.chat = types.SimpleNamespace()
+            self.chat.completions = types.SimpleNamespace(create=self._create_completion)
+
+        def _normalize_response(self, resp):
+            """
+            Преобразует ответ legacy (dict) в объект с .choices[0].message.content
+            и совместим с кодом, ожидающим object. Если resp уже объект — пытаемся вернуть как есть.
+            """
+            # Если это уже объект с атрибутом choices — возвращаем
+            if hasattr(resp, "choices"):
+                return resp
+
+            # Обычно legacy возвращает dict
+            if isinstance(resp, dict):
+                choices = []
+                for c in resp.get("choices", []):
+                    # c может содержать 'message' (dict) или 'text' (старые модели)
+                    if "message" in c and isinstance(c["message"], dict):
+                        msg_content = c["message"].get("content", c["message"].get("text", ""))
+                    else:
+                        # fallback к 'text' или пустой строке
+                        msg_content = c.get("text", "")
+                    choices.append(types.SimpleNamespace(message=types.SimpleNamespace(content=msg_content)))
+                return types.SimpleNamespace(choices=choices, raw=resp)
+            # fallback — вернуть оригинал упакованный
+            return types.SimpleNamespace(choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=str(resp)))], raw=resp)
+
+        def _create_completion(self, model=None, messages=None, **kwargs):
+            """
+            Вызывает legacy openai.ChatCompletion.create и возвращает нормализованный объект.
+            Поддерживает передачу messages как в новом API.
+            """
+            # Для старых версий используется openai.ChatCompletion.create
+            api = self._mod
+            # Некоторые старые версии требуют ключи в глобале (api.api_key установлен выше)
+            try:
+                resp = api.ChatCompletion.create(model=model, messages=messages, **kwargs)
+            except AttributeError:
+                # Если в крайне старой версии нет ChatCompletion, попробуем Completion (gpt-3-style)
+                resp = api.Completion.create(model=model, prompt=_messages_to_prompt(messages), **kwargs)
+
+            return self._normalize_response(resp)
+
+    def _messages_to_prompt(messages):
+        # конвертируем messages -> single prompt (если нужно для старых Completion)
+        if not messages:
+            return ""
+        parts = []
+        for m in messages:
+            role = m.get("role", "")
+            content = m.get("content", "")
+            parts.append(f"[{role}]\n{content}")
+        return "\n\n".join(parts)
+
+    client = _LegacyWrapper(api_key=os.getenv('OPENAI_API_KEY'))
 
 
 # ======== WEB SEARCH (DDGS) ======== (переносим сюда старые функции, но адаптируем для FC)
