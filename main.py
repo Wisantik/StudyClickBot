@@ -23,7 +23,8 @@ import re
 import base64
 load_dotenv()
 import glob
-from newSDK.OPFC import run_fc, needs_web_search
+from newSDK.OPFC import run_fc
+
 connect_to_db()
 
 MIN_TOKENS_THRESHOLD: Final = 5000
@@ -2283,75 +2284,56 @@ def process_text_message(text, chat_id) -> str:
     user_data = load_user_data(chat_id)
     if not user_data:
         return "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
+
     input_tokens = len(text)
 
-    # Проверка только для free
+    # ================= TOKEN LIMIT HANDLING ======================
     if user_data['subscription_plan'] == 'free':
         check_and_update_tokens(chat_id)
         user_data = load_user_data(chat_id)
         if user_data['daily_tokens'] < input_tokens:
             return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
 
-    # Для Plus — сразу True, без вызова update_user_tokens
     if user_data['subscription_plan'] in ['plus_trial', 'plus_month', 'plus']:
-        # Просто обновляем счётчики, но без лимита
         user_data['input_tokens'] += input_tokens
         save_user_data(user_data)
     elif not update_user_tokens(chat_id, input_tokens, 0):
         return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
 
+    # ================= LOAD ASSISTANT CONFIG ======================
     config = load_assistants_config()
     current_assistant = get_user_assistant(chat_id)
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
-    if user_data['web_search_enabled'] or needs_web_search(text):
-        if user_data['subscription_plan'] == 'free':
-            return "Веб-поиск доступен только с подпиской Plus. Выберите тариф: /pay"
-        
-        # Подготавливаем для FC (без старого поиска)
-        try:
-            ai_response = run_fc(user_id=chat_id, query=text, assistant_key=current_assistant)
-        except Exception as e:
-            return f"Ошибка веб-поиска: {e}"
-        
-        # Обновляем токены (примерно, т.к. FC может использовать больше; посчитайте реальные из response.usage если нужно)
-        output_tokens = len(ai_response)
-        if not update_user_tokens(chat_id, 0, output_tokens):
-            return "Ответ слишком длинный для вашего лимита токенов. Оформите подписку"
-        
-        user_data = load_user_data(chat_id)
-        user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001
-        save_user_data(user_data)
-        
-        # История (если нужно сохранить)
-        store_message_in_db(chat_id, "user", text)
-        store_message_in_db(chat_id, "assistant", ai_response)
-        
-        return ai_response
-
-    # Если веб-поиск не нужен, продолжайте с обычной генерацией (без изменений)
-    input_text = f"{prompt}\n\nUser: {text}\nAssistant:"
-    history = get_chat_history(chat_id)
-    history.append({"role": "user", "content": input_text})
+    # ================================================================
+    # 🧠 ВСЕГДА отправляем в run_fc()
+    # Model сама решит:
+    # - вызвать веб-поиск (tool)
+    # - или просто дать ответ
+    # ================================================================
     try:
-        chat_completion = openai.ChatCompletion.create(
-            model="gpt-5-mini-2025-08-07",
-            messages=history
+        ai_response = run_fc(
+            user_id=chat_id,
+            query=text,
+            prompt=prompt
         )
-        ai_response = chat_completion.choices[0].message.content
-        output_tokens = len(ai_response)
-        if not update_user_tokens(chat_id, 0, output_tokens):
-            return "Ответ слишком длинный для вашего лимита токенов. Оформите подписку"
-        user_data = load_user_data(chat_id)
-        user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001
-        save_user_data(user_data)
-        store_message_in_db(chat_id, "user", input_text)
-        store_message_in_db(chat_id, "assistant", ai_response)
-        return ai_response
     except Exception as e:
-        return f"Произошла ошибка: {str(e)}"
+        return f"Произошла ошибка генерации ответа: {e}"
 
+    # ================== TOKEN COUNT ====================
+    output_tokens = len(ai_response)
+    if not update_user_tokens(chat_id, 0, output_tokens):
+        return "Ответ слишком длинный для вашего лимита токенов. Оформите подписку"
+
+    user_data = load_user_data(chat_id)
+    user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001
+    save_user_data(user_data)
+
+    store_message_in_db(chat_id, "user", text)
+    store_message_in_db(chat_id, "assistant", ai_response)
+
+    return ai_response
  # Добавьте в начало файла, если нет
 
 @bot.message_handler(content_types=['photo'])
