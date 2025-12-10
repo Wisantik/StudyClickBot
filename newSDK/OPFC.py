@@ -188,7 +188,8 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-4o-mini"):
     )
 
     msg = resp.choices[0].message
-    tool_calls = msg.tool_calls
+    tool_calls = getattr(msg, "tool_calls", None)
+
 
     # Если поиск не вызван — возвращаем прямой ответ
     if not tool_calls:

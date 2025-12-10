@@ -2307,16 +2307,15 @@ def process_text_message(text, chat_id) -> str:
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
     # ================================================================
-    # 🧠 ВСЕГДА отправляем в run_fc()
-    # Model сама решит:
-    # - вызвать веб-поиск (tool)
-    # - или просто дать ответ
+    # 🧠 ВСЕГДА отправляем в run_fc() — модель сама решает,
+    # нужен ли web_search или нет
     # ================================================================
     try:
         ai_response = run_fc(
             user_id=chat_id,
             query=text,
-            prompt=prompt
+            prompt=prompt,
+            model="gpt-4o-mini"
         )
     except Exception as e:
         return f"Произошла ошибка генерации ответа: {e}"
@@ -2334,7 +2333,6 @@ def process_text_message(text, chat_id) -> str:
     store_message_in_db(chat_id, "assistant", ai_response)
 
     return ai_response
- # Добавьте в начало файла, если нет
 
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
