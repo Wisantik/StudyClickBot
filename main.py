@@ -51,7 +51,9 @@ logger = telebot.logger
 telebot.logger.setLevel(logging.INFO)
 pay_token = os.getenv('PAY_TOKEN')
 bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
-openai.api_key = os.getenv('OPENAI_API_KEY')
+from openai import OpenAI
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
 
 # Настройка ЮKassa
 Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
