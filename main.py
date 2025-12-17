@@ -24,7 +24,9 @@ import base64
 load_dotenv()
 import glob
 from newSDK.OPFC import run_fc
+
 connect_to_db()
+
 MIN_TOKENS_THRESHOLD: Final = 5000
 FREE_DAILY_TOKENS: Final = 10000
 PLAN_NAMES = {
@@ -32,6 +34,7 @@ PLAN_NAMES = {
     "plus_trial": "Пробная подписка Plus (3 дня)",
     "plus_month": "Подписка Plus (месяц)"
 }
+
 ASSISTANT_DESCRIPTIONS = {
     "universal_expert": "отвечает на любые вопросы.",
     "fintech": "советы по онлайн-банкам, платежам, переводам, приложениям для денег и инвестиций.",
@@ -43,15 +46,19 @@ ASSISTANT_DESCRIPTIONS = {
     "legal_advisor": "помощь в бытовых и деловых правовых вопросах, разбор договоров, защита прав потребителей.",
     "psychology_selfdev": "управление стрессом, повышение уверенности, мотивация и личностный рост."
 }
+
 logger = telebot.logger
 telebot.logger.setLevel(logging.INFO)
 pay_token = os.getenv('PAY_TOKEN')
 bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
 from openai import OpenAI
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+api_key = os.getenv("OPENAI_API_KEY")
+print(f"Используемый API-ключ: {api_key}")  # Это выведет ключ в консоль
+client = OpenAI(api_key=api_key)
 # Настройка ЮKassa
 Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
 Configuration.secret_key = os.getenv("YOOKASSA_SECRET_KEY")
+
 class ExceptionHandler:
     def handle(self, exception):
         if isinstance(exception, telebot.apihelper.ApiTelegramException):
@@ -77,7 +84,9 @@ class ExceptionHandler:
                     print(f"Исходная ошибка: {exception}")
                 return True
         return False
+
 bot.exception_handler = ExceptionHandler()
+
 def create_command_logs_table():
     conn = connect_to_db()
     with conn.cursor() as cursor:
@@ -91,6 +100,7 @@ def create_command_logs_table():
         """)
         conn.commit()
     conn.close()
+
 # ---------- Нормализация команд ----------
 ASSISTANT_COMMANDS = {
     "Консультант универсальный": "🤖 Ассистент: Универсальный",
@@ -103,6 +113,7 @@ ASSISTANT_COMMANDS = {
     "Юридический консультант": "🤖 Ассистент: Юридический",
     "Консультант по психологии и саморазвитию": "🤖 Ассистент: Психология и саморазвитие",
 }
+
 def normalize_command(command: str) -> str:
     """
     Возвращает человекочитаемое название команды или None (если команду нужно игнорировать).
@@ -110,7 +121,9 @@ def normalize_command(command: str) -> str:
     """
     if not command or not isinstance(command, str):
         return None
+
     cmd = command.strip()
+
     # Прямой маппинг (англ/рус/варианты)
     mapping = {
         "start": "start",
@@ -147,15 +160,18 @@ def normalize_command(command: str) -> str:
         "Эксперты": "👨‍💼 Эксперты",
         "experts_from_profile": "👨‍💼 Эксперты (из профиля)",
         # "referral": "🔗 Реферальная ссылка",
-        "search": None, # избегаем логирования "search" как мусор
-        "universal": "🤖 Ассистент: Универсальный" # Добавлено для /universal
+        "search": None,  # избегаем логирования "search" как мусор
+        "universal": "🤖 Ассистент: Универсальный"  # Добавлено для /universal
     }
+
     # при прямом совпадении
     if cmd in mapping:
         return mapping[cmd]
+
     # lang_xx -> язык (нормируем в один пункт)
     if cmd.startswith("lang") or cmd.startswith("language_") or cmd.startswith("lang_"):
         return "🌐 Выбрать язык"
+
     # select_assistant_<id> или select_assistant_<readable name>
     if cmd.startswith("select_assistant_") or cmd.startswith("selectassistant_"):
         aid = cmd.replace("select_assistant_", "").replace("selectassistant_", "")
@@ -174,6 +190,7 @@ def normalize_command(command: str) -> str:
         # если не нашли — подставляем тот текст, что в callback (человеческий)
         human = aid.replace("_", " ").strip()
         return f"🤖 Ассистент: {human.capitalize()}" if human else f"🤖 Ассистент: {aid}"
+
     # формат assistant:xyz (если где-то осталось)
     if cmd.startswith("assistant:"):
         aid = cmd.split(":", 1)[1]
@@ -185,6 +202,7 @@ def normalize_command(command: str) -> str:
         except Exception:
             pass
         return f"🤖 Ассистент: {aid}"
+
     # expert callbacks
     if cmd.startswith("expert_") or cmd.startswith("expert:"):
         # достаем id (число) если есть
@@ -193,19 +211,24 @@ def normalize_command(command: str) -> str:
             if p.isdigit():
                 return f"👨‍💼 Эксперт #{p}"
         return "👨‍💼 Эксперт"
+
     # если команда — уже человекочитаемая русская строка (с эмодзи или кириллицей) — сохраняем
     if any(ch.isalpha() for ch in cmd) and len(cmd) <= 200:
         # нормализуем пробелы
         return " ".join(cmd.split())
+
     # всё остальное — игнорируем
     return None
+
 @bot.message_handler(commands=['universal'])
 def set_universal_command(message):
     user_id = message.from_user.id
     assistant_id = 'universal_expert'
     set_user_assistant(user_id, assistant_id)
+
     # Сброс только для универсального
     clear_chat_history_for_user(user_id, message.chat.id)
+
     print(f"[INFO] Универсальный ассистент установлен для {user_id} через /universal с сбросом истории")
     config = load_assistants_config()
     assistant_info = config["assistants"][assistant_id]
@@ -216,6 +239,8 @@ def set_universal_command(message):
         f"📌 Описание:\n{description}"
     )
     bot.reply_to(message, text, parse_mode="HTML", reply_markup=create_main_menu())
+
+
 # ---------- Логирование команды (вставляет нормализованное значение) ----------
 def log_command(user_id: int, command: str):
     """
@@ -225,7 +250,8 @@ def log_command(user_id: int, command: str):
     try:
         normalized = normalize_command(command)
         if not normalized:
-            return # игнорируем мусор или технические варианты
+            return  # игнорируем мусор или технические варианты
+
         conn = connect_to_db()
         try:
             with conn.cursor() as cur:
@@ -239,6 +265,7 @@ def log_command(user_id: int, command: str):
     except Exception as e:
         # не даём падать боту из-за логов
         print(f"[ERROR] log_command error: {e} (orig='{command}')")
+
 def get_command_stats(period):
     conn = connect_to_db()
     with conn.cursor() as cursor:
@@ -269,6 +296,7 @@ def get_command_stats(period):
         stats = cursor.fetchall()
     conn.close()
     return stats
+
 def create_main_menu() -> types.ReplyKeyboardMarkup:
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     keyboard.add(
@@ -284,6 +312,7 @@ def create_main_menu() -> types.ReplyKeyboardMarkup:
         # types.KeyboardButton("🔗 Реферальная ссылка"),
     )
     return keyboard
+
 def setup_bot_commands():
     commands = [
         BotCommand("profile", "👤 Мой профиль"),
@@ -302,6 +331,7 @@ def setup_bot_commands():
         bot.set_my_commands(commands)
     except Exception as e:
         print(f"Ошибка при настройке команд: {e}")
+
 def create_price_menu(user_data) -> types.InlineKeyboardMarkup:
     buttons = []
     if not user_data.get('trial_used'):
@@ -323,6 +353,7 @@ def create_price_menu(user_data) -> types.InlineKeyboardMarkup:
         )
     ])
     return types.InlineKeyboardMarkup(keyboard=buttons)
+
 def create_subscription_required_keyboard():
     keyboard = types.InlineKeyboardMarkup()
     keyboard.add(types.InlineKeyboardButton(
@@ -330,6 +361,7 @@ def create_subscription_required_keyboard():
         callback_data="show_pay_menu"
     ))
     return keyboard
+
 def create_profile_menu() -> types.InlineKeyboardMarkup:
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
@@ -344,10 +376,12 @@ def create_profile_menu() -> types.InlineKeyboardMarkup:
         types.InlineKeyboardButton(text="📞 Поддержка", callback_data="show_support")
     )
     return keyboard
+
 def create_assistants_menu() -> types.InlineKeyboardMarkup:
     config = load_assistants_config()
     assistants = config.get("assistants", {})
     keyboard = types.InlineKeyboardMarkup(row_width=2)
+
     # Сначала добавляем универсального ассистента, если он есть
     if 'universal_expert' in assistants:
         assistant_info = assistants['universal_expert']
@@ -357,9 +391,10 @@ def create_assistants_menu() -> types.InlineKeyboardMarkup:
                 callback_data="select_assistant_universal_expert"
             )
         )
+
     # Затем добавляем остальные ассистенты
     for assistant_id, assistant_info in assistants.items():
-        if assistant_id != 'universal_expert': # Пропускаем универсального
+        if assistant_id != 'universal_expert':  # Пропускаем универсального
             callback_data = f"select_assistant_{assistant_id}"
             keyboard.add(
                 types.InlineKeyboardButton(
@@ -367,10 +402,12 @@ def create_assistants_menu() -> types.InlineKeyboardMarkup:
                     callback_data=callback_data
                 )
             )
+
     keyboard.add(
         types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
     )
     return keyboard
+
 def create_experts_menu() -> types.InlineKeyboardMarkup:
     conn = connect_to_db()
     experts = get_all_experts(conn)
@@ -386,9 +423,12 @@ def create_experts_menu() -> types.InlineKeyboardMarkup:
         types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
     )
     return keyboard
+
 load_assistants_config()
+
 REQUIRED_CHANNEL_ID = "@GuidingStarVlog"
 SUBSCRIPTION_CHECK_CACHE = {}
+
 def check_user_subscription(user_id):
     try:
         if user_id in SUBSCRIPTION_CHECK_CACHE:
@@ -403,6 +443,7 @@ def check_user_subscription(user_id):
     except Exception as e:
         print(f"Ошибка проверки подписки для {user_id}: {e}")
         return True
+
 def create_subscription_keyboard():
     keyboard = types.InlineKeyboardMarkup()
     url_button = types.InlineKeyboardButton(text="Подписаться на канал", url="https://t.me/GuidingStarVlog")
@@ -410,6 +451,7 @@ def create_subscription_keyboard():
     keyboard.add(url_button)
     keyboard.add(check_button)
     return keyboard
+
 @bot.callback_query_handler(func=lambda call: call.data == "check_subscription")
 def subscription_check_callback(call):
     user_id = call.from_user.id
@@ -448,29 +490,35 @@ def subscription_check_callback(call):
             "Вы всё ещё не подписаны. Подпишитесь для использования бота.",
             show_alert=True
         )
+
 @bot.callback_query_handler(func=lambda call: call.data == "show_pay_menu")
 def show_pay_menu_callback(call):
     log_command(call.from_user.id, "show_pay_menu")
     subscription_text = """Подписка Plus
+
 Доступ к GPT 5 - безлимит
 Чтение PDF файлов - безлимит
 Чтение ссылок - безлимит
 Интернет поиск - безлимит
 Обработка запросов голосовыми
+
 ⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
 Покупая, вы соглашаетесь с <a href="https://teletype.in/@st0ckholders_s/1X-lpJhx5rc">офертой</a>
 Отменить можно в любое время после оплаты
 По всем вопросам пишите сюда - <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
+
     user_data = load_user_data(call.from_user.id)
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         text=subscription_text,
         parse_mode="HTML",
-        disable_web_page_preview=True, # 🔹 отключает предпросмотр ссылок
+        disable_web_page_preview=True,  # 🔹 отключает предпросмотр ссылок
         reply_markup=create_price_menu(user_data)
     )
+
 from telebot.types import ReplyKeyboardRemove
+
 @bot.message_handler(commands=['assistants'])
 @bot.message_handler(func=lambda message: message.text == "🤖 Ассистенты")
 def assistants_button_handler(message):
@@ -479,15 +527,15 @@ def assistants_button_handler(message):
         bot.send_message(
             chat_id=message.chat.id,
             text="Выберите ассистента:",
-            reply_markup=create_assistants_menu(), # Inline-кнопки ассистентов
-            disable_notification=True, # Отключаем уведомления
-            disable_web_page_preview=True # Отключаем предварительный просмотр
+            reply_markup=create_assistants_menu(),  # Inline-кнопки ассистентов
+            disable_notification=True,  # Отключаем уведомления
+            disable_web_page_preview=True  # Отключаем предварительный просмотр
         )
         # Удаляем кастомную клавиатуру отдельным сообщением и сразу его удаляем
         msg = bot.send_message(
             chat_id=message.chat.id,
             text=".",
-            reply_markup=ReplyKeyboardRemove(), # Убираем кастомную клавиатуру
+            reply_markup=ReplyKeyboardRemove(),  # Убираем кастомную клавиатуру
             disable_notification=True
         )
         bot.delete_message(
@@ -508,53 +556,68 @@ def assistant_callback_handler(call):
         # Более строгий guard: Проверяем тип call и его ключевые атрибуты
         if not isinstance(call, types.CallbackQuery):
             print(f"[ERROR] Некорректный тип call в assistant_callback_handler: {type(call)}")
-            return # Выходим сразу
+            return  # Выходим сразу
+
         if not hasattr(call, 'data') or not call.data:
             print(f"[ERROR] Отсутствует data в call")
             return
+
         if not hasattr(call, 'from_user'):
             print(f"[ERROR] Отсутствует from_user в call")
             return
+
         # Проверяем, что from_user — это User объект, а не int или другой тип
         if not isinstance(call.from_user, types.User):
             print(f"[ERROR] call.from_user не User: тип {type(call.from_user)}")
             if hasattr(call, 'id'):
                 bot.answer_callback_query(call.id, "Ошибка обработки. Попробуйте снова.")
             return
+
         if not hasattr(call.from_user, 'id'):
             print(f"[ERROR] Отсутствует id в call.from_user")
             if hasattr(call, 'id'):
                 bot.answer_callback_query(call.id, "Ошибка обработки. Попробуйте снова.")
             return
+
         assistant_id = call.data.replace("select_assistant_", "")
         config = load_assistants_config()
+
         if assistant_id not in config["assistants"]:
             bot.answer_callback_query(call.id, "Ассистент не найден")
             return
-        user_id = call.from_user.id # Теперь безопасно
+
+        user_id = call.from_user.id  # Теперь безопасно
+
         # Логируем ассистента в нормализованном виде
         log_command(user_id, f"assistant:{assistant_id}")
+
         set_user_assistant(user_id, assistant_id)
+
         # Сброс истории только для универсального ассистента
         if assistant_id == 'universal_expert':
             clear_chat_history_for_user(call.from_user.id, getattr(call.message, "chat", {}).id if call.message else None)
             print(f"[INFO] Универсальный ассистент установлен для {user_id} с сбросом истории")
+
         assistant_info = config["assistants"][assistant_id]
         name = assistant_info.get("name", "Без названия")
         description = ASSISTANT_DESCRIPTIONS.get(assistant_id, "Описание отсутствует.")
+
         text = (
             f"✅ Вы выбрали: <b>{name}</b>\n\n"
             f"📌 Описание:\n{description}"
         )
+
         # Guard для call.message перед edit
         if not hasattr(call, 'message') or not call.message:
             print(f"[ERROR] Отсутствует message в call")
             bot.answer_callback_query(call.id, "Ошибка обновления сообщения.")
             return
+
         if not hasattr(call.message, 'chat') or not hasattr(call.message, 'message_id'):
             print(f"[ERROR] Отсутствуют chat/message_id в call.message")
             bot.answer_callback_query(call.id, "Ошибка обновления сообщения.")
             return
+
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
@@ -562,8 +625,10 @@ def assistant_callback_handler(call):
             parse_mode="HTML",
             reply_markup=None
         )
+
         # Безопасный answer_callback_query в конце
         bot.answer_callback_query(call.id, f"Ассистент {name} выбран")
+
     except Exception as e:
         print(f"[ERROR] Общая ошибка в assistant_callback_handler: {e}, call тип: {type(call)}, from_user тип: {type(getattr(call, 'from_user', None))}")
         try:
@@ -571,6 +636,7 @@ def assistant_callback_handler(call):
                 bot.answer_callback_query(call.id, "Ошибка. Попробуйте перезапустить выбор.")
         except Exception as answer_e:
             print(f"[ERROR] Ошибка в answer_callback_query: {answer_e}")
+
 @bot.message_handler(commands=['experts'])
 @bot.message_handler(func=lambda message: message.text == "👨‍💼 Эксперты")
 def experts_button_handler(message):
@@ -580,19 +646,25 @@ def experts_button_handler(message):
         "Выберите эксперта:",
         reply_markup=create_experts_menu()
     )
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("expert_"))
 def expert_callback_handler(call):
     print(f"[DEBUG] Expert callback data: {call.data}")
     try:
         expert_id = int(call.data.split("_")[1])
+
         log_command(call.from_user.id, f"expert:{expert_id}")
+
         conn = connect_to_db()
         expert = get_expert_by_id(conn, expert_id)
         conn.close()
+
         if not expert:
             bot.answer_callback_query(call.id, "Эксперт не найден")
             return
+
         expert_id, name, specialization, description, photo_url, telegram_username, contact_info, is_available = expert
+
         # 🟩 Возвращаем кнопку назад к списку экспертов, а не к профилю
         keyboard = types.InlineKeyboardMarkup()
         if telegram_username:
@@ -603,9 +675,11 @@ def expert_callback_handler(call):
         keyboard.add(
             types.InlineKeyboardButton(text="⬅️ Назад", callback_data="show_experts")
         )
+
         message_text = f"<b>{name}</b>\n<i>{specialization}</i>\n\n{description}\n\n"
         if contact_info:
             message_text += f"<b>Контактная информация:</b>\n{contact_info}"
+
         if photo_url:
             try:
                 bot.edit_message_media(
@@ -635,10 +709,14 @@ def expert_callback_handler(call):
                 parse_mode="HTML",
                 reply_markup=keyboard
             )
+
         bot.answer_callback_query(call.id)
+
     except ValueError:
         print(f"[ERROR] Неверный формат expert_id в callback: {call.data}")
         bot.answer_callback_query(call.id, "Ошибка при выборе эксперта")
+
+
 import re
 import os
 import tempfile
@@ -648,7 +726,9 @@ import time
 import yt_dlp
 from youtube_transcript_api import YouTubeTranscriptApi, NoTranscriptFound, TranscriptsDisabled
 from tenacity import retry, stop_after_attempt, wait_fixed, wait_exponential
+
 _YT_RE = re.compile(r"(?:https?://)?(?:www\.)?(?:youtube\.com/watch\?v=|youtu\.be/)(?P<id>[A-Za-z0-9_-]{11})")
+
 def chunk_text(text, size=2500, overlap=200):
     text = text.strip()
     chunks = []
@@ -658,7 +738,9 @@ def chunk_text(text, size=2500, overlap=200):
         chunks.append(text[start:end])
         start = end - overlap if end - overlap > start else end
     return chunks
-import concurrent.futures # Добавь в импорт
+
+import concurrent.futures  # Добавь в импорт
+
 @bot.message_handler(func=lambda message: bool(_YT_RE.search(message.text or "")))
 def youtube_link_handler(message):
     user_id = message.from_user.id
@@ -666,17 +748,22 @@ def youtube_link_handler(message):
     if user_data['subscription_plan'] == 'free':
         bot.reply_to(message, "Для суммаризации YouTube требуется подписка Plus. Выберите тариф: /pay")
         return
+
     text = message.text or ""
     match = _YT_RE.search(text)
     if not match:
         return
+
     video_id = match.group("id")
     video_url = f"https://youtu.be/{video_id}"
     print(f"[YouTube] Получена ссылка: {video_url}")
+
     # Уведомление сразу
     bot.reply_to(message, "🎥 Суммаризация видео началась... Это может занять 1-5 минут. Ждите!")
     bot.send_chat_action(message.chat.id, "typing")
+
     transcript_text = ""
+
     # 1) Transcript API с улучшенным retry (основной быстрый вариант)
     @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=2, max=10))
     def get_transcript_retry():
@@ -687,12 +774,14 @@ def youtube_link_handler(message):
             return transcript.fetch()
         except:
             raise
+
     try:
         transcript = get_transcript_retry()
         transcript_text = ' '.join([item['text'] for item in transcript]).strip()
         print(f"[YouTube] Transcript API: Получено {len(transcript_text)} символов")
     except Exception as e:
         print(f"[YouTube] Transcript API ошибка: {e}. Переходим к Whisper.")
+
     # 2) Если нет — сразу Whisper (без yt-dlp)
     if not transcript_text:
         print("[YouTube] Нет субтитров, аудио + Whisper...")
@@ -702,90 +791,103 @@ def youtube_link_handler(message):
                 'format': 'bestaudio/best',
                 'outtmpl': audio_template,
                 'quiet': True,
-                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '64'}], # Уменьшил качество для скорости
-                'sleep_interval': 5, # Задержка для rate limit
+                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '64'}],  # Уменьшил качество для скорости
+                'sleep_interval': 5,  # Задержка для rate limit
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             }
             try:
                 with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
                     ydl.download([video_url])
+
                 audio_candidates = glob.glob(os.path.join(tmpdir, f"{video_id}*.mp3"))
                 if not audio_candidates:
                     raise FileNotFoundError("Аудио не скачано")
                 audio_path = audio_candidates[0]
+
                 # Разбиение на чанки по 300 сек (5 мин) для ускорения
                 chunk_dir = os.path.join(tmpdir, "chunks")
                 os.makedirs(chunk_dir, exist_ok=True)
                 ffmpeg_split_cmd = ["ffmpeg", "-i", audio_path, "-f", "segment", "-segment_time", "300", "-c", "copy", os.path.join(chunk_dir, "chunk%03d.mp3")]
                 subprocess.run(ffmpeg_split_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 chunks = sorted(glob.glob(os.path.join(chunk_dir, "chunk*.mp3")))
+
                 # Параллельная транскрипция чанков
                 transcript_parts = []
-                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor: # До 4 потоков
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:  # До 4 потоков
                     futures = []
                     for i, chunk_path in enumerate(chunks, 1):
                         print(f"[YouTube] Whisper chunk {i}/{len(chunks)} queued")
                         futures.append(executor.submit(transcribe_audio_chunk, chunk_path, tmpdir, i))
+
                     for future in concurrent.futures.as_completed(futures):
                         transcript_parts.append(future.result())
+
                 transcript_text = ' '.join(transcript_parts).strip()
                 print(f"[YouTube] Whisper полная длина: {len(transcript_text)}")
             except Exception as e:
                 print(f"[YouTube] Whisper ошибка: {e}")
                 bot.reply_to(message, "❌ Не удалось получить текст видео. Попробуй позже.")
                 return
+
     if not transcript_text:
         bot.reply_to(message, "❌ Текст видео недоступен.")
         return
+
     # Суммаризация (без .txt файла)
     bot.reply_to(message, "✍️ Суммаризирую...")
     chunks = chunk_text(transcript_text)
     summaries = []
     for i, chunk in enumerate(chunks, 1):
         try:
-            resp = client.chat.completions.create(
-                model="gpt-4o-mini",
+            resp = openai.ChatCompletion.create(
+                model="gpt-5.1-2025-11-13",
                 messages=[
                     {"role": "system", "content": "Сделай краткий конспект фрагмента видео."},
                     {"role": "user", "content": chunk}
                 ],
-                max_tokens=500 # Уменьшил для скорости
+                max_tokens=500  # Уменьшил для скорости
             )
-            summaries.append(resp.choices[0].message.content.strip())
+            summaries.append(resp.choices[0].message['content'].strip())
         except Exception as e:
             print(f"[YouTube] Чанк {i} ошибка: {e}")
             summaries.append("Ошибка обработки фрагмента.")
+
     # Итоговая суммаризация
     try:
         combined = "\n\n".join(summaries)
-        resp_final = client.chat.completions.create(
-            model="gpt-4o-mini",
+        resp_final = openai.ChatCompletion.create(
+            model="gpt-5.1-2025-11-13",
             messages=[
                 {"role": "system", "content": "Объедини конспекты в coherent итоговый конспект видео."},
                 {"role": "user", "content": combined}
             ],
-            max_tokens=800 # Уменьшил
+            max_tokens=800  # Уменьшил
         )
-        final_summary = resp_final.choices[0].message.content.strip()
+        final_summary = resp_final.choices[0].message['content'].strip()
     except Exception as e:
         print(f"[YouTube] Финал ошибка: {e}")
         final_summary = "\n\n".join(summaries)
+
     bot.reply_to(
         message,
         f"📺 <b>Видео:</b> {video_url}\n\n<b>🎯 Краткий конспект:</b>\n\n{final_summary}",
         parse_mode="HTML"
     )
+
 # Вспомогательная функция для параллелизма
 def transcribe_audio_chunk(chunk_path, tmpdir, i):
     processed_chunk = os.path.join(tmpdir, f"chunk{i}_conv.wav")
-    ffmpeg_cmd = ["ffmpeg", "-y", "-i", chunk_path, "-ac", "1", "-ar", "16000", "-b:a", "32k", processed_chunk] # Низкий bitrate для скорости
+    ffmpeg_cmd = ["ffmpeg", "-y", "-i", chunk_path, "-ac", "1", "-ar", "16000", "-b:a", "32k", processed_chunk]  # Низкий bitrate для скорости
     subprocess.run(ffmpeg_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(3))
     def transcribe_chunk():
         with open(processed_chunk, "rb") as f:
-            return client.audio.transcriptions.create(model="whisper-1", file=f, language="ru")
+            return openai.Audio.transcribe("whisper-1", f, language="ru")
+
     obj = transcribe_chunk()
-    return obj.text.strip()
+    return obj['text'].strip()
+
 @bot.message_handler(commands=['universal'])
 @bot.message_handler(func=lambda message: message.text == "🌍 Универсальный ассистент")
 def universal_assistant_handler(message):
@@ -793,44 +895,58 @@ def universal_assistant_handler(message):
         # Более строгий guard: Проверяем тип message и его ключевые атрибуты
         if not isinstance(message, types.Message):
             print(f"[ERROR] Некорректный тип message в universal_assistant_handler: {type(message)}")
-            return # Выходим сразу
+            return  # Выходим сразу
+
         if not hasattr(message, 'from_user'):
             print(f"[ERROR] Отсутствует from_user в message")
             return
+
         # Проверяем, что from_user — это User объект, а не int или другой тип
         if not isinstance(message.from_user, types.User):
             print(f"[ERROR] message.from_user не User: тип {type(message.from_user)}")
             return
+
         if not hasattr(message.from_user, 'id'):
             print(f"[ERROR] Отсутствует id в message.from_user")
             return
+
         if not hasattr(message, 'chat'):
             print(f"[ERROR] Отсутствует chat в message")
             return
-        user_id = message.from_user.id # Теперь безопасно
+
+        user_id = message.from_user.id  # Теперь безопасно
         assistant_id = 'universal_expert'
+
         # Логируем (если log_command используется)
         log_command(user_id, "universal")
+
         # Устанавливаем через общую функцию (БД + Redis)
         set_user_assistant(user_id, assistant_id)
+
         # Сброс истории только для универсального
         clear_chat_history_for_user(user_id, message.chat.id)
+
         print(f"[INFO] Универсальный ассистент установлен для {user_id} через /universal с сбросом истории")
+
         config = load_assistants_config()
         assistant_info = config["assistants"].get(assistant_id, {})
         name = assistant_info.get("name", "Универсальный эксперт")
         description = ASSISTANT_DESCRIPTIONS.get(assistant_id, "Отвечает на любые вопросы.")
+
         text = (
             f"✅ Вы выбрали: <b>{name}</b>\n\n"
             f"📌 Описание:\n{description}"
         )
+
         bot.reply_to(message, text, parse_mode="HTML", reply_markup=create_main_menu())
+
     except Exception as e:
         print(f"[ERROR] Общая ошибка в universal_assistant_handler: {e}, message тип: {type(message)}, from_user тип: {type(getattr(message, 'from_user', None))}")
         try:
             bot.reply_to(message, "Ошибка. Попробуйте позже.", reply_markup=create_main_menu())
         except Exception as reply_e:
             print(f"[ERROR] Ошибка в reply_to: {reply_e}")
+
 @bot.message_handler(func=lambda message: message.text == "Назад")
 def back_button_handler(message):
     log_command(message.from_user.id, "Назад")
@@ -839,48 +955,59 @@ def back_button_handler(message):
         "Вы вернулись в главное меню",
         reply_markup=create_main_menu()
     )
+
 @bot.message_handler(func=lambda message: message.text == "👤 Мой профиль")
 def profile_button_handler(message):
     log_command(message.from_user.id, "Мой профиль")
     show_profile(message)
+
 @bot.message_handler(commands=["pay"])
 @bot.message_handler(func=lambda message: message.text == "💳 Подписка")
 def get_pay(message):
     log_command(message.from_user.id, "pay")
     subscription_text = """Подписка Plus
+
 Доступ к GPT 5 - безлимит
 Чтение PDF файлов - безлимит
 Чтение ссылок - безлимит
 Интернет поиск - безлимит
 Обработка запросов голосовыми
+
 ⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
 Покупая, вы соглашаетесь с <a href="https://teletype.in/@st0ckholders_s/1X-lpJhx5rc">офертой</a>
 Отменить можно в любое время после оплаты
 По всем вопросам пишите сюда — <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
+
     user_data = load_user_data(message.from_user.id)
     bot.send_message(
         message.chat.id,
         subscription_text,
         parse_mode="HTML",
-        disable_web_page_preview=True, # 🔹 отключает предпросмотр ссылок
+        disable_web_page_preview=True,  # 🔹 отключает предпросмотр ссылок
         reply_markup=create_price_menu(user_data)
     )
+
+
 # ... (остальной код остаётся без изменений)
 import threading
+
 def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval: int = 180):
     def run():
         for attempt in range(max_checks):
             try:
                 payment = Payment.find_one(payment_id)
                 print(f"[DEBUG] Проверка платежа {payment_id} для {user_id}: status={payment.status}")
+
                 if payment.status == "succeeded":
                     save_payment_method_for_user(user_id, payment.payment_method.id)
                     set_user_subscription(user_id, "plus_trial")
+
                     # 🔹 Отмечаем, что триал уже использован
                     user_data = load_user_data(user_id)
                     if user_data:
                         user_data['trial_used'] = True
                         save_user_data(user_data)
+
                     bot.send_message(
                         user_id,
                         "✅ Пробная подписка Plus активирована на 3 дня!",
@@ -896,14 +1023,20 @@ def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval
                     return
             except Exception as e:
                 print(f"[ERROR] Ошибка проверки платежа {payment_id} для {user_id}: {e}")
+
             time.sleep(interval)
+
         bot.send_message(
             user_id,
             "⚠️ Мы не получили подтверждение оплаты в течение 12 минут. "
             "Если деньги списались, напишите в поддержку: https://t.me/mon_tti1",
             reply_markup=create_main_menu()
         )
+
     threading.Thread(target=run, daemon=True).start()
+
+
+
 @bot.callback_query_handler(func=lambda callback: callback.data in ["buy_trial", "buy_month"])
 def buy_subscription(callback):
     user_id = callback.from_user.id
@@ -934,7 +1067,7 @@ def buy_subscription(callback):
                     "customer": {"email": "sg050@yandex.ru"},
                     "items": [{
                         "description": "Пробная подписка Plus (3 дня)",
-                        "quantity": "1.00", # Исправлено на строку
+                        "quantity": "1.00",  # Исправлено на строку
                         "amount": {"value": price, "currency": "RUB"},
                         "vat_code": 1
                     }]
@@ -945,8 +1078,10 @@ def buy_subscription(callback):
             payment = Payment.create(payment_params)
             print(f"[DEBUG] Платёж создан: id={payment.id}, status={payment.status}, confirmation_url={payment.confirmation.confirmation_url}")
             save_payment_id_for_user(user_id, payment.id)
+
             # 🔹 запускаем мониторинг только этого платежа
             monitor_payment(user_id, payment.id)
+
             bot.send_message(
                 callback.message.chat.id,
                 f"Оплатите по ссылке: {payment.confirmation.confirmation_url}",
@@ -975,9 +1110,11 @@ def buy_subscription(callback):
             reply_markup=create_main_menu()
         )
         bot.answer_callback_query(callback.id)
+
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def pre_checkout_query_handler(pre_checkout_query):
     bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+
 @bot.message_handler(content_types=['successful_payment'])
 def successful_payment_handler(message):
     user_id = message.from_user.id
@@ -995,6 +1132,7 @@ def successful_payment_handler(message):
             "Ошибка: неизвестный тип платежа.",
             reply_markup=create_main_menu()
         )
+
 def check_pending_payments():
     conn = connect_to_db()
     try:
@@ -1024,6 +1162,7 @@ def check_pending_payments():
         print(f"[ERROR] Ошибка при проверке платежей: {e}")
     finally:
         conn.close()
+
 def check_auto_renewal():
     conn = connect_to_db()
     try:
@@ -1060,6 +1199,7 @@ def check_auto_renewal():
                         print(f"[DEBUG] Создание платежа автопродления для user_id={user_id}: {payment_params}")
                         payment = Payment.create(payment_params)
                         print(f"[DEBUG] Платёж автопродления создан: id={payment.id}, status={payment.status}")
+
                         if payment.status == "succeeded":
                             set_user_subscription(user_id, "plus_month")
                             bot.send_message(
@@ -1071,12 +1211,15 @@ def check_auto_renewal():
                             reason = None
                             if hasattr(payment, "cancellation_details") and payment.cancellation_details:
                                 reason = getattr(payment.cancellation_details, "reason", None)
+
                             msg = f"❌ Не удалось продлить подписку.\nСтатус: {payment.status}"
                             if reason:
                                 msg += f"\nПричина: {reason}"
                             msg += "\nПожалуйста, оплатите вручную: /pay"
+
                             # 🔹 Уведомляем пользователя
                             bot.send_message(user_id, msg, reply_markup=create_main_menu())
+
                             # 🔹 Отправляем уведомление админу
                             try:
                                 bot.send_message(
@@ -1087,8 +1230,10 @@ def check_auto_renewal():
                                 )
                             except Exception as e:
                                 print(f"[WARN] Не удалось уведомить админа: {e}")
+
                             # 🔹 Сбрасываем подписку на free
                             set_user_subscription(user_id, "free")
+
                     except Exception as e:
                         print(f"[ERROR] Ошибка автопродления для user_id={user_id}: {e}")
                         bot.send_message(
@@ -1109,9 +1254,13 @@ def check_auto_renewal():
         print(f"[ERROR] Ошибка при проверке автопродления: {e}")
     finally:
         conn.close()
+
+
 schedule.every(5).minutes.do(check_pending_payments)
 schedule.every().day.at("00:00").do(check_auto_renewal)
+
 from telebot.types import ReplyKeyboardRemove
+
 @bot.callback_query_handler(func=lambda call: call.data in ["show_assistants", "show_experts", "show_support", "cancel_subscription", "back_to_profile"])
 def profile_menu_callback_handler(call):
     log_command(call.from_user.id, call.data)
@@ -1126,9 +1275,11 @@ def profile_menu_callback_handler(call):
         )
         bot.answer_callback_query(call.id)
         return
+
     elif call.data == "show_experts":
         text = "Выберите эксперта:"
         markup = create_experts_menu()
+
         # 🩵 Если текущее сообщение — фото, Telegram не позволит его редактировать
         if getattr(call.message, "content_type", "") == "photo":
             bot.send_message(
@@ -1151,6 +1302,8 @@ def profile_menu_callback_handler(call):
                     text=text,
                     reply_markup=markup
                 )
+
+
     elif call.data == "show_experts":
         bot.edit_message_text(
             chat_id=call.message.chat.id,
@@ -1158,6 +1311,7 @@ def profile_menu_callback_handler(call):
             text="Выберите эксперта:",
             reply_markup=create_experts_menu()
         )
+
     elif call.data == "show_support":
         bot.edit_message_text(
             chat_id=call.message.chat.id,
@@ -1168,6 +1322,7 @@ def profile_menu_callback_handler(call):
                 types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
             )
         )
+
     elif call.data == "cancel_subscription":
         if not user_data or user_data['subscription_plan'] == 'free':
             bot.edit_message_text(
@@ -1197,6 +1352,7 @@ def profile_menu_callback_handler(call):
                     types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
                 )
             )
+
     elif call.data == "back_to_profile":
         subscription_end_date = user_data.get('subscription_end_date')
         remaining_days = None
@@ -1205,28 +1361,36 @@ def profile_menu_callback_handler(call):
             remaining_days = (subscription_end_date - today).days
             if remaining_days < 0:
                 remaining_days = 0
+
         # 🔹 Веб-поиск
         web_search_status = "включён" if user_data['web_search_enabled'] else \
             "выключен" if user_data['subscription_plan'].startswith('plus_') else \
             "недоступен (требуется подписка Plus)"
+
         # 🔹 Квота токенов
         if user_data['subscription_plan'] in ['plus_trial', 'plus_month']:
             quota_text = "GPT-5: безлимит ✅"
         else:
             quota_text = f"GPT-5: {user_data['daily_tokens']} символов"
+
         profile_text = f"""
 ID: {user_id}
+
 Ваш текущий тариф: {PLAN_NAMES.get(user_data['subscription_plan'], user_data['subscription_plan'])}
 """
         if user_data['subscription_plan'] != 'free' and remaining_days is not None:
             profile_text += f"Подписка активна ещё {remaining_days} дней\n"
+
         profile_text += f"""
 Веб-поиск: {web_search_status}
+
 Оставшаяся квота:
 {quota_text}
+
 🏷 Детали расходов:
 💰 Общая сумма: ${user_data['total_spent']:.4f}
 """
+
         try:
             # 🩵 Если сообщение было фото — Telegram не даст его редактировать, отправляем новое
             if call.message.content_type == "photo":
@@ -1249,6 +1413,8 @@ ID: {user_id}
                 text=profile_text,
                 reply_markup=create_profile_menu()
             )
+
+
     bot.answer_callback_query(call.id)
 # helper — делает реальную очистку по user_id
 def clear_chat_history_for_user(user_id: int, chat_id: int | None = None):
@@ -1269,12 +1435,14 @@ def clear_chat_history_for_user(user_id: int, chat_id: int | None = None):
                 print(f"[WARN] Не удалось отправить уведомление об очистке для {user_id}: {e}")
     except Exception as e:
         print(f"[ERROR] clear_chat_history_for_user({user_id}) failed: {e}")
+
 # обработчик сообщения теперь вызывает helper
 @bot.message_handler(commands=['new'])
 @bot.message_handler(func=lambda message: message.text == "🗑 Очистить историю чата")
 def clear_chat_history_handler(message):
     log_command(message.from_user.id, "new")
     clear_chat_history_for_user(message.from_user.id, message.chat.id)
+
 def create_language_menu():
     keyboard = types.InlineKeyboardMarkup(row_width=3)
     languages = [
@@ -1298,6 +1466,7 @@ def create_language_menu():
         types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
     )
     return keyboard
+
 @bot.message_handler(commands=['language'])
 @bot.message_handler(func=lambda message: message.text == "🌐 Выбрать язык")
 def language_handler(message):
@@ -1307,6 +1476,7 @@ def language_handler(message):
         "Выберите язык:",
         reply_markup=create_language_menu()
     )
+
 @bot.callback_query_handler(func=lambda call: call.data.startswith("lang_"))
 def language_callback_handler(call):
     lang_code = call.data.split("_")[-1]
@@ -1333,6 +1503,7 @@ def language_callback_handler(call):
             )
         )
     bot.answer_callback_query(call.id)
+
 @bot.message_handler(commands=['search'])
 @bot.message_handler(func=lambda message: message.text == "🔍 Интернет поиск")
 def search_handler(message):
@@ -1355,11 +1526,13 @@ def search_handler(message):
     log_command(user_id, f"search_{'on' if new_state else 'off'}")
     status_text = "включён" if new_state else "выключен"
     bot.reply_to(message, f"Веб-поиск {status_text}.", reply_markup=create_main_menu())
+
 @bot.message_handler(commands=['support'])
 @bot.message_handler(func=lambda message: message.text == "📞 Поддержка")
 def support_handler(message):
     log_command(message.from_user.id, "support")
     bot.reply_to(message, "Напишите сюда - <a href='https://t.me/mon_tti1'>t.me/mon_tti1</a>", parse_mode="HTML", reply_markup=create_main_menu())
+
 @bot.message_handler(commands=['cancel_subscription'])
 @bot.message_handler(func=lambda message: message.text == "❌ Отмена подписки")
 def cancel_subscription_handler(message):
@@ -1379,6 +1552,7 @@ def cancel_subscription_handler(message):
     cur.close()
     conn.close()
     bot.reply_to(message, "Автопродление отключено. Ваша подписка останется активной.", reply_markup=create_main_menu())
+
 def check_and_update_tokens(user_id):
     conn = connect_to_db()
     cur = conn.cursor()
@@ -1392,8 +1566,10 @@ def check_and_update_tokens(user_id):
         cur.close()
         conn.close()
         return
+
     tokens, current_plan, last_update, subscription_end_date = user_data
     current_date = datetime.datetime.now().date()
+
     # 🔹 Если подписка закончилась → переводим на free
     if current_plan != 'free' and subscription_end_date and current_date > subscription_end_date:
         print(f"[DEBUG] Подписка user_id={user_id} истекла, перевод на free")
@@ -1411,12 +1587,14 @@ def check_and_update_tokens(user_id):
             "Пожалуйста, выберите новый тариф: /pay",
             reply_markup=create_main_menu()
         )
+
     # 🔹 Если тариф free → начисляем токены раз в день
     if current_plan == 'free':
         if isinstance(last_update, str):
             last_update_date = datetime.datetime.strptime(last_update, '%Y-%m-%d').date()
         else:
             last_update_date = last_update
+
         if current_date > last_update_date:
             print(f"[DEBUG] Обновление токенов для user_id={user_id}: {FREE_DAILY_TOKENS}")
             cur.execute("""
@@ -1425,16 +1603,19 @@ def check_and_update_tokens(user_id):
                     last_token_update = %s
                 WHERE user_id = %s
             """, (FREE_DAILY_TOKENS, current_date, user_id))
+
     # 🔹 Для платных тарифов токены не ограничиваем (ставим "бесконечность")
     elif current_plan in ['plus_trial', 'plus_month']:
         cur.execute("""
             UPDATE users
-            SET daily_tokens = 999999999 -- символизируем "безлимит"
+            SET daily_tokens = 999999999  -- символизируем "безлимит"
             WHERE user_id = %s
         """, (user_id,))
+
     conn.commit()
     cur.close()
     conn.close()
+
 @bot.message_handler(commands=['profile'])
 @bot.message_handler(func=lambda message: message.text == "👤 Мой профиль")
 def show_profile(message):
@@ -1444,6 +1625,7 @@ def show_profile(message):
     if not user_data:
         bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.", reply_markup=create_main_menu())
         return
+
     subscription_end_date = user_data.get('subscription_end_date')
     remaining_days = None
     if user_data['subscription_plan'] != 'free' and subscription_end_date:
@@ -1451,33 +1633,46 @@ def show_profile(message):
         remaining_days = (subscription_end_date - today).days
         if remaining_days < 0:
             remaining_days = 0
+
     # 🔹 Веб-поиск
     web_search_status = "включён" if user_data['web_search_enabled'] else \
         "выключен" if user_data['subscription_plan'].startswith('plus_') else \
         "недоступен (требуется подписка Plus)"
+
     # 🔹 Квота токенов
     if user_data['subscription_plan'] in ['plus_trial', 'plus_month']:
         quota_text = "GPT-5: безлимит ✅"
     else:
         quota_text = f"GPT-5: {user_data['daily_tokens']} символов"
+
     profile_text = f"""
 ID: {user_id}
+
 Ваш текущий тариф: {PLAN_NAMES.get(user_data['subscription_plan'], user_data['subscription_plan'])}
 """
     if user_data['subscription_plan'] != 'free' and remaining_days is not None:
         profile_text += f"Подписка активна ещё {remaining_days} дней\n"
+
     profile_text += f"""
 Веб-поиск: {web_search_status}
+
 Оставшаяся квота:
 {quota_text}
+
 🏷 Детали расходов:
 💰 Общая сумма: ${user_data['total_spent']:.4f}
+
 """
     bot.send_message(message.chat.id, profile_text, reply_markup=create_profile_menu())
+
+
 ADMIN_IDS = [998107476, 741831495]
+
+
 # ---------- КЭШ ДЛЯ ASSISTANTS (чтобы не дергать Redis/БД на каждый вызов) ----------
 _ASSISTANTS_CACHE = {"ts": 0, "data": {"assistants": {}}}
-_ASSISTANTS_TTL = 30 # секунды кэша
+_ASSISTANTS_TTL = 30  # секунды кэша
+
 def get_assistants_cached():
     """Возвращает конфигурацию ассистентов, кэшируя результат на _ASSISTANTS_TTL секунд."""
     try:
@@ -1493,6 +1688,8 @@ def get_assistants_cached():
     except Exception as e:
         print(f"[WARN] get_assistants_cached error: {e}")
     return {"assistants": {}}
+
+
 # ---------- Окончательная функция показа статистики (без конфликтов) ----------
 @bot.message_handler(commands=['statsadmin12'])
 def show_stats_admin(message):
@@ -1500,8 +1697,10 @@ def show_stats_admin(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "У вас нет прав для просмотра статистики.", reply_markup=create_main_menu())
         return
+
     # логируем сам запрос админа (он будет нормализован функцией log_command)
     log_command(message.from_user.id, "statsadmin12")
+
     # получаем сырые статистики из БД (списки кортежей (command, count))
     try:
         week_raw = get_command_stats('week')
@@ -1511,6 +1710,7 @@ def show_stats_admin(message):
         print(f"[ERROR] Не удалось получить статистику: {e}")
         bot.reply_to(message, "Ошибка получения статистики.", reply_markup=create_main_menu())
         return
+
     # агрегируем и нормализуем (используем normalize_command, но normalize_command читает кэш)
     def aggregate(raw):
         agg = {}
@@ -1520,9 +1720,11 @@ def show_stats_admin(message):
                 continue
             agg[norm] = agg.get(norm, 0) + int(cnt)
         return agg
+
     week = aggregate(week_raw)
     month = aggregate(month_raw)
     year = aggregate(year_raw)
+
     # группировка для читаемости
     def group_stats(agg):
         groups = {
@@ -1556,9 +1758,11 @@ def show_stats_admin(message):
             else:
                 groups["Другое"][cmd] = cnt
         return groups
+
     wk_g = group_stats(week)
     mo_g = group_stats(month)
     yr_g = group_stats(year)
+
     # форматирование
     def format_group(title, d):
         if not d:
@@ -1569,6 +1773,7 @@ def show_stats_admin(message):
             s += f"• {name}: {cnt} раз\n"
         s += "\n"
         return s
+
     def format_report(period_title, groups_dict):
         header = f"<b>{period_title}</b>\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         order = ["Профиль", "Ассистенты", "Подписки", "Веб-поиск", "Поддержка", "Эксперты", "Платежи/прочее", "Админ/системное", "Другое"]
@@ -1576,11 +1781,13 @@ def show_stats_admin(message):
         for g in order:
             body += format_group(g, groups_dict.get(g, {}))
         return header + body + "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+
     reports = [
         format_report("📅 За неделю:", wk_g),
         format_report("📅 За месяц:", mo_g),
         format_report("📅 За год:", yr_g)
     ]
+
     # отправляем аккуратно (разбитие длинных сообщений)
     for rpt in reports:
         try:
@@ -1596,10 +1803,12 @@ def show_stats_admin(message):
                 bot.reply_to(message, rpt, reply_markup=create_main_menu())
             except Exception as e2:
                 print(f"[ERROR] fallback send failed: {e2}")
+
 @bot.message_handler(func=lambda message: message.text == "Отменить")
 def cancel_subscription(message):
     log_command(message.from_user.id, "Отменить")
     bot.send_message(message.chat.id, "Вы отменили выбор тарифного плана.", reply_markup=create_main_menu())
+
 @bot.message_handler(commands=["start", "help"])
 def send_welcome(message):
     log_command(message.from_user.id, "start")
@@ -1638,9 +1847,11 @@ def send_welcome(message):
     message.chat.id,
     """👋 Привет
 Я — Finny, твой ИИ-финансовый помощник. Уже сегодня ты можешь:
+
 🧮 Составить бюджет и найти +10% свободных денег — под твои доходы и цели
 🛡 Настроить телефон ребёнка за 5 минут — пошаговые настройки и советы
 🏦 Снизить платёж по ипотеке и сэкономить до 300 тыс — расчёт выгоды за 1 минуту
+
 Что ещё я умею:
 📺 <a href="https://telegra.ph/Moj-post-08-12">Видео-инструкция — как работать с ботом</a>
 🎙 Голосовой чат — общайтесь с ботом голосом
@@ -1652,6 +1863,7 @@ def send_welcome(message):
 🖼 Умеет распознавать картинки
 🎥 Умеет суммаризировать YouTube-видео
 📝 Запоминает контекст диалога
+
 🔺 Наши соцсети:
 Telegram — https://t.me/GuidingStarVlog
 VK — https://vk.com/guidingstarvlog
@@ -1662,14 +1874,17 @@ VK — https://vk.com/guidingstarvlog
 # @bot.message_handler(commands=['referral'])
 # @bot.message_handler(func=lambda message: message.text == "🔗 Реферальная ссылка")
 # def send_referral_link(message):
-# log_command(message.from_user.id, "referral")
-# user_id = message.from_user.id
-# referral_link = generate_referral_link(user_id)
-# bot.reply_to(message, f"Ваша реферальная ссылка: {referral_link}", reply_markup=create_main_menu())
+#     log_command(message.from_user.id, "referral")
+#     user_id = message.from_user.id
+#     referral_link = generate_referral_link(user_id)
+#     bot.reply_to(message, f"Ваша реферальная ссылка: {referral_link}", reply_markup=create_main_menu())
+
 def typing(chat_id):
     while True:
         bot.send_chat_action(chat_id, "typing")
         time.sleep(5)
+
+
 def get_all_users():
     """Возвращает список всех user_id из базы"""
     conn = connect_to_db()
@@ -1684,49 +1899,69 @@ def get_all_users():
         cur.close()
         conn.close()
     return users
+
 @bot.message_handler(commands=['broadcast'])
 def broadcast(message):
     # Проверка прав
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "У вас нет прав для этой команды.", reply_markup=create_main_menu())
         return
+
     bot.reply_to(message, "📢 Отправьте сообщение, которое нужно разослать всем пользователям.")
     bot.register_next_step_handler(message, process_broadcast)
+
+
 def process_broadcast(message):
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "У вас нет прав для этой команды.", reply_markup=create_main_menu())
         return
+
     users = get_all_users()
     success, failed = 0, 0
+
     bot.reply_to(message, "📡 Рассылка запущена...")
+
     for user_id in users:
         try:
             if message.content_type == "text":
                 bot.send_message(user_id, message.text, reply_markup=create_main_menu())
+
             elif message.content_type == "photo":
                 bot.send_photo(user_id, message.photo[-1].file_id, caption=message.caption or "")
+
             elif message.content_type == "document":
                 bot.send_document(user_id, message.document.file_id, caption=message.caption or "")
+
             elif message.content_type == "video":
                 bot.send_video(user_id, message.video.file_id, caption=message.caption or "")
+
             elif message.content_type == "voice":
                 bot.send_voice(user_id, message.voice.file_id, caption=message.caption or "")
+
             elif message.content_type == "audio":
                 bot.send_audio(user_id, message.audio.file_id, caption=message.caption or "")
+
             else:
                 bot.send_message(user_id, "📢 (неподдерживаемый тип сообщения)", reply_markup=create_main_menu())
+
             success += 1
-            time.sleep(0.05) # антифлуд
+            time.sleep(0.05)  # антифлуд
+
         except Exception as e:
             print(f"[WARN] Не удалось отправить {user_id}: {e}")
             failed += 1
+
     bot.send_message(message.chat.id, f"✅ Рассылка завершена.\nУспешно: {success}\nОшибок: {failed}")
+
 from threading import Thread
 from collections import defaultdict
 import time
+
 # Очередь сообщений для каждого пользователя
 message_queues = defaultdict(list)
-user_processing = defaultdict(bool) # флаг "идёт обработка" для каждого пользователя
+user_processing = defaultdict(bool)  # флаг "идёт обработка" для каждого пользователя
+
+
 def split_message(text, chunk_size=4000):
     """
     Разбивает длинный текст на части по chunk_size символов,
@@ -1741,12 +1976,15 @@ def split_message(text, chunk_size=4000):
             text.rfind(" ", 0, chunk_size)
         )
         if split_at == -1 or split_at < chunk_size // 2:
-            split_at = chunk_size # если ничего не нашли — режем по лимиту
+            split_at = chunk_size  # если ничего не нашли — режем по лимиту
+
         chunks.append(text[:split_at].strip())
         text = text[split_at:].strip()
     if text:
         chunks.append(text.strip())
     return chunks
+
+
 def send_typing(chat_id, stop_flag):
     """Отправляет typing каждые 3 секунды, пока stop_flag[0] == False."""
     while not stop_flag[0]:
@@ -1755,17 +1993,22 @@ def send_typing(chat_id, stop_flag):
         except Exception:
             pass
         time.sleep(3)
+
+
 def process_user_queue(user_id, chat_id):
     if user_processing[user_id]:
         return
     if not message_queues[user_id]:
         return
+
     user_processing[user_id] = True
     message = message_queues[user_id].pop(0)
+
     def _worker():
         stop_flag = [False]
         typing_thread = Thread(target=send_typing, args=(chat_id, stop_flag), daemon=True)
         typing_thread.start()
+
         try:
             text = message.text
             ai_response = process_text_message(text, chat_id)
@@ -1774,23 +2017,27 @@ def process_user_queue(user_id, chat_id):
             if isinstance(ai_response, tuple):
                 final_answer, sources_block = ai_response
                 for chunk in split_message(final_answer, 4000):
-                    bot.send_message(chat_id, chunk, reply_markup=None) # Изменено
-                bot.send_message(chat_id, sources_block, disable_web_page_preview=True, reply_markup=None) # Изменено
+                    bot.send_message(chat_id, chunk, reply_markup=None)  # Изменено
+                bot.send_message(chat_id, sources_block, disable_web_page_preview=True, reply_markup=None)  # Изменено
             else:
                 for chunk in split_message(ai_response, 4000):
-                    bot.send_message(chat_id, chunk, reply_markup=None) # Изменено
+                    bot.send_message(chat_id, chunk, reply_markup=None)  # Изменено
         except Exception as e:
             stop_flag[0] = True
-            bot.send_message(chat_id, f"Ошибка при обработке: {e}", reply_markup=None) # Изменено
+            bot.send_message(chat_id, f"Ошибка при обработке: {e}", reply_markup=None)  # Изменено
         finally:
             user_processing[user_id] = False
             if message_queues[user_id]:
                 process_user_queue(user_id, chat_id)
+
     Thread(target=_worker, daemon=True).start()
+
+
 @bot.message_handler(func=lambda message: True, content_types=["text"])
 def echo_message(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
+
     # Проверяем подписку
     if not check_user_subscription(user_id):
         user_data = load_user_data(user_id)
@@ -1803,10 +2050,13 @@ def echo_message(message):
             reply_markup=create_subscription_keyboard()
         )
         return
+
     # Добавляем сообщение в очередь
     message_queues[user_id].append(message)
+
     # Запускаем обработку, если не занята
     process_user_queue(user_id, chat_id)
+
 # ----------------- Анализ больших документов без обрезки (не отправляя текст обратно) -----------------
 def _chunk_text_full(text: str, max_chars: int = 8000, overlap: int = 300):
     """
@@ -1828,6 +2078,7 @@ def _chunk_text_full(text: str, max_chars: int = 8000, overlap: int = 300):
         # двигаться на (max_chars - overlap) символов, чтобы был контекст
         start = end - overlap
     return chunks
+
 # ----------------- Анализ больших документов без обрезки (не отправляя текст обратно) -----------------
 def _analyze_chunks_with_ai(chunks: list, filename: str, message, user_query: str | None = None):
     """
@@ -1855,17 +2106,20 @@ def _analyze_chunks_with_ai(chunks: list, filename: str, message, user_query: st
                 f"{chunk}\n\n"
                 ""
             )
+
         # показать typing
         try:
             bot.send_chat_action(message.chat.id, "typing")
         except Exception:
             pass
+
         try:
             partial = process_text_message(prompt, message.chat.id)
         except Exception as e:
             print(f"[WARN] AI chunk analysis failed (part {idx+1}): {e}")
             partial = f"[Ошибка анализа части {idx+1}]"
         partials.append(f"--- Часть {idx+1}/{total} ---\n{partial}\n")
+
     # Синтез итогового ответа (учитываем user_query)
     if user_query:
         synthesis_instruct = (
@@ -1880,17 +2134,23 @@ def _analyze_chunks_with_ai(chunks: list, filename: str, message, user_query: st
             "На основе частичных фактов составь аналитический ответ: 1) Ключевые выводы (пункты), "
             "2) Практические рекомендации (пункты), 3) 3 приоритетных вопроса/неясности для проверки."
         )
+
     synthesis_prompt = synthesis_instruct + "\n\nЧастичные анализы:\n\n" + "\n".join(partials)
+
     try:
         bot.send_chat_action(message.chat.id, "typing")
     except Exception:
         pass
+
     try:
         final_analysis = process_text_message(synthesis_prompt, message.chat.id)
     except Exception as e:
         print(f"[ERROR] AI synthesis failed: {e}")
         final_analysis = "Ошибка при объединении анализов документа."
+
     return final_analysis
+
+
 # Новый хендлер документов — сохраняет файл в user_data + отвечает с учётом подписи (caption) или даёт аналитический ответ
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
@@ -1898,34 +2158,40 @@ def handle_document(message):
     if not user_data:
         bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте /start.", reply_markup=create_main_menu())
         return
+
     if user_data.get('subscription_plan') == 'free':
         bot.reply_to(message, "Для чтения документов требуется подписка Plus. Выберите тариф: /pay", reply_markup=create_main_menu())
         return
+
     try:
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
         file_extension = message.document.file_name.split('.')[-1].lower()
+
         # читаем весь документ (никаких обрезок при чтении)
         if file_extension == 'txt':
             content = downloaded_file.decode('utf-8', errors='ignore')
         elif file_extension == 'pdf':
             with io.BytesIO(downloaded_file) as pdf_file:
-                content = read_pdf(pdf_file) # ваша функция, возвращающая весь текст
+                content = read_pdf(pdf_file)  # ваша функция, возвращающая весь текст
         elif file_extension == 'docx':
             with io.BytesIO(downloaded_file) as docx_file:
                 content = read_docx(docx_file)
         else:
             bot.reply_to(message, "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx.", reply_markup=create_main_menu())
             return
+
         if not content or not content.strip():
             bot.reply_to(message, "Файл пуст или в нём нет извлекаемого текста (возможно, это изображение/pdf-скан).", reply_markup=create_main_menu())
             return
+
         user_data['last_document'] = {
             'filename': message.document.file_name,
             'content': content,
             'uploaded_at': datetime.datetime.utcnow().isoformat()
         }
         save_user_data(user_data)
+
         caption = (message.caption or "").strip()
         if caption:
             # build assistant header safely
@@ -1947,32 +2213,40 @@ def handle_document(message):
                         assistant_header = f"[Ассистент: {ass_name}]\n{ass_prompt}\n\n" if ass_prompt else f"[Ассистент: {ass_name}]\n\n"
                 except Exception as e:
                     print(f"[WARN] assistant header build failed: {e}")
+
             combined = assistant_header + f"[Файл: {message.document.file_name}]\n\n{content}\n\nВопрос пользователя: {caption}"
+
             # теперь вызывать process_text_message как раньше
             bot.send_chat_action(message.chat.id, "typing")
             ai_response = process_text_message(combined, message.chat.id)
             send_in_chunks(message, ai_response)
             return
+
+
         # Если подписи нет или прямой вызов упал — делаем безопасный chunked анализ (без отправки исходника)
         chunks = _chunk_text_full(content, max_chars=8000, overlap=400)
         user_query = caption if caption else None
         final_analysis = _analyze_chunks_with_ai(chunks, message.document.file_name, message, user_query=user_query)
+
         # шлём ответ частями (телеграм лимиты)
         send_in_chunks(message, final_analysis)
     except Exception as e:
         print(f"[ERROR] handle_document exception: {e}")
         bot.reply_to(message, f"Ошибка при чтении файла: {e}", reply_markup=create_main_menu())
+
+
 def send_in_chunks(message, text, chunk_size=4000):
     try:
         for i in range(0, len(text), chunk_size):
-            bot.reply_to(message, text[i:i+chunk_size], reply_markup=None) # Изменено
+            bot.reply_to(message, text[i:i+chunk_size], reply_markup=None)  # Изменено
     except Exception as e:
         print(f"[WARN] sending analysis failed: {e}")
         try:
-            bot.reply_to(message, text, reply_markup=None) # Изменено
+            bot.reply_to(message, text, reply_markup=None)  # Изменено
         except Exception as e2:
             print(f"[ERROR] final send failed: {e2}")
-            bot.reply_to(message, "Ошибка при отправке результата анализа.", reply_markup=None) # Изменено
+            bot.reply_to(message, "Ошибка при отправке результата анализа.", reply_markup=None)  # Изменено
+
 def read_pdf(file):
     content = []
     with pdfplumber.open(file) as pdf:
@@ -1981,18 +2255,20 @@ def read_pdf(file):
             if text:
                 content.append(text)
     return "\n".join(content)
+
 def read_docx(file):
     document = docx.Document(file)
     content = []
     for para in document.paragraphs:
         content.append(para.text)
     return "\n".join(content)
+
 def update_user_tokens(user_id, input_tokens, output_tokens):
     check_and_update_tokens(user_id)
     user_data = load_user_data(user_id)
     # Расширьте проверку: plus с или без _
     if user_data['subscription_plan'] in ['plus_trial', 'plus_month', 'plus']:
-        return True # Безлимит для всех Plus-вариантов
+        return True  # Безлимит для всех Plus-вариантов
     total_tokens_used = input_tokens + output_tokens
     new_tokens = user_data['daily_tokens'] - total_tokens_used
     if new_tokens < 0:
@@ -2002,29 +2278,36 @@ def update_user_tokens(user_id, input_tokens, output_tokens):
     user_data['output_tokens'] += output_tokens
     save_user_data(user_data)
     return True
+
 def generate_referral_link(user_id):
     return f"https://t.me/fiinny_bot?start={user_id}"
+
 def process_text_message(text, chat_id) -> str:
     user_data = load_user_data(chat_id)
     if not user_data:
         return "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
+
     input_tokens = len(text)
+
     # ================= TOKEN LIMIT HANDLING ======================
     if user_data['subscription_plan'] == 'free':
         check_and_update_tokens(chat_id)
         user_data = load_user_data(chat_id)
         if user_data['daily_tokens'] < input_tokens:
             return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
+
     if user_data['subscription_plan'] in ['plus_trial', 'plus_month', 'plus']:
         user_data['input_tokens'] += input_tokens
         save_user_data(user_data)
     elif not update_user_tokens(chat_id, input_tokens, 0):
         return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
+
     # ================= LOAD ASSISTANT CONFIG ======================
     config = load_assistants_config()
     current_assistant = get_user_assistant(chat_id)
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
+
     # ================================================================
     # 🧠 ВСЕГДА отправляем в run_fc() — модель сама решает,
     # нужен ли web_search или нет
@@ -2034,46 +2317,57 @@ def process_text_message(text, chat_id) -> str:
             user_id=chat_id,
             query=text,
             prompt=prompt,
-            model="gpt-4o-mini"
+            model="gpt-5.1-2025-11-13"
         )
     except Exception as e:
         return f"Произошла ошибка генерации ответа: {e}"
+
     # ================== TOKEN COUNT ====================
     output_tokens = len(ai_response)
     if not update_user_tokens(chat_id, 0, output_tokens):
         return "Ответ слишком длинный для вашего лимита токенов. Оформите подписку"
+
     user_data = load_user_data(chat_id)
     user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001
     save_user_data(user_data)
+
     store_message_in_db(chat_id, "user", text)
     store_message_in_db(chat_id, "assistant", ai_response)
+
     return ai_response
+
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_data = load_user_data(message.from_user.id)
     if not user_data:
         bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте /start.", reply_markup=None)
         return
+
     if user_data.get('subscription_plan') == 'free':
         bot.reply_to(message, "Для анализа изображений требуется подписка Plus. Выберите тариф: /pay", reply_markup=None)
         return
+
     try:
         # Берём фото наибольшего размера
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
+
         # Кодируем в base64
         base64_image = base64.b64encode(downloaded_file).decode('utf-8')
+
         # Промпт: используем caption или дефолтный
         caption = (message.caption or "").strip()
         if caption:
             question = f"Пользовательский вопрос: {caption}"
         else:
             question = "Опиши подробно, что изображено на этой фотографии: объекты, цвета, действия, эмоции и возможный контекст."
+
         # Промпт ассистента
         current_assistant = get_user_assistant(message.from_user.id)
         config = load_assistants_config()
         assistant_settings = config["assistants"].get(current_assistant, {})
         prompt = assistant_settings.get("prompt", "Вы просто бот.")
+
         # Формируем сообщение для OpenAI (мультимодальное)
         messages = [
             {"role": "system", "content": prompt},
@@ -2090,8 +2384,9 @@ def handle_photo(message):
                 ]
             }
         ]
+
         # Проверяем токены (примерно: текст + ~1.5x размер фото в символах)
-        input_tokens = len(question) + len(base64_image) * 3 // 4 # Примерная оценка
+        input_tokens = len(question) + len(base64_image) * 3 // 4  # Примерная оценка
         if user_data['subscription_plan'] == 'free':
             check_and_update_tokens(message.from_user.id)
             user_data = load_user_data(message.from_user.id)
@@ -2101,25 +2396,31 @@ def handle_photo(message):
         if not update_user_tokens(message.from_user.id, input_tokens, 0):
             bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay", reply_markup=None)
             return
-        # Отправляем запрос к OpenAI (используем gpt-4o-mini для vision)
+
+        # Отправляем запрос к OpenAI (используем gpt-5.1-2025-11-13 для vision)
         bot.send_chat_action(message.chat.id, "typing")
-        response = client.chat.completions.create(
-            model="gpt-4o-mini", # Или "gpt-4-turbo" для лучшего качества
+        response = openai.ChatCompletion.create(
+            model="gpt-5.1-2025-11-13",  # Или "gpt-4-turbo" для лучшего качества
             messages=messages,
-            max_tokens=1000 # Лимит ответа
+            max_tokens=1000  # Лимит ответа
         )
         ai_response = response.choices[0].message.content
+
         # Обновляем токены для вывода
         output_tokens = len(ai_response)
         update_user_tokens(message.from_user.id, 0, output_tokens)
+
         # Сохраняем историю (опционально)
         store_message_in_db(message.chat.id, "user", question)
         store_message_in_db(message.chat.id, "assistant", ai_response)
+
         # Отправляем ответ
         bot.reply_to(message, ai_response, reply_markup=None, parse_mode='HTML' if '<' in ai_response else None)
+
     except Exception as e:
         print(f"[ERROR] handle_photo exception: {e}")
         bot.reply_to(message, f"Ошибка при анализе изображения: {str(e)}. Проверьте формат или попробуйте снова.", reply_markup=None)
+
 @bot.message_handler(content_types=["voice"])
 def voice(message):
     user_data = load_user_data(message.from_user.id)
@@ -2136,11 +2437,11 @@ def voice(message):
             wav_temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             audio.export(wav_temp_file.name, format="wav")
             with open(wav_temp_file.name, 'rb') as wav_file:
-                response = client.audio.transcriptions.create(
+                response = openai.Audio.transcribe(
                     model="whisper-1",
                     file=wav_file
                 )
-        recognized_text = response.text.strip()
+        recognized_text = response['text'].strip()
         if len(recognized_text) > 1000000:
             bot.reply_to(message, "Текст слишком длинный, сократите его.", reply_markup=create_main_menu())
             return
@@ -2152,18 +2453,23 @@ def voice(message):
     except Exception as e:
         logging.error(f"Ошибка обработки голосового сообщения: {e}")
         bot.reply_to(message, "Произошла ошибка, попробуйте позже!", reply_markup=create_main_menu())
+
+
 def handler(event, context):
     try:
         body = event.get("body", "")
         if not body:
             print(f"[WARN] Пустой body в handler")
             return {"statusCode": 200, "body": "ok"}
+
         message = json.loads(body)
         update = telebot.types.Update.de_json(message)
+
         # Проверка: update должен быть объектом Update, не int или другим
         if not isinstance(update, telebot.types.Update):
             print(f"[ERROR] Некорректное update (тип: {type(update)}, значение: {message})")
             return {"statusCode": 200, "body": "ok"}
+
         # Проверяем наличие message, callback_query или pre_checkout_query
         if update.message or update.callback_query or update.pre_checkout_query:
             try:
@@ -2181,10 +2487,14 @@ def handler(event, context):
         print(f"[ERROR] Ошибка парсинга JSON в handler: {e}")
     except Exception as e:
         print(f"[ERROR] Общая ошибка в handler: {e}")
+
     return {"statusCode": 200, "body": "ok"}
+
+
 def check_experts_in_database(connection):
     with connection.cursor() as cursor:
         cursor.execute("SELECT expert_id, name, specialization FROM experts;")
+
 def main():
     logger.info("Bot started")
     conn = None
@@ -2201,7 +2511,9 @@ def main():
             if count == 0:
                 logger.warning("Таблица 'assistants' пуста! Добавь ассистентов через SQL.")
             else:
+
                 refresh_assistants_cache(conn)
+
             insert_initial_experts(conn)
             check_experts_in_database(conn)
             assistants_config = load_assistants_config()
@@ -2217,17 +2529,20 @@ def main():
         finally:
             if conn:
                 conn.close()
+
     # Запуск polling в цикле для устойчивости
     while True:
         try:
+
             bot.polling(non_stop=True, timeout=60)
         except Exception as e:
             logger.error(f"Ошибка в polling: {e}")
-            time.sleep(5) # Пауза перед повторной попыткой
+            time.sleep(5)  # Пауза перед повторной попыткой
         try:
             schedule.run_pending()
         except Exception as e:
             logger.error(f"Ошибка в schedule.run_pending: {e}")
         time.sleep(60)
+
 if __name__ == "__main__":
     main()
