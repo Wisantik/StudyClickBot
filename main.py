@@ -55,6 +55,7 @@ from openai import OpenAI
 api_key = os.getenv("OPENAI_API_KEY")
 print(f"Используемый API-ключ: {api_key}")  # Это выведет ключ в консоль
 client = OpenAI(api_key=api_key)
+print("BASE_URL =", getattr(client, "base_url", None))
 # Настройка ЮKassa
 Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
 Configuration.secret_key = os.getenv("YOOKASSA_SECRET_KEY")
