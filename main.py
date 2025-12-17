@@ -840,7 +840,7 @@ def youtube_link_handler(message):
     for i, chunk in enumerate(chunks, 1):
         try:
             resp = openai.ChatCompletion.create(
-                model="gpt-4o-mini",
+                model="gpt-5.1-2025-11-13",
                 messages=[
                     {"role": "system", "content": "Сделай краткий конспект фрагмента видео."},
                     {"role": "user", "content": chunk}
@@ -856,7 +856,7 @@ def youtube_link_handler(message):
     try:
         combined = "\n\n".join(summaries)
         resp_final = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+            model="gpt-5.1-2025-11-13",
             messages=[
                 {"role": "system", "content": "Объедини конспекты в coherent итоговый конспект видео."},
                 {"role": "user", "content": combined}
@@ -2317,7 +2317,7 @@ def process_text_message(text, chat_id) -> str:
             user_id=chat_id,
             query=text,
             prompt=prompt,
-            model="gpt-4o-mini"
+            model="gpt-5.1-2025-11-13"
         )
     except Exception as e:
         return f"Произошла ошибка генерации ответа: {e}"
@@ -2397,10 +2397,10 @@ def handle_photo(message):
             bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay", reply_markup=None)
             return
 
-        # Отправляем запрос к OpenAI (используем gpt-4o-mini для vision)
+        # Отправляем запрос к OpenAI (используем gpt-5.1-2025-11-13 для vision)
         bot.send_chat_action(message.chat.id, "typing")
         response = openai.ChatCompletion.create(
-            model="gpt-4o-mini",  # Или "gpt-4-turbo" для лучшего качества
+            model="gpt-5.1-2025-11-13",  # Или "gpt-4-turbo" для лучшего качества
             messages=messages,
             max_tokens=1000  # Лимит ответа
         )
