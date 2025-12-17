@@ -1,81 +1,21 @@
 import os
-import sys
 import json
-import types
 import re
 import requests
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
+from openai import OpenAI
 
-# ДОБАВЛЯЕМ путь newSDK в sys.path
-sdk_path = os.path.abspath(os.path.dirname(__file__))
-if sdk_path not in sys.path:
-    sys.path.insert(0, sdk_path)
+# жёстко отключаем прокси ENV (на всякий случай)
+os.environ.pop("OPENAI_BASE_URL", None)
+os.environ.pop("OPENAI_API_BASE", None)
+os.environ.pop("OPENAI_ENDPOINT", None)
 
-# ===========================
-#   ИМПОРТ OpenAI (ГИБРИД)
-# ===========================
-try:
-    import openai
-except Exception as e:
-    raise ImportError("Не найден модуль openai!") from e
+api_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+if not api_key:
+    raise RuntimeError("OPENAI_API_KEY is not set")
 
-
-# --- НОВАЯ ВЕРСИЯ SDK (OpenAI >= v1.0) ---
-if hasattr(openai, "OpenAI"):
-    OpenAI = openai.OpenAI
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# --- СТАРАЯ ВЕРСИЯ SDK (OpenAI <= v1.0) ---
-else:
-    class LegacyWrapper:
-        def __init__(self, api_key):
-            self._mod = openai
-            self._mod.api_key = api_key
-
-            # создаём client.chat.completions.create(...)
-            self.chat = types.SimpleNamespace()
-            self.chat.completions = types.SimpleNamespace(create=self._create)
-
-        def _normalize(self, resp):
-            if hasattr(resp, "choices"):
-                return resp
-
-            if isinstance(resp, dict):
-                choices = []
-                for c in resp.get("choices", []):
-                    msg = c.get("message") or {}
-                    content = msg.get("content") or c.get("text", "")
-                    choices.append(types.SimpleNamespace(message=types.SimpleNamespace(content=content)))
-                return types.SimpleNamespace(choices=choices)
-
-            return types.SimpleNamespace(
-                choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=str(resp)))]
-            )
-
-        def _create(self, model=None, messages=None, **kwargs):
-            api = self._mod
-            try:
-                resp = api.ChatCompletion.create(
-                    model=model,
-                    messages=messages,
-                    **kwargs
-                )
-            except Exception:
-                # fallback для очень старых API
-                prompt = self._messages_to_prompt(messages)
-                resp = api.Completion.create(model=model, prompt=prompt, **kwargs)
-
-            return self._normalize(resp)
-
-        def _messages_to_prompt(self, messages):
-            parts = []
-            for m in messages:
-                parts.append(f"[{m.get('role')}]\n{m.get('content')}")
-            return "\n\n".join(parts)
-
-    client = LegacyWrapper(api_key=os.getenv("OPENAI_API_KEY"))
-
+client = OpenAI(api_key=api_key, base_url="https://api.openai.com/v1")
 
 # ============================================================
 #                     ВЕБ ПОИСК (DDGS)
