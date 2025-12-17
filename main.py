@@ -39,7 +39,7 @@ ASSISTANT_DESCRIPTIONS = {
     "universal_expert": "отвечает на любые вопросы.",
     "fintech": "советы по онлайн-банкам, платежам, переводам, приложениям для денег и инвестиций.",
     "personal_finance": "как планировать бюджет, копить и экономить деньги.",
-    "investments": "фондовый рынок, недвижимость, валюты. С чего начать и как выбрать.",
+    "investments": "фондовый рынок, недвижимость, валюты С чего начать и как выбрать.",
     "business_marketing": "как запустить бизнес, привлечь клиентов и увеличить продажи.",
     "cybersecurity": "защита данных, телефонов и аккаунтов от взломов и мошенников.",
     "comm_skills": "как разговаривать, договариваться и избегать конфликтов.",
@@ -54,7 +54,20 @@ bot = telebot.TeleBot(os.getenv('BOT_TOKEN'), threaded=False)
 from openai import OpenAI
 api_key = os.getenv("OPENAI_API_KEY")
 print(f"Используемый API-ключ: {api_key}")  # Это выведет ключ в консоль
-client = OpenAI(api_key=api_key)
+# 1. ЖЁСТКО убираем любые прокси-переменные окружения
+os.environ.pop("OPENAI_BASE_URL", None)
+os.environ.pop("OPENAI_API_BASE", None)
+os.environ.pop("OPENAI_ENDPOINT", None)
+
+
+# 3. ЯВНО создаём клиента OpenAI (БЕЗ proxy)
+client = OpenAI(
+    api_key=api_key,
+    base_url="https://api.openai.com/v1"
+)
+
+# 4. Проверка (для отладки, можно убрать)
+print("OpenAI BASE_URL =", client.base_url)
 print("BASE_URL =", getattr(client, "base_url", None))
 # Настройка ЮKassa
 Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
