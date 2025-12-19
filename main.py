@@ -2339,7 +2339,13 @@ def process_text_message(text, chat_id) -> str:
     # ================== TOKEN COUNT ====================
     output_tokens = len(ai_response)
     if not update_user_tokens(chat_id, 0, output_tokens):
-        return "Ответ слишком длинный для вашего лимита токенов. Оформите подписку"
+        bot.send_message(
+            chat_id,
+            "Ответ слишком длинный для вашего лимита токенов.\n\n"
+            "👉 Чтобы продолжить, оформите подписку.",
+            reply_markup=create_subscription_required_keyboard()
+        )
+    return
 
     user_data = load_user_data(chat_id)
     user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001
