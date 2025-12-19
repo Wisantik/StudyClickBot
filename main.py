@@ -1290,9 +1290,9 @@ def profile_menu_callback_handler(call):
         bot.answer_callback_query(call.id)
         return
 
-    elif call.data == "show_experts":
-        text = "Выберите эксперта:"
-        markup = create_experts_menu()
+    elif call.data == "show_assistants":
+        text = "Выберите ассистента:"
+        markup = create_assistants_menu()
 
         # 🩵 Если текущее сообщение — фото, Telegram не позволит его редактировать
         if getattr(call.message, "content_type", "") == "photo":
@@ -1310,7 +1310,7 @@ def profile_menu_callback_handler(call):
                     reply_markup=markup
                 )
             except telebot.apihelper.ApiTelegramException as e:
-                print(f"[WARN] Ошибка при возврате к экспертам: {e}")
+                print(f"[WARN] Ошибка при возврате к ассистентам: {e}")
                 bot.send_message(
                     chat_id=call.message.chat.id,
                     text=text,
