@@ -508,28 +508,43 @@ def subscription_check_callback(call):
 @bot.callback_query_handler(func=lambda call: call.data == "show_pay_menu")
 def show_pay_menu_callback(call):
     log_command(call.from_user.id, "show_pay_menu")
-    subscription_text = """Подписка Plus
 
-Доступ к GPT 5 - безлимит
-Чтение PDF файлов - безлимит
-Чтение ссылок - безлимит
-Интернет поиск - безлимит
-Обработка запросов голосовыми
+    subscription_text = """
+<b>Подписка Plus</b>
+
+<b>🚀 Доступ к GPT-5</b> — безлимит
+
+📄 Чтение файлов до 2 ГБ —
+<b>PDF, XLSX, DOCX, CSV, TXT</b> — безлимит
+
+🔗 Чтение ссылок — безлимит
+
+🌐 Интернет-поиск — безлимит
+
+<b>📺 Суммаризация YouTube-видео</b> — безлимит
+
+🖼 Умеет распознавать картинки
+
+🎙 Обработка голосовых запросов
 
 ⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
 Покупая, вы соглашаетесь с <a href="https://teletype.in/@st0ckholders_s/1X-lpJhx5rc">офертой</a>
 Отменить можно в любое время после оплаты
-По всем вопросам пишите сюда - <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
+По всем вопросам пишите сюда — <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>
+"""
 
     user_data = load_user_data(call.from_user.id)
+
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
         text=subscription_text,
         parse_mode="HTML",
-        disable_web_page_preview=True,  # 🔹 отключает предпросмотр ссылок
+        disable_web_page_preview=True,
         reply_markup=create_price_menu(user_data)
     )
+
+    bot.answer_callback_query(call.id)
 
 from telebot.types import ReplyKeyboardRemove
 
