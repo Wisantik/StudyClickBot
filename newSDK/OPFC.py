@@ -113,7 +113,7 @@ tools = [
 #                  Function-Calling Runner
 # ============================================================
 
-def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.2-2025-12-11"):
+def run_fc(user_id: int, query: str, prompt: str, model="gpt-4o-mini"):
     messages = [
         {"role": "system", "content": prompt},
         {"role": "user", "content": query}

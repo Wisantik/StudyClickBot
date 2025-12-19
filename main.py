@@ -101,6 +101,53 @@ class ExceptionHandler:
 
 bot.exception_handler = ExceptionHandler()
 
+def get_subscription_text():
+    return """
+<b>Подписка Plus</b>
+
+<b>🚀 Доступ к GPT-5</b> — безлимит
+
+📄 Чтение файлов до 2 ГБ —
+<b>PDF, XLSX, DOCX, CSV, TXT</b> — безлимит
+
+🔗 Чтение ссылок — безлимит
+
+🌐 Интернет-поиск — безлимит
+
+<b>📺 Суммаризация YouTube-видео</b> — безлимит
+
+🖼 Умеет распознавать картинки
+
+🎙 Обработка голосовых запросов
+
+⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
+Покупая, вы соглашаетесь с <a href="https://teletype.in/@st0ckholders_s/1X-lpJhx5rc">офертой</a>
+Отменить можно в любое время после оплаты
+По всем вопросам пишите сюда — <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>
+"""
+def show_subscription(chat_id, user_id, message_id=None):
+    user_data = load_user_data(user_id)
+    text = get_subscription_text()
+
+    if message_id:
+        bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=message_id,
+            text=text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=create_price_menu(user_data)
+        )
+    else:
+        bot.send_message(
+            chat_id,
+            text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=create_price_menu(user_data)
+        )
+
+
 def create_command_logs_table():
     conn = connect_to_db()
     with conn.cursor() as cursor:
@@ -509,42 +556,14 @@ def subscription_check_callback(call):
 def show_pay_menu_callback(call):
     log_command(call.from_user.id, "show_pay_menu")
 
-    subscription_text = """
-<b>Подписка Plus</b>
-
-<b>🚀 Доступ к GPT-5</b> — безлимит
-
-📄 Чтение файлов до 2 ГБ —
-<b>PDF, XLSX, DOCX, CSV, TXT</b> — безлимит
-
-🔗 Чтение ссылок — безлимит
-
-🌐 Интернет-поиск — безлимит
-
-<b>📺 Суммаризация YouTube-видео</b> — безлимит
-
-🖼 Умеет распознавать картинки
-
-🎙 Обработка голосовых запросов
-
-⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
-Покупая, вы соглашаетесь с <a href="https://teletype.in/@st0ckholders_s/1X-lpJhx5rc">офертой</a>
-Отменить можно в любое время после оплаты
-По всем вопросам пишите сюда — <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>
-"""
-
-    user_data = load_user_data(call.from_user.id)
-
-    bot.edit_message_text(
+    show_subscription(
         chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text=subscription_text,
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-        reply_markup=create_price_menu(user_data)
+        user_id=call.from_user.id,
+        message_id=call.message.message_id
     )
 
     bot.answer_callback_query(call.id)
+
 
 from telebot.types import ReplyKeyboardRemove
 
@@ -994,27 +1013,12 @@ def profile_button_handler(message):
 @bot.message_handler(func=lambda message: message.text == "💳 Подписка")
 def get_pay(message):
     log_command(message.from_user.id, "pay")
-    subscription_text = """Подписка Plus
 
-Доступ к GPT 5 - безлимит
-Чтение PDF файлов - безлимит
-Чтение ссылок - безлимит
-Интернет поиск - безлимит
-Обработка запросов голосовыми
-
-⚠️ Пробная подписка после истечения срока действия включает в себя автопродление на месяц: 399 рублей
-Покупая, вы соглашаетесь с <a href="https://teletype.in/@st0ckholders_s/1X-lpJhx5rc">офертой</a>
-Отменить можно в любое время после оплаты
-По всем вопросам пишите сюда — <a href="https://t.me/mon_tti1">t.me/mon_tti1</a>"""
-
-    user_data = load_user_data(message.from_user.id)
-    bot.send_message(
-        message.chat.id,
-        subscription_text,
-        parse_mode="HTML",
-        disable_web_page_preview=True,  # 🔹 отключает предпросмотр ссылок
-        reply_markup=create_price_menu(user_data)
+    show_subscription(
+        chat_id=message.chat.id,
+        user_id=message.from_user.id
     )
+
 
 
 # ... (остальной код остаётся без изменений)
