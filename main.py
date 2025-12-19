@@ -2325,10 +2325,11 @@ def process_text_message(text, chat_id) -> str:
     # ================= TOKEN LIMIT HANDLING ======================
     if user_data['subscription_plan'] == 'free':
         check_and_update_tokens(chat_id)
-        user_data = load_user_data(chat_id)
+        user_data = load_user_data(chat_id)  # перезагружаем после возможного обновления
         if user_data['daily_tokens'] < input_tokens:
             return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
 
+    # Для платных подписок просто накапливаем входные токены
     if user_data['subscription_plan'] in ['plus_trial', 'plus_month', 'plus']:
         user_data['input_tokens'] += input_tokens
         save_user_data(user_data)
@@ -2342,8 +2343,7 @@ def process_text_message(text, chat_id) -> str:
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
     # ================================================================
-    # 🧠 ВСЕГДА отправляем в run_fc() — модель сама решает,
-    # нужен ли web_search или нет
+    # 🧠 Отправляем запрос в ИИ
     # ================================================================
     try:
         ai_response = run_fc(
@@ -2357,6 +2357,8 @@ def process_text_message(text, chat_id) -> str:
 
     # ================== TOKEN COUNT ====================
     output_tokens = len(ai_response)
+
+    # Проверяем, хватит ли лимита на вывод (для бесплатных и лимитированных планов)
     if not update_user_tokens(chat_id, 0, output_tokens):
         bot.send_message(
             chat_id,
@@ -2364,17 +2366,22 @@ def process_text_message(text, chat_id) -> str:
             "👉 Чтобы продолжить, оформите подписку.",
             reply_markup=create_subscription_required_keyboard()
         )
-    return
+        # Если лимита не хватило на вывод, всё равно сохраняем входные токены,
+        # но не сохраняем сообщение assistant и не возвращаем ответ
+        return "Лимит токенов исчерпан."
 
-    user_data = load_user_data(chat_id)
+    # ================== STATISTICS & DB ====================
+    # Обновляем общую статистику потраченных денег (если нужно)
+    user_data = load_user_data(chat_id)  # перезагружаем актуальные данные
     user_data['total_spent'] += (input_tokens + output_tokens) * 0.000001
     save_user_data(user_data)
 
+    # Сохраняем сообщения в историю
     store_message_in_db(chat_id, "user", text)
     store_message_in_db(chat_id, "assistant", ai_response)
 
+    # Возвращаем ответ пользователю
     return ai_response
-
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_data = load_user_data(message.from_user.id)
