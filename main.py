@@ -789,8 +789,8 @@ def chunk_text(text, size=2500, overlap=200):
 
 import concurrent.futures  # Добавь в импорт
 
-import threading  # Добавь в начало файла, если ещё нет
-import subprocess
+  # Добавь в начало файла, если ещё нет
+
 import concurrent.futures
 from tenacity import retry, stop_after_attempt, wait_fixed  # если используешь retry
 
@@ -939,13 +939,17 @@ def process_youtube_summary(message, video_id, video_url):
         print(f"[YouTube] Финальная суммаризация ошибка: {e}")
         final_summary = "\n\n".join(summaries)
 
-    # Отправляем результат
-    bot.send_message(
-        chat_id,
-        f"📺 <b>Видео:</b> {video_url}\n\n<b>🎯 Краткий конспект:</b>\n\n{final_summary}",
-        parse_mode="HTML",
-        disable_web_page_preview=True
-    )
+    # Отправляем результат как ответ на исходное сообщение
+    try:
+        bot.reply_to(
+            message,
+            f"📺 <b>Видео:</b> {video_url}\n\n<b>🎯 Краткий конспект:</b>\n\n{final_summary if final_summary.strip() else 'Конспект не удалось сгенерировать (видео слишком новое или без речи). Попробуй позже!'}",
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+    except Exception as e:
+        print(f"[YouTube] Ошибка отправки ответа: {e}")
+        bot.send_message(chat_id, "Произошла ошибка при отправке конспекта. Попробуй позже.")
 
 
 # Основной хендлер — теперь НЕ блокирует бота!
