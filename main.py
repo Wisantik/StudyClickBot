@@ -796,7 +796,6 @@ def youtube_link_handler(message):
     if user_data['subscription_plan'] == 'free':
         bot.reply_to(message, "Для суммаризации YouTube требуется подписка Plus. Выберите тариф: /pay")
         return
-
     text = message.text or ""
     match = _YT_RE.search(text)
     if not match:
@@ -804,23 +803,27 @@ def youtube_link_handler(message):
     video_id = match.group("id")
     video_url = f"https://youtu.be/{video_id}"
     print(f"[YouTube] Получена ссылка: {video_url}")
-
+    # Уведомление сразу
     bot.reply_to(message, "🎥 Суммаризация видео началась... Это может занять 1-5 минут. Ждите!")
     bot.send_chat_action(message.chat.id, "typing")
-
     transcript_text = ""
-
-    # 1) Transcript API (без изменений, работает)
+    # 1) Transcript API с улучшенным retry (основной быстрый вариант)
+    @retry(stop=stop_after_attempt(5), wait=wait_exponential(min=2, max=10))
+    def get_transcript_retry():
+        try:
+            # Пробуем auto-detect или несколько языков
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+            transcript = transcript_list.find_generated_transcript(['ru', 'en']) or transcript_list.find_transcript(['ru', 'en'])
+            return transcript.fetch()
+        except:
+            raise
     try:
-        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
-        transcript = transcript_list.find_generated_transcript(['ru', 'en']) or transcript_list.find_transcript(['ru', 'en'])
-        transcript_data = transcript.fetch()
-        transcript_text = ' '.join([item['text'] for item in transcript_data]).strip()
+        transcript = get_transcript_retry()
+        transcript_text = ' '.join([item['text'] for item in transcript]).strip()
         print(f"[YouTube] Transcript API: Получено {len(transcript_text)} символов")
     except Exception as e:
         print(f"[YouTube] Transcript API ошибка: {e}. Переходим к Whisper.")
-
-    # 2) Whisper fallback
+    # 2) Если нет — сразу Whisper (без yt-dlp)
     if not transcript_text:
         print("[YouTube] Нет субтитров, аудио + Whisper...")
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -829,68 +832,60 @@ def youtube_link_handler(message):
                 'format': 'bestaudio/best',
                 'outtmpl': audio_template,
                 'quiet': True,
-                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '64'}],
-                'sleep_interval': 5,
+                'postprocessors': [{'key': 'FFmpegExtractAudio', 'preferredcodec': 'mp3', 'preferredquality': '64'}],  # Уменьшил качество для скорости
+                'sleep_interval': 5,  # Задержка для rate limit
                 'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             }
             try:
                 with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
                     ydl.download([video_url])
-
                 audio_candidates = glob.glob(os.path.join(tmpdir, f"{video_id}*.mp3"))
                 if not audio_candidates:
                     raise FileNotFoundError("Аудио не скачано")
                 audio_path = audio_candidates[0]
-
-                # Разбиение на чанки
+                # Разбиение на чанки по 300 сек (5 мин) для ускорения
                 chunk_dir = os.path.join(tmpdir, "chunks")
                 os.makedirs(chunk_dir, exist_ok=True)
                 ffmpeg_split_cmd = ["ffmpeg", "-i", audio_path, "-f", "segment", "-segment_time", "300", "-c", "copy", os.path.join(chunk_dir, "chunk%03d.mp3")]
                 subprocess.run(ffmpeg_split_cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
                 chunks = sorted(glob.glob(os.path.join(chunk_dir, "chunk*.mp3")))
-
-                # Параллельная транскрипция
+                # Параллельная транскрипция чанков
                 transcript_parts = []
-                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:  # До 4 потоков
                     futures = []
                     for i, chunk_path in enumerate(chunks, 1):
                         print(f"[YouTube] Whisper chunk {i}/{len(chunks)} queued")
-                        futures.append(executor.submit(transcribe_audio_chunk, chunk_path, i))
+                        futures.append(executor.submit(transcribe_audio_chunk, chunk_path, tmpdir, i))
                     for future in concurrent.futures.as_completed(futures):
                         transcript_parts.append(future.result())
-
                 transcript_text = ' '.join(transcript_parts).strip()
                 print(f"[YouTube] Whisper полная длина: {len(transcript_text)}")
             except Exception as e:
                 print(f"[YouTube] Whisper ошибка: {e}")
                 bot.reply_to(message, "❌ Не удалось получить текст видео. Попробуй позже.")
                 return
-
     if not transcript_text:
         bot.reply_to(message, "❌ Текст видео недоступен.")
         return
-
-    # Суммаризация (тут тоже обнови на client, если используешь старый стиль)
+    # Суммаризация (без .txt файла)
     bot.reply_to(message, "✍️ Суммаризирую...")
-    chunks = chunk_text(transcript_text)  # твоя функция chunk_text
+    chunks = chunk_text(transcript_text)
     summaries = []
     for i, chunk in enumerate(chunks, 1):
         try:
-            resp = client.chat.completions.create(  # Новый стиль!
+            resp = client.chat.completions.create(  # Новый стиль вызова
                 model="gpt-5.1-2025-11-13",
                 messages=[
                     {"role": "system", "content": "Сделай краткий конспект фрагмента видео."},
                     {"role": "user", "content": chunk}
                 ],
-                max_tokens=500
+                max_completion_tokens=500  # Замена на max_completion_tokens
             )
             summaries.append(resp.choices[0].message.content.strip())
         except Exception as e:
             print(f"[YouTube] Чанк {i} ошибка: {e}")
             summaries.append("Ошибка обработки фрагмента.")
-
-    # Финальная суммаризация
+    # Итоговая суммаризация
     try:
         combined = "\n\n".join(summaries)
         resp_final = client.chat.completions.create(
@@ -899,13 +894,12 @@ def youtube_link_handler(message):
                 {"role": "system", "content": "Объедини конспекты в coherent итоговый конспект видео."},
                 {"role": "user", "content": combined}
             ],
-            max_tokens=800
+            max_completion_tokens=800  # Замена на max_completion_tokens
         )
         final_summary = resp_final.choices[0].message.content.strip()
     except Exception as e:
         print(f"[YouTube] Финал ошибка: {e}")
         final_summary = "\n\n".join(summaries)
-
     bot.reply_to(
         message,
         f"📺 <b>Видео:</b> {video_url}\n\n<b>🎯 Краткий конспект:</b>\n\n{final_summary}",
