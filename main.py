@@ -764,6 +764,7 @@ def expert_callback_handler(call):
         print(f"[ERROR] Неверный формат expert_id в callback: {call.data}")
         bot.answer_callback_query(call.id, "Ошибка при выборе эксперта")
 
+import html
 
 import re
 import os
@@ -934,13 +935,25 @@ def process_youtube_video(text, chat_id, user_id):
         )
 
         summary = resp.choices[0].message.content.strip()
+        print("[YouTube] GPT summary length:", len(summary))
 
-        bot.send_message(
-            chat_id,
+
+        safe_summary = html.escape(summary)
+
+        header = (
             f"📺 <b>Видео:</b> {video_url}\n\n"
-            f"<b>🎯 Конспект:</b>\n\n{summary}",
-            parse_mode="HTML",
+            f"<b>🎯 Конспект:</b>\n\n"
         )
+
+        full_text = header + safe_summary
+
+        for part in split_message(full_text):
+            bot.send_message(
+                chat_id,
+                part,
+                parse_mode="HTML"
+            )
+
 
     except Exception as e:
         print(f"[YouTube] Ошибка: {e}")
