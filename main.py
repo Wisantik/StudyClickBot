@@ -822,7 +822,7 @@ def youtube_link_handler(message):
 
     # 2) Whisper fallback
     if not transcript_text:
-        bot.send_message(chat_id, "🔄 Субтитры не найдены. Скачиваю аудио и распознаю через Whisper...") 
+        bot.send_message(message.chat_id, "🔄 Субтитры не найдены. Скачиваю аудио и распознаю через Whisper...") 
         print("[YouTube] Нет субтитров, аудио + Whisper...")
         with tempfile.TemporaryDirectory() as tmpdir:
             audio_template = os.path.join(tmpdir, f"{video_id}.%(ext)s")
@@ -869,11 +869,11 @@ def youtube_link_handler(message):
                 print(f"[YouTube] Whisper полная длина: {len(transcript_text)} символов")
             except Exception as e:
                 print(f"[YouTube] Whisper ошибка: {e}")
-                bot.send_message(chat_id, "❌ Не удалось получить текст из видео. Попробуйте позже.")
+                bot.send_message(message.chat_id, "❌ Не удалось получить текст из видео. Попробуйте позже.")
                 return
 
     if not transcript_text:
-        bot.send_message(chat_id, "❌ Текст видео недоступен.")
+        bot.send_message(message.chat_id, "❌ Текст видео недоступен.")
         return
 
     # Суммаризация (тут тоже обнови на client, если используешь старый стиль)
