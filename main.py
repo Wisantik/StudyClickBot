@@ -889,7 +889,7 @@ def youtube_link_handler(message):
                     {"role": "system", "content": "Сделай краткий конспект этого фрагмента видео на русском языке."},
                     {"role": "user", "content": chunk}
                 ],
-                max_tokens=500
+                max_completion_tokens=500
             )
             summaries.append(resp.choices[0].message.content.strip())
         except Exception as e:
@@ -2448,7 +2448,7 @@ def handle_photo(message):
         response = openai.ChatCompletion.create(
             model="gpt-5.1-2025-11-13",  # Или "gpt-4-turbo" для лучшего качества
             messages=messages,
-            max_tokens=1000  # Лимит ответа
+            max_completion_tokens=1000  # Лимит ответа
         )
         ai_response = response.choices[0].message.content
 
