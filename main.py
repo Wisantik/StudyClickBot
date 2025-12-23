@@ -917,9 +917,9 @@ def process_youtube_video(text, chat_id, user_id):
         # === 3. ОДНА СУММАРИЗАЦИЯ (БЫСТРО) ===
         bot.send_message(chat_id, "✍️ Суммаризирую…")
 
-        resp = client.responses.create(
-            model="gpt-5.1-2025-11-13",
-            input=[
+        resp = client.chat.completions.create(
+            model="gpt-4.1-mini",
+            messages=[
                 {
                     "role": "system",
                     "content": (
@@ -929,16 +929,14 @@ def process_youtube_video(text, chat_id, user_id):
                         "- выводы"
                     ),
                 },
-                {
-                    "role": "user",
-                    "content": transcript_text,
-                },
+                {"role": "user", "content": transcript_text},
             ],
-            max_output_tokens=1200,
+            max_completion_tokens=1200,
         )
 
-        summary = resp.output_text.strip()
+        summary = resp.choices[0].message.content.strip()
         print("[YouTube] GPT summary length:", len(summary))
+
 
 
 
