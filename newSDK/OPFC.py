@@ -34,6 +34,9 @@ def _call_search_api(search_query):
                     "snippet": r.get("body", ""),
                     "link": r["link"]
                 })
+        print("[FC] web_search RAW result:")
+        print(results)
+
         return formatted_results
 
     except Exception:
