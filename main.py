@@ -563,6 +563,23 @@ def subscription_check_callback(call):
             show_alert=True
         )
 
+def ensure_subscription(message) -> bool:
+    user_id = message.from_user.id
+
+    # сбрасываем кэш — чтобы выход из канала ловился сразу
+    SUBSCRIPTION_CHECK_CACHE.pop(user_id, None)
+
+    if not check_user_subscription(user_id):
+        bot.reply_to(
+            message,
+            "🚫 Для использования бота необходимо подписаться на канал:",
+            reply_markup=create_subscription_keyboard()
+        )
+        return False
+
+    return True
+
+
 @bot.callback_query_handler(func=lambda call: call.data == "show_pay_menu")
 def show_pay_menu_callback(call):
     log_command(call.from_user.id, "show_pay_menu")
@@ -2175,6 +2192,8 @@ def process_user_queue(user_id, chat_id):
 def echo_message(message):
     user_id = message.from_user.id
     chat_id = message.chat.id
+    if not ensure_subscription(message):
+        return
 
     # Проверяем подписку
     if not check_user_subscription(user_id):
@@ -2298,6 +2317,9 @@ def handle_document(message):
             "Ошибка: пользователь не найден. Попробуйте /start.",
             reply_markup=create_main_menu()
         )
+        return
+    
+    if not ensure_subscription(message):
         return
 
     if user_data.get('subscription_plan') == 'free':
@@ -2463,7 +2485,10 @@ def generate_referral_link(user_id):
 def process_text_message(text, chat_id) -> str:
     user_data = load_user_data(chat_id)
     if not user_data:
-        return "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
+        return "Ошибка: пользователь не найден."
+
+    if not user_data.get("is_subscribed", True):
+        return "🚫 Для использования бота подпишитесь на канал."
 
     input_tokens = len(text)
 
@@ -2532,6 +2557,9 @@ def handle_photo(message):
     user_data = load_user_data(message.from_user.id)
     if not user_data:
         bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте /start.", reply_markup=None)
+        return
+    
+    if not ensure_subscription(message):
         return
 
     if user_data.get('subscription_plan') == 'free':
