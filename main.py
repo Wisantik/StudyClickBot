@@ -73,6 +73,14 @@ print("BASE_URL =", getattr(client, "base_url", None))
 Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
 Configuration.secret_key = os.getenv("YOOKASSA_SECRET_KEY")
 
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+def back_button(callback_data="back_to_subscriptions"):
+    kb = InlineKeyboardMarkup()
+    kb.add(InlineKeyboardButton("⬅️ Назад", callback_data=callback_data))
+    return kb
+
+
 class ExceptionHandler:
     def handle(self, exception):
         if isinstance(exception, telebot.apihelper.ApiTelegramException):
@@ -146,6 +154,7 @@ def show_subscription(chat_id, user_id, message_id=None):
             disable_web_page_preview=True,
             reply_markup=create_price_menu(user_data)
         )
+
 
 
 def create_command_logs_table():
@@ -468,6 +477,8 @@ def create_assistants_menu() -> types.InlineKeyboardMarkup:
         types.InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_profile")
     )
     return keyboard
+
+
 
 def create_experts_menu() -> types.InlineKeyboardMarkup:
     conn = connect_to_db()
@@ -1131,25 +1142,47 @@ def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval
 
     threading.Thread(target=run, daemon=True).start()
 
+def create_payment_keyboard():
+    return types.InlineKeyboardMarkup(keyboard=[
+        [
+            types.InlineKeyboardButton(
+                text="⬅️ Назад",
+                callback_data="back_to_profile"
+            )
+        ]
+    ])
 
 
 @bot.callback_query_handler(func=lambda callback: callback.data in ["buy_trial", "buy_month"])
 def buy_subscription(callback):
     user_id = callback.from_user.id
     user_data = load_user_data(user_id)
+
     if not user_data:
         print(f"[ERROR] Пользователь user_id={user_id} не найден в базе данных")
-        bot.send_message(callback.message.chat.id, "Ошибка: пользователь не найден.", reply_markup=create_main_menu())
+        bot.send_message(
+            callback.message.chat.id,
+            "Ошибка: пользователь не найден.",
+            reply_markup=create_main_menu()
+        )
         bot.answer_callback_query(callback.id)
         return
+
     try:
+        # ================= ПРОБНАЯ =================
         if callback.data == "buy_trial":
             if user_data['trial_used']:
                 print(f"[INFO] Пользователь user_id={user_id} уже использовал пробную подписку")
-                bot.send_message(callback.message.chat.id, "Вы уже использовали пробную подписку.", reply_markup=create_main_menu())
+                bot.send_message(
+                    callback.message.chat.id,
+                    "Вы уже использовали пробную подписку.",
+                    reply_markup=create_main_menu()
+                )
                 bot.answer_callback_query(callback.id)
                 return
+
             price = "99.00"
+
             payment_params = {
                 "amount": {"value": price, "currency": "RUB"},
                 "capture": True,
@@ -1163,28 +1196,34 @@ def buy_subscription(callback):
                     "customer": {"email": "sg050@yandex.ru"},
                     "items": [{
                         "description": "Пробная подписка Plus (3 дня)",
-                        "quantity": "1.00",  # Исправлено на строку
+                        "quantity": "1.00",
                         "amount": {"value": price, "currency": "RUB"},
                         "vat_code": 1
                     }]
                 },
                 "idempotency_key": str(uuid.uuid4())
             }
-            print(f"[DEBUG] Создание платежа для user_id={user_id}: {payment_params}")
+
+            print(f"[DEBUG] Создание платежа для user_id={user_id}")
             payment = Payment.create(payment_params)
-            print(f"[DEBUG] Платёж создан: id={payment.id}, status={payment.status}, confirmation_url={payment.confirmation.confirmation_url}")
             save_payment_id_for_user(user_id, payment.id)
 
-            # 🔹 запускаем мониторинг только этого платежа
+            # запускаем мониторинг платежа
             monitor_payment(user_id, payment.id)
 
+            # ✅ СООБЩЕНИЕ СО ССЫЛКОЙ + КНОПКА НАЗАД
             bot.send_message(
                 callback.message.chat.id,
-                f"Оплатите по ссылке: {payment.confirmation.confirmation_url}",
-                reply_markup=types.InlineKeyboardMarkup([[
-                    types.InlineKeyboardButton("Отменить подписку", callback_data="cancel_subscription")
-                ]])
+                (
+                    "💳 <b>Оплата пробной подписки Plus</b>\n\n"
+                    f"👉 <a href=\"{payment.confirmation.confirmation_url}\">Перейти к оплате</a>\n\n"
+                    "После успешной оплаты подписка активируется автоматически."
+                ),
+                parse_mode="HTML",
+                reply_markup=create_payment_keyboard()
             )
+
+        # ================= МЕСЯЦ =================
         elif callback.data == "buy_month":
             print(f"[DEBUG] Создание инвойса для месячной подписки: user_id={user_id}")
             bot.send_invoice(
@@ -1197,15 +1236,18 @@ def buy_subscription(callback):
                 prices=[types.LabeledPrice(label="Подписка Plus (месяц)", amount=39900)],
                 start_parameter=f"month_{user_id}",
             )
+
         bot.answer_callback_query(callback.id)
+
     except Exception as e:
         print(f"[ERROR] Ошибка при создании платежа для user_id={user_id}: {e}")
         bot.send_message(
             callback.message.chat.id,
-            f"Произошла ошибка при создании платежа. Пожалуйста, попробуйте позже или обратитесь в поддержку: https://t.me/mon_tti1",
+            "Произошла ошибка при создании платежа. Попробуйте позже.",
             reply_markup=create_main_menu()
         )
         bot.answer_callback_query(callback.id)
+
 
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def pre_checkout_query_handler(pre_checkout_query):
@@ -2401,7 +2443,7 @@ def process_text_message(text, chat_id) -> str:
 
     # ================= LOAD ASSISTANT CONFIG ======================
     config = load_assistants_config()
-    current_assistant = get_user_assistant(chat_id)
+    current_assistant = get_user_assistant(chat_id, text)
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
 
@@ -2472,7 +2514,11 @@ def handle_photo(message):
             question = "Опиши подробно, что изображено на этой фотографии: объекты, цвета, действия, эмоции и возможный контекст."
 
         # Промпт ассистента
-        current_assistant = get_user_assistant(message.from_user.id)
+        current_assistant = get_user_assistant(
+            message.from_user.id,
+            message.caption or "[photo without caption]"
+        )
+
         config = load_assistants_config()
         assistant_settings = config["assistants"].get(current_assistant, {})
         prompt = assistant_settings.get("prompt", "Вы просто бот.")

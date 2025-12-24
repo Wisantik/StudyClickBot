@@ -189,29 +189,46 @@ def set_user_assistant(user_id: int, assistant_key: str):
     finally:
         conn.close()
 
-def get_user_assistant(user_id: int) -> str:
-    print(f"[INFO] Получение ассистента для пользователя {user_id}...")
+def get_user_assistant(user_id: int, user_text: str | None = None) -> str:
+    preview = (user_text or "").replace("\n", " ")[:50]
+
+    print(
+        f"[INFO] Получение ассистента для пользователя {user_id} | "
+        f"prompt: \"{preview}\""
+    )
+
     assistant_key = r.get(user_id)
     if assistant_key:
         return assistant_key
+
     conn = connect_to_db()
     if conn is None:
         print("[ERROR] Не удалось подключиться к базе данных.")
         return None
+
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT current_assistant FROM users WHERE user_id = %s", (user_id,))
+            cur.execute(
+                "SELECT current_assistant FROM users WHERE user_id = %s",
+                (user_id,)
+            )
             result = cur.fetchone()
             if result:
                 return result[0]
             else:
-                print(f"[WARNING] Ассистент для пользователя {user_id} не найден в базе данных.")
+                print(
+                    f"[WARNING] Ассистент для пользователя {user_id} "
+                    f"не найден в базе данных."
+                )
                 return None
     except Exception as e:
-        print(f"[ERROR] Ошибка при получении ассистента из базы данных: {e}")
+        print(
+            f"[ERROR] Ошибка при получении ассистента из базы данных: {e}"
+        )
         return None
     finally:
         conn.close()
+
 
 def create_experts_table(connection):
     with connection.cursor() as cursor:
