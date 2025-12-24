@@ -119,7 +119,10 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-4o-mini"):
         {"role": "user", "content": query}
     ]
 
-    # 1) Первый вызов — модель решает сама, нужен ли tool
+    print(f"[FC] User {user_id} | model={model}")
+    print(f"[FC] User query (first 120 chars): {query[:120]!r}")
+
+    # 1️⃣ Первый вызов — модель решает, нужен ли tool
     resp = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -130,19 +133,31 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-4o-mini"):
     msg = resp.choices[0].message
     tool_calls = getattr(msg, "tool_calls", None)
 
-
-    # Если поиск не вызван — возвращаем прямой ответ
+    # ❌ TOOLS НЕ ИСПОЛЬЗОВАНЫ
     if not tool_calls:
+        print("[FC] Model decision: ❌ tools NOT used")
         return msg.content
+
+    # ✅ TOOLS ИСПОЛЬЗОВАНЫ
+    print(f"[FC] Model decision: ✅ tools USED ({len(tool_calls)})")
 
     messages.append(msg)
 
-    # Выполняем tool
+    # 2️⃣ Выполнение tool'ов
     for call in tool_calls:
+        print(f"[FC] Tool called: {call.function.name}")
+
         if call.function.name == "web_search":
             args = json.loads(call.function.arguments)
-            search_query = args["query"]
+            search_query = args.get("query", "")
+            print(f"[FC] web_search query: {search_query!r}")
+
             result = _perform_web_search(search_query)
+
+            if not result:
+                print("[FC] web_search result: ❌ empty")
+            else:
+                print(f"[FC] web_search result length: {len(result)}")
 
             messages.append({
                 "tool_call_id": call.id,
@@ -151,10 +166,12 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-4o-mini"):
                 "content": result
             })
 
-    # 2) Ответ после обработки результата
+    # 3️⃣ Финальный ответ модели с результатами tool
     final = client.chat.completions.create(
         model=model,
         messages=messages
     )
+
+    print("[FC] Final answer generated")
 
     return final.choices[0].message.content

@@ -2482,10 +2482,22 @@ def update_user_tokens(user_id, input_tokens, output_tokens):
 def generate_referral_link(user_id):
     return f"https://t.me/fiinny_bot?start={user_id}"
 
+import re
+
+URL_RE = re.compile(r"https?://\S+")
+
 def process_text_message(text, chat_id) -> str:
     user_data = load_user_data(chat_id)
     if not user_data:
-        return "Ошибка: пользователь не найден."
+        return "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
+
+    # 🔒 Блок ссылок без подписки
+    if URL_RE.search(text):
+        if user_data.get('subscription_plan') not in ['plus', 'plus_trial', 'plus_month']:
+            return (
+                "🔗 Анализ ссылок доступен только по подписке Plus.\n\n"
+                "👉 Оформите подписку: /pay"
+            )
 
     if not user_data.get("is_subscribed", True):
         return "🚫 Для использования бота подпишитесь на канал."
