@@ -24,7 +24,18 @@ client = OpenAI(api_key=api_key, base_url="https://api.openai.com/v1")
 def _call_search_api(search_query):
     try:
         with DDGS() as ddgs:
-            results = list(ddgs.text(search_query, region="ru-ru", safesearch="moderate", max_results=None))
+            results = list(
+                ddgs.text(
+                    search_query,
+                    region="ru-ru",
+                    safesearch="moderate",
+                    max_results=5
+                )
+            )
+
+        print("[FC] web_search RAW results:")
+        for r in results:
+            print(r)
 
         formatted_results = []
         for r in results:
@@ -32,15 +43,16 @@ def _call_search_api(search_query):
                 formatted_results.append({
                     "title": r.get("title", ""),
                     "snippet": r.get("body", ""),
-                    "link": r["link"]
+                    "link": r.get("href", "")
                 })
-        print("[FC] web_search RAW result:")
-        print(results)
 
+        print(f"[FC] web_search formatted count: {len(formatted_results)}")
         return formatted_results
 
-    except Exception:
+    except Exception as e:
+        print(f"[FC] web_search ERROR: {e}")
         return []
+
 
 
 def _fetch_page_content(url):
