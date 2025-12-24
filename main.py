@@ -2346,6 +2346,10 @@ def read_docx(file):
         content.append(para.text)
     return "\n".join(content)
 
+import csv
+import pandas as pd
+
+
 def process_document(message):
     try:
         user_data = load_user_data(message.from_user.id)
@@ -2354,61 +2358,70 @@ def process_document(message):
         downloaded_file = bot.download_file(file_info.file_path)
         file_extension = message.document.file_name.split('.')[-1].lower()
 
-        # ===== ЧТЕНИЕ ФАЙЛА =====
+        # ===== TXT =====
         if file_extension == 'txt':
             content = downloaded_file.decode('utf-8', errors='ignore')
 
+        # ===== PDF =====
         elif file_extension == 'pdf':
             with io.BytesIO(downloaded_file) as pdf_file:
                 content = read_pdf(pdf_file)
 
+        # ===== DOCX =====
         elif file_extension == 'docx':
             with io.BytesIO(downloaded_file) as docx_file:
                 content = read_docx(docx_file)
 
+        # ===== CSV =====
+        elif file_extension == 'csv':
+            try:
+                decoded = downloaded_file.decode('utf-8', errors='ignore')
+                reader = csv.reader(io.StringIO(decoded))
+                rows = []
+                for row in reader:
+                    rows.append(" | ".join(row))
+                content = "\n".join(rows)
+            except Exception as e:
+                bot.send_message(
+                    message.chat.id,
+                    f"Ошибка при чтении CSV файла: {e}"
+                )
+                return
+
+        # ===== XLSX =====
+        elif file_extension == 'xlsx':
+            try:
+                content_parts = []
+                excel = pd.read_excel(
+                    io.BytesIO(downloaded_file),
+                    sheet_name=None
+                )
+
+                for sheet_name, df in excel.items():
+                    content_parts.append(f"[Лист: {sheet_name}]")
+                    content_parts.append(
+                        df.fillna("")
+                        .astype(str)
+                        .to_csv(index=False, sep=" | ")
+                    )
+
+                content = "\n".join(content_parts)
+            except Exception as e:
+                bot.send_message(
+                    message.chat.id,
+                    f"Ошибка при чтении XLSX файла: {e}"
+                )
+                return
+
+        # ===== НЕПОДДЕРЖИВАЕМЫЙ =====
         else:
             bot.send_message(
                 message.chat.id,
-                "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx."
+                "Неверный формат файла.\n"
+                "Поддерживаются: TXT, PDF, DOCX, CSV, XLSX."
             )
             return
 
-        if not content or not content.strip():
-            bot.send_message(
-                message.chat.id,
-                "Файл пуст или в нём нет извлекаемого текста."
-            )
-            return
-
-        user_data['last_document'] = {
-            'filename': message.document.file_name,
-            'content': content,
-            'uploaded_at': datetime.datetime.utcnow().isoformat()
-        }
-        save_user_data(user_data)
-
-        caption = (message.caption or "").strip()
-
-        # ===== ЕСЛИ ЕСТЬ ВОПРОС =====
-        if caption:
-            assistant_key = get_user_assistant(message.from_user.id)
-            cfg = load_assistants_config()
-            assistant_settings = cfg["assistants"].get(assistant_key, {})
-            prompt = assistant_settings.get("prompt", "Вы помощник.")
-
-            combined = (
-                f"[Файл: {message.document.file_name}]\n\n"
-                f"{content}\n\n"
-                f"Вопрос пользователя: {caption}"
-            )
-
-            bot.send_chat_action(message.chat.id, "typing")
-            ai_response = process_text_message(
-                combined,
-                message.chat.id
-            )
-            send_in_chunks(message, ai_response)
-            return
 
         # ===== БЕЗ ВОПРОСА — АНАЛИЗ =====
         chunks = _chunk_text_full(content, max_chars=8000, overlap=400)
