@@ -2289,88 +2289,33 @@ def _analyze_chunks_with_ai(chunks: list, filename: str, message, user_query: st
     return final_analysis
 
 
-# Новый хендлер документов — сохраняет файл в user_data + отвечает с учётом подписи (caption) или даёт аналитический ответ
 @bot.message_handler(content_types=['document'])
 def handle_document(message):
     user_data = load_user_data(message.from_user.id)
     if not user_data:
-        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте /start.", reply_markup=create_main_menu())
+        bot.reply_to(
+            message,
+            "Ошибка: пользователь не найден. Попробуйте /start.",
+            reply_markup=create_main_menu()
+        )
         return
 
     if user_data.get('subscription_plan') == 'free':
-        bot.reply_to(message, "Для чтения документов требуется подписка Plus. Выберите тариф: /pay", reply_markup=create_main_menu())
+        bot.reply_to(
+            message,
+            "Для чтения документов требуется подписка Plus. Выберите тариф: /pay",
+            reply_markup=create_main_menu()
+        )
         return
 
-    try:
-        file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        file_extension = message.document.file_name.split('.')[-1].lower()
+    bot.reply_to(message, "📄 Документ получен, начинаю обработку…")
 
-        # читаем весь документ (никаких обрезок при чтении)
-        if file_extension == 'txt':
-            content = downloaded_file.decode('utf-8', errors='ignore')
-        elif file_extension == 'pdf':
-            with io.BytesIO(downloaded_file) as pdf_file:
-                content = read_pdf(pdf_file)  # ваша функция, возвращающая весь текст
-        elif file_extension == 'docx':
-            with io.BytesIO(downloaded_file) as docx_file:
-                content = read_docx(docx_file)
-        else:
-            bot.reply_to(message, "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx.", reply_markup=create_main_menu())
-            return
+    threading.Thread(
+        target=process_document,
+        args=(message,),
+        daemon=True
+    ).start()
 
-        if not content or not content.strip():
-            bot.reply_to(message, "Файл пуст или в нём нет извлекаемого текста (возможно, это изображение/pdf-скан).", reply_markup=create_main_menu())
-            return
-
-        user_data['last_document'] = {
-            'filename': message.document.file_name,
-            'content': content,
-            'uploaded_at': datetime.datetime.utcnow().isoformat()
-        }
-        save_user_data(user_data)
-
-        caption = (message.caption or "").strip()
-        if caption:
-            # build assistant header safely
-            assistant_key = user_data.get('assistant') or user_data.get('assistant_id') or user_data.get('current_assistant') or user_data.get('last_assistant')
-            assistant_header = ""
-            if assistant_key:
-                try:
-                    cfg = get_assistants_cached() if 'get_assistants_cached' in globals() else load_assistants_config()
-                    assistants = cfg.get("assistants", {}) if isinstance(cfg, dict) else {}
-                    info = assistants.get(assistant_key)
-                    if not info:
-                        for k, v in assistants.items():
-                            if assistant_key.lower() in k.lower() or assistant_key.lower() == v.get("name","").lower():
-                                info = v
-                                break
-                    if info:
-                        ass_name = info.get("name", assistant_key)
-                        ass_prompt = info.get("prompt") or info.get("system_prompt") or info.get("system") or ""
-                        assistant_header = f"[Ассистент: {ass_name}]\n{ass_prompt}\n\n" if ass_prompt else f"[Ассистент: {ass_name}]\n\n"
-                except Exception as e:
-                    print(f"[WARN] assistant header build failed: {e}")
-
-            combined = assistant_header + f"[Файл: {message.document.file_name}]\n\n{content}\n\nВопрос пользователя: {caption}"
-
-            # теперь вызывать process_text_message как раньше
-            bot.send_chat_action(message.chat.id, "typing")
-            ai_response = process_text_message(combined, message.chat.id)
-            send_in_chunks(message, ai_response)
-            return
-
-
-        # Если подписи нет или прямой вызов упал — делаем безопасный chunked анализ (без отправки исходника)
-        chunks = _chunk_text_full(content, max_chars=8000, overlap=400)
-        user_query = caption if caption else None
-        final_analysis = _analyze_chunks_with_ai(chunks, message.document.file_name, message, user_query=user_query)
-
-        # шлём ответ частями (телеграм лимиты)
-        send_in_chunks(message, final_analysis)
-    except Exception as e:
-        print(f"[ERROR] handle_document exception: {e}")
-        bot.reply_to(message, f"Ошибка при чтении файла: {e}", reply_markup=create_main_menu())
 
 
 def send_in_chunks(message, text, chunk_size=4000):
@@ -2400,6 +2345,88 @@ def read_docx(file):
     for para in document.paragraphs:
         content.append(para.text)
     return "\n".join(content)
+
+def process_document(message):
+    try:
+        user_data = load_user_data(message.from_user.id)
+
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        file_extension = message.document.file_name.split('.')[-1].lower()
+
+        # ===== ЧТЕНИЕ ФАЙЛА =====
+        if file_extension == 'txt':
+            content = downloaded_file.decode('utf-8', errors='ignore')
+
+        elif file_extension == 'pdf':
+            with io.BytesIO(downloaded_file) as pdf_file:
+                content = read_pdf(pdf_file)
+
+        elif file_extension == 'docx':
+            with io.BytesIO(downloaded_file) as docx_file:
+                content = read_docx(docx_file)
+
+        else:
+            bot.send_message(
+                message.chat.id,
+                "Неверный формат файла. Поддерживаются: .txt, .pdf, .docx."
+            )
+            return
+
+        if not content or not content.strip():
+            bot.send_message(
+                message.chat.id,
+                "Файл пуст или в нём нет извлекаемого текста."
+            )
+            return
+
+        user_data['last_document'] = {
+            'filename': message.document.file_name,
+            'content': content,
+            'uploaded_at': datetime.datetime.utcnow().isoformat()
+        }
+        save_user_data(user_data)
+
+        caption = (message.caption or "").strip()
+
+        # ===== ЕСЛИ ЕСТЬ ВОПРОС =====
+        if caption:
+            assistant_key = get_user_assistant(message.from_user.id)
+            cfg = load_assistants_config()
+            assistant_settings = cfg["assistants"].get(assistant_key, {})
+            prompt = assistant_settings.get("prompt", "Вы помощник.")
+
+            combined = (
+                f"[Файл: {message.document.file_name}]\n\n"
+                f"{content}\n\n"
+                f"Вопрос пользователя: {caption}"
+            )
+
+            bot.send_chat_action(message.chat.id, "typing")
+            ai_response = process_text_message(
+                combined,
+                message.chat.id
+            )
+            send_in_chunks(message, ai_response)
+            return
+
+        # ===== БЕЗ ВОПРОСА — АНАЛИЗ =====
+        chunks = _chunk_text_full(content, max_chars=8000, overlap=400)
+        final_analysis = _analyze_chunks_with_ai(
+            chunks,
+            message.document.file_name,
+            message
+        )
+
+        send_in_chunks(message, final_analysis)
+
+    except Exception as e:
+        print(f"[ERROR] process_document: {e}")
+        bot.send_message(
+            message.chat.id,
+            "❌ Ошибка при обработке документа."
+        )
+
 
 def update_user_tokens(user_id, input_tokens, output_tokens):
     check_and_update_tokens(user_id)
