@@ -1124,9 +1124,26 @@ def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval
 
                 if payment.status == "succeeded":
                     save_payment_method_for_user(user_id, payment.payment_method.id)
-                    set_user_subscription(user_id, "plus_trial")
 
-                    # 🔹 Отмечаем, что триал уже использован
+                    now = datetime.datetime.utcnow()
+                    expires_at = now + datetime.timedelta(days=3)
+
+                    conn = connect_to_db()
+                    try:
+                        with conn.cursor() as cursor:
+                            cursor.execute("""
+                                UPDATE users
+                                SET subscription_plan = %s,
+                                    subscription_start_date = %s,
+                                    subscription_expires_at = %s,
+                                    subscription_autorenew = TRUE
+                                WHERE user_id = %s
+                            """, ("plus_trial", now, expires_at, user_id))
+
+                            conn.commit()
+                    finally:
+                        conn.close()
+
                     user_data = load_user_data(user_id)
                     if user_data:
                         user_data['trial_used'] = True
@@ -1138,13 +1155,7 @@ def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval
                         reply_markup=create_main_menu()
                     )
                     return
-                elif payment.status in ["canceled", "failed"]:
-                    bot.send_message(
-                        user_id,
-                        "❌ Оплата не прошла. Попробуйте снова: /pay",
-                        reply_markup=create_main_menu()
-                    )
-                    return
+
             except Exception as e:
                 print(f"[ERROR] Ошибка проверки платежа {payment_id} для {user_id}: {e}")
 
@@ -1325,9 +1336,10 @@ def check_auto_renewal():
             cursor.execute("""
                 SELECT user_id FROM users
                 WHERE subscription_plan = 'plus_trial'
-                AND subscription_end_date <= %s
-                AND auto_renewal = TRUE
-            """, (datetime.datetime.now().date(),))
+                AND subscription_expires_at <= NOW()
+                AND subscription_autorenew = TRUE
+            """)
+
             users = cursor.fetchall()
             print(f"[DEBUG] Найдено {len(users)} пользователей для автопродления")
             for user in users:
@@ -1356,7 +1368,18 @@ def check_auto_renewal():
                         print(f"[DEBUG] Платёж автопродления создан: id={payment.id}, status={payment.status}")
 
                         if payment.status == "succeeded":
-                            set_user_subscription(user_id, "plus_month")
+                            now = datetime.datetime.utcnow()
+                            expires_at = now + datetime.timedelta(days=30)
+
+                            cursor.execute("""
+                                UPDATE users
+                                SET subscription_plan = 'plus_month',
+                                    subscription_start_date = %s,
+                                    subscription_expires_at = %s
+                                WHERE user_id = %s
+                            """, (now, expires_at, user_id))
+                            conn.commit()
+
                             bot.send_message(
                                 user_id,
                                 "✅ Ваша подписка продлена на месяц за 399₽!",
@@ -2482,6 +2505,47 @@ def update_user_tokens(user_id, input_tokens, output_tokens):
 def generate_referral_link(user_id):
     return f"https://t.me/fiinny_bot?start={user_id}"
 
+
+def check_and_handle_subscription_expiration(user_id: int, user_data: dict):
+    """
+    Проверяет, истекла ли подписка (trial / plus).
+    Если истекла — переводит пользователя на free
+    и возвращает текст для ответа пользователю.
+    Если всё ок — возвращает None.
+    """
+    expires_at = user_data.get("subscription_expires_at")
+    if not expires_at:
+        return None
+
+    try:
+        expires_at = datetime.datetime.fromisoformat(str(expires_at))
+    except Exception:
+        return None
+
+    if datetime.datetime.utcnow() <= expires_at:
+        return None
+
+    print(f"[SUBSCRIPTION] Subscription expired for user {user_id}")
+
+    conn = connect_to_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                UPDATE users
+                SET subscription_plan = 'free',
+                    subscription_expires_at = NULL
+                WHERE user_id = %s
+            """, (user_id,))
+            conn.commit()
+    finally:
+        conn.close()
+
+    return (
+        "⛔ Ваша подписка закончилась.\n\n"
+        "Чтобы продолжить — оформите подписку: /pay"
+    )
+
+
 import re
 
 URL_RE = re.compile(r"https?://\S+")
@@ -2490,6 +2554,11 @@ def process_text_message(text, chat_id) -> str:
     user_data = load_user_data(chat_id)
     if not user_data:
         return "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
+
+    expired_message = check_and_handle_subscription_expiration(chat_id, user_data)
+    if expired_message:
+        return expired_message
+
 
     # 🔒 Блок ссылок без подписки
     if URL_RE.search(text):
