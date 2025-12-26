@@ -163,9 +163,14 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-4o-mini"):
         print(f"[FC] Tool called: {call.function.name}")
 
         if call.function.name == "web_search":
+            tools_used = True
+
             args = json.loads(call.function.arguments)
             search_query = args.get("query", "")
             print(f"[FC] web_search query: {search_query!r}")
+
+            result = _perform_web_search(search_query)
+            web_search_result_text = result or ""
 
             result = _perform_web_search(search_query)
 
@@ -179,6 +184,24 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-4o-mini"):
                 "role": "tool",
                 "name": "web_search",
                 "content": result
+            })
+        if tools_used:
+            tools_policy = (
+                "ВАЖНО:\n"
+                "- Ты использовал инструмент web_search.\n"
+                "- Тебе ЗАПРЕЩЕНО объяснять пользователю, как искать вручную.\n"
+                "- Ты ОБЯЗАН использовать результаты web_search в ответе.\n"
+                "- Если результаты поиска нерелевантны — прямо скажи: "
+                "'Поиск дал нерелевантные результаты'.\n"
+                "- Не давай общих советов и инструкций без ссылок из поиска.\n"
+                "- Используй конкретные ссылки, названия и факты из результатов."
+            )
+
+            print("[FC] Enforcing web_search usage policy")
+
+            messages.append({
+                "role": "system",
+                "content": tools_policy
             })
 
     # 3️⃣ Финальный ответ модели с результатами tool
