@@ -3,6 +3,7 @@ import json
 import re
 import requests
 from bs4 import BeautifulSoup
+from database import get_chat_history
 from ddgs import DDGS
 from openai import OpenAI
 
@@ -129,10 +130,14 @@ tools = [
 # ============================================================
 
 def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
+    history = get_chat_history(user_id, limit=10)
+
     messages = [
         {"role": "system", "content": prompt},
+        *history,
         {"role": "user", "content": query}
     ]
+
 
     print(f"[FC] User {user_id} | model={model}")
     print(f"[FC] User query (first 120 chars): {query[:120]!r}")
