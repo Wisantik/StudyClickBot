@@ -2741,7 +2741,7 @@ def voice(message):
             wav_temp_file = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
             audio.export(wav_temp_file.name, format="wav")
             with open(wav_temp_file.name, 'rb') as wav_file:
-                response = openai.Audio.transcribe(
+                response = client.audio.transcriptions.create(
                     model="whisper-1",
                     file=wav_file
                 )
