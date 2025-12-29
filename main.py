@@ -2655,7 +2655,8 @@ def handle_photo(message):
     try:
         # 📷 берём максимальное фото
         file_info = bot.get_file(message.photo[-1].file_id)
-        image_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
+        downloaded_file = bot.download_file(file_info.file_path)
+
 
         caption = (message.caption or "").strip()
         question = caption if caption else (
@@ -2678,12 +2679,13 @@ def handle_photo(message):
                 "content": [
                     {"type": "text", "text": question},
                     {
-                        "type": "image_url",
-                        "image_url": {"url": image_url}
+                        "type": "input_image",
+                        "image_bytes": downloaded_file
                     }
                 ]
             }
         ]
+
 
         bot.send_chat_action(message.chat.id, "typing")
 
