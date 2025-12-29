@@ -2635,44 +2635,42 @@ def process_text_message(text, chat_id) -> str:
     return ai_response
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
-    user_data = load_user_data(message.from_user.id)
+    user_id = message.from_user.id
+    user_data = load_user_data(user_id)
+
     if not user_data:
-        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте /start.", reply_markup=None)
+        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте /start.")
         return
-    
+
     if not ensure_subscription(message):
         return
 
     if user_data.get('subscription_plan') == 'free':
-        bot.reply_to(message, "Для анализа изображений требуется подписка Plus. Выберите тариф: /pay", reply_markup=None)
+        bot.reply_to(
+            message,
+            "🖼 Анализ изображений доступен только по подписке Plus.\n/pay"
+        )
         return
 
     try:
-        # Берём фото наибольшего размера
+        # 📷 берём максимальное фото
         file_info = bot.get_file(message.photo[-1].file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
+        image_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_info.file_path}"
 
-        # Кодируем в base64
-        base64_image = base64.b64encode(downloaded_file).decode('utf-8')
-
-        # Промпт: используем caption или дефолтный
         caption = (message.caption or "").strip()
-        if caption:
-            question = f"Пользовательский вопрос: {caption}"
-        else:
-            question = "Опиши подробно, что изображено на этой фотографии: объекты, цвета, действия, эмоции и возможный контекст."
+        question = caption if caption else (
+            "Опиши подробно, что изображено на этой фотографии: объекты, цвета, действия и контекст."
+        )
 
-        # Промпт ассистента
         current_assistant = get_user_assistant(
-            message.from_user.id,
-            message.caption or "[photo without caption]"
+            user_id,
+            caption or "[photo]"
         )
 
         config = load_assistants_config()
         assistant_settings = config["assistants"].get(current_assistant, {})
-        prompt = assistant_settings.get("prompt", "Вы просто бот.")
+        prompt = assistant_settings.get("prompt", "Вы полезный ассистент.")
 
-        # Формируем сообщение для OpenAI (мультимодальное)
         messages = [
             {"role": "system", "content": prompt},
             {
@@ -2681,49 +2679,33 @@ def handle_photo(message):
                     {"type": "text", "text": question},
                     {
                         "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{base64_image}"
-                        }
+                        "image_url": {"url": image_url}
                     }
                 ]
             }
         ]
 
-        # Проверяем токены (примерно: текст + ~1.5x размер фото в символах)
-        input_tokens = len(question) + len(base64_image) * 3 // 4  # Примерная оценка
-        if user_data['subscription_plan'] == 'free':
-            check_and_update_tokens(message.from_user.id)
-            user_data = load_user_data(message.from_user.id)
-            if user_data['daily_tokens'] < input_tokens:
-                bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay", reply_markup=None)
-                return
-        if not update_user_tokens(message.from_user.id, input_tokens, 0):
-            bot.reply_to(message, "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay", reply_markup=None)
-            return
-
-        # Отправляем запрос к OpenAI (используем gpt-5.1-2025-11-13 для vision)
         bot.send_chat_action(message.chat.id, "typing")
-        response = openai.ChatCompletion.create(
-            model="gpt-5.1-2025-11-13",  # Или "gpt-4-turbo" для лучшего качества
+
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
             messages=messages,
-            max_completion_tokens=1000  # Лимит ответа
+            max_tokens=1000
         )
+
         ai_response = response.choices[0].message.content
 
-        # Обновляем токены для вывода
-        output_tokens = len(ai_response)
-        update_user_tokens(message.from_user.id, 0, output_tokens)
-
-        # Сохраняем историю (опционально)
         store_message_in_db(message.chat.id, "user", question)
         store_message_in_db(message.chat.id, "assistant", ai_response)
 
-        # Отправляем ответ
-        bot.reply_to(message, ai_response, reply_markup=None, parse_mode='HTML' if '<' in ai_response else None)
+        bot.reply_to(message, ai_response)
 
     except Exception as e:
-        print(f"[ERROR] handle_photo exception: {e}")
-        bot.reply_to(message, f"Ошибка при анализе изображения: {str(e)}. Проверьте формат или попробуйте снова.", reply_markup=None)
+        print(f"[ERROR] handle_photo: {e}")
+        bot.reply_to(
+            message,
+            "❌ Ошибка при анализе изображения. Попробуйте позже."
+        )
 
 @bot.message_handler(content_types=["voice"])
 def voice(message):
