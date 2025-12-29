@@ -2745,7 +2745,7 @@ def voice(message):
                     model="whisper-1",
                     file=wav_file
                 )
-        recognized_text = response['text'].strip()
+        recognized_text = response.text.strip()
         if len(recognized_text) > 1000000:
             bot.reply_to(message, "Текст слишком длинный, сократите его.", reply_markup=create_main_menu())
             return
