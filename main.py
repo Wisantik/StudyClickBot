@@ -2633,6 +2633,7 @@ def process_text_message(text, chat_id) -> str:
 
     # Возвращаем ответ пользователю
     return ai_response
+
 @bot.message_handler(content_types=['photo'])
 def handle_photo(message):
     user_id = message.from_user.id
@@ -2656,7 +2657,7 @@ def handle_photo(message):
         # 📷 берём максимальное фото
         file_info = bot.get_file(message.photo[-1].file_id)
         downloaded_file = bot.download_file(file_info.file_path)
-
+        base64_image = base64.b64encode(downloaded_file).decode("utf-8")
 
         caption = (message.caption or "").strip()
         question = caption if caption else (
@@ -2679,12 +2680,15 @@ def handle_photo(message):
                 "content": [
                     {"type": "text", "text": question},
                     {
-                        "type": "input_image",
-                        "image_bytes": downloaded_file
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{base64_image}"
+                        }
                     }
                 ]
             }
         ]
+
 
 
         bot.send_chat_action(message.chat.id, "typing")
