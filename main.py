@@ -113,7 +113,7 @@ def get_subscription_text():
     return """
 <b>Подписка Plus</b>
 
-<b>🚀 Доступ к GPT-5</b> — безлимит
+<b>🚀 Доступ к GPT-5.2</b> — безлимит
 
 📄 Чтение файлов до 2 ГБ —
 <b>PDF, XLSX, DOCX, CSV, TXT</b> — безлимит
@@ -1257,7 +1257,7 @@ def buy_subscription(callback):
             bot.send_invoice(
                 chat_id=callback.message.chat.id,
                 title="Подписка Plus (месяц)",
-                description="Месячная подписка Plus: безлимитный доступ к GPT-5, веб-поиск, обработка PDF и голосовых сообщений.",
+                description="Месячная подписка Plus: безлимитный доступ к GPT-5.2, веб-поиск, обработка PDF и голосовых сообщений.",
                 invoice_payload=f"month_subscription_{user_id}",
                 provider_token=pay_token,
                 currency="RUB",
@@ -1547,9 +1547,9 @@ def profile_menu_callback_handler(call):
 
         # 🔹 Квота токенов
         if user_data['subscription_plan'] in ['plus_trial', 'plus_month']:
-            quota_text = "GPT-5: безлимит ✅"
+            quota_text = "GPT-5.2: безлимит ✅"
         else:
-            quota_text = f"GPT-5: {user_data['daily_tokens']} символов"
+            quota_text = f"GPT-5.2: {user_data['daily_tokens']} символов"
 
         profile_text = f"""
 ID: {user_id}
@@ -1819,9 +1819,9 @@ def show_profile(message):
 
     # 🔹 Квота токенов
     if user_data['subscription_plan'] in ['plus_trial', 'plus_month']:
-        quota_text = "GPT-5: безлимит ✅"
+        quota_text = "GPT-5.2: безлимит ✅"
     else:
-        quota_text = f"GPT-5: {user_data['daily_tokens']} символов"
+        quota_text = f"GPT-5.2: {user_data['daily_tokens']} символов"
 
     profile_text = f"""
 ID: {user_id}
@@ -2035,7 +2035,7 @@ def send_welcome(message):
 🎙 Голосовой чат — общайтесь с ботом голосом
 🌍 Поиск по интернету — всегда актуальные данные
 🤖 Оригинальный GPT от OpenAI
-🧠 GPT-5 — умные ответы в любой теме
+🧠 GPT-5.2 — умные ответы в любой теме
 📂 Умеет работать с файлами PDF, XLSX, DOCX, CSV, TXT
 🔗 Чтение ссылок — разбор содержимого страниц
 🖼 Умеет распознавать картинки
