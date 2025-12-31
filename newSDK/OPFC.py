@@ -102,11 +102,34 @@ def _perform_web_search(query):
 
     return final_text
 
+import requests
+from bs4 import BeautifulSoup
+
+def fetch_url_content(url: str, max_chars: int = 12000) -> str:
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+        r = requests.get(url, headers=headers, timeout=15)
+        r.raise_for_status()
+
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        # удаляем мусор
+        for tag in soup(["script", "style", "noscript"]):
+            tag.decompose()
+
+        text = soup.get_text(separator="\n")
+        text = "\n".join(line.strip() for line in text.splitlines() if line.strip())
+
+        return text[:max_chars]
+
+    except Exception as e:
+        return f"ERROR: Не удалось загрузить страницу: {e}"
 
 # ============================================================
 #                       TOOLS
 # ============================================================
-
 tools = [
     {
         "type": "function",
@@ -121,8 +144,26 @@ tools = [
                 "required": ["query"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_url",
+            "description": "Загружает содержимое страницы по URL и возвращает текст для анализа",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "Полный URL страницы"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
     }
 ]
+
 
 
 # ============================================================
@@ -166,6 +207,21 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
     # 2️⃣ Выполнение tool'ов
     for call in tool_calls:
         print(f"[FC] Tool called: {call.function.name}")
+        if call.function.name == "fetch_url":
+            args = json.loads(call.function.arguments)
+            url = args.get("url")
+
+            print(f"[FC] fetch_url: {url}")
+
+            content = fetch_url_content(url)
+
+            messages.append({
+                "tool_call_id": call.id,
+                "role": "tool",
+                "name": "fetch_url",
+                "content": content
+            })
+
 
         if call.function.name == "web_search":
             tools_used = True
@@ -199,7 +255,8 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
                 "- Если результаты поиска нерелевантны — прямо скажи: "
                 "'Поиск дал нерелевантные результаты'.\n"
                 "- Не давай общих советов и инструкций без ссылок из поиска.\n"
-                "- Используй конкретные ссылки, названия и факты из результатов."
+                "- Используй конкретные ссылки, названия и факты из результатов. \n"
+                "Если ты используешь fetch_url: - ты обязан опираться на полученный контент- если контент пуст или нерелевантен — скажи об этом прямо- запрещено говорить, что у тебя нет доступа к ссылке"
             )
 
             print("[FC] Enforcing web_search usage policy")
