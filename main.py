@@ -117,6 +117,7 @@ def get_subscription_text():
 
 📄 Чтение файлов до 2 ГБ —
 <b>PDF, XLSX, DOCX, CSV, TXT</b> — безлимит
+📝 Запоминает контекст диалога
 
 🔗 Чтение ссылок — безлимит
 
@@ -212,11 +213,7 @@ def normalize_command(command: str) -> str:
         "cancel": "❌ Отмена подписки",
         "open_subscription_menu": "💳 Открытие меню подписки",
         "show_pay_menu": "💳 Открытие меню подписки",
-        "search_on": "🔍 Включить веб-поиск",
-        "search_off": "🔍 Выключить веб-поиск",
         "search_denied_no_subscription": "🚫 Попытка веб-поиска без подписки",
-        "toggle_web_on": "🔍 Включить веб-поиск",
-        "toggle_web_off": "🔍 Выключить веб-поиск",
         "support": "📞 Поддержка",
         "show_support": "📞 Поддержка (из профиля)",
         "clear_history": "🗑 Очистить историю чата",
@@ -1539,12 +1536,6 @@ def profile_menu_callback_handler(call):
             remaining_days = (subscription_end_date - today).days
             if remaining_days < 0:
                 remaining_days = 0
-
-        # 🔹 Веб-поиск
-        web_search_status = "включён" if user_data['web_search_enabled'] else \
-            "выключен" if user_data['subscription_plan'].startswith('plus_') else \
-            "недоступен (требуется подписка Plus)"
-
         # 🔹 Квота токенов
         if user_data['subscription_plan'] in ['plus_trial', 'plus_month']:
             quota_text = "GPT-5.2: безлимит ✅"
@@ -1560,7 +1551,6 @@ ID: {user_id}
             profile_text += f"Подписка активна ещё {remaining_days} дней\n"
 
         profile_text += f"""
-Веб-поиск: {web_search_status}
 
 Оставшаяся квота:
 {quota_text}
@@ -1682,28 +1672,6 @@ def language_callback_handler(call):
         )
     bot.answer_callback_query(call.id)
 
-@bot.message_handler(commands=['search'])
-@bot.message_handler(func=lambda message: message.text == "🔍 Интернет поиск")
-def search_handler(message):
-    user_id = message.from_user.id
-    user_data = load_user_data(user_id)
-    if not user_data:
-        bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.", reply_markup=create_main_menu())
-        return
-    if user_data['subscription_plan'] == 'free':
-        bot.reply_to(
-            message,
-            "🌐 Веб-поиск доступен только с подпиской Plus.\nПодпишитесь, чтобы получить доступ к этой функции!",
-            reply_markup=create_subscription_required_keyboard()
-        )
-        log_command(user_id, "search_denied_no_subscription")
-        return
-    new_state = not user_data['web_search_enabled']
-    user_data['web_search_enabled'] = new_state
-    save_user_data(user_data)
-    log_command(user_id, f"search_{'on' if new_state else 'off'}")
-    status_text = "включён" if new_state else "выключен"
-    bot.reply_to(message, f"Веб-поиск {status_text}.", reply_markup=create_main_menu())
 
 @bot.message_handler(commands=['support'])
 @bot.message_handler(func=lambda message: message.text == "📞 Поддержка")
@@ -1812,11 +1780,6 @@ def show_profile(message):
         if remaining_days < 0:
             remaining_days = 0
 
-    # 🔹 Веб-поиск
-    web_search_status = "включён" if user_data['web_search_enabled'] else \
-        "выключен" if user_data['subscription_plan'].startswith('plus_') else \
-        "недоступен (требуется подписка Plus)"
-
     # 🔹 Квота токенов
     if user_data['subscription_plan'] in ['plus_trial', 'plus_month']:
         quota_text = "GPT-5.2: безлимит ✅"
@@ -1832,7 +1795,6 @@ ID: {user_id}
         profile_text += f"Подписка активна ещё {remaining_days} дней\n"
 
     profile_text += f"""
-Веб-поиск: {web_search_status}
 
 Оставшаяся квота:
 {quota_text}
@@ -1909,7 +1871,6 @@ def show_stats_admin(message):
             "Профиль": {},
             "Ассистенты": {},
             "Подписки": {},
-            "Веб-поиск": {},
             "Поддержка": {},
             "Эксперты": {},
             "Платежи/прочее": {},
@@ -1923,8 +1884,6 @@ def show_stats_admin(message):
                 groups["Ассистенты"][cmd] = cnt
             elif "Подписк" in cmd or "Купить" in cmd or "Отмена подписки" in cmd:
                 groups["Подписки"][cmd] = cnt
-            elif "веб-поиск" in cmd or "Интернет поиск" in cmd or "Включить веб-поиск" in cmd or "Выключить веб-поиск" in cmd or "Попытка веб-поиска" in cmd:
-                groups["Веб-поиск"][cmd] = cnt
             elif "Поддержк" in cmd:
                 groups["Поддержка"][cmd] = cnt
             elif "Эксперт" in cmd:
