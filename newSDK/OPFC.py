@@ -196,8 +196,11 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
 
     # ❌ TOOLS НЕ ИСПОЛЬЗОВАНЫ
     if not tool_calls:
-        print("[FC] Model decision: ❌ tools NOT used")
+        print("[FC] ⚠️ tools NOT used")
+        print("[FC] Assistant content preview:")
+        print(msg.content[:300])
         return msg.content
+
 
     # ✅ TOOLS ИСПОЛЬЗОВАНЫ
     print(f"[FC] Model decision: ✅ tools USED ({len(tool_calls)})")
@@ -247,6 +250,10 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
                 "content": result
             })
         if tools_used:
+            print("[FC] 🔧 tools USED:")
+            for call in tool_calls:
+                print(f" - {call.function.name}")
+
             tools_policy = (
                 "ВАЖНО:\n"
                 "- Ты использовал инструмент web_search.\n"
