@@ -172,6 +172,7 @@ tools = [
 
 def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
     history = get_chat_history(user_id, limit=10)
+    tools_used = []
 
     messages = [
         {"role": "system", "content": prompt},
