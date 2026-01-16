@@ -1527,13 +1527,16 @@ def profile_menu_callback_handler(call):
             )
 
     elif call.data == "back_to_profile":
+        subscription_start_date = user_data.get('subscription_start_date')
         subscription_end_date = user_data.get('subscription_end_date')
         remaining_days = None
+
         if user_data['subscription_plan'] != 'free' and subscription_end_date:
             today = datetime.datetime.now().date()
             remaining_days = (subscription_end_date - today).days
             if remaining_days < 0:
                 remaining_days = 0
+
         # 🔹 Квота токенов
         if user_data['subscription_plan'] in ['plus_trial', 'plus_month']:
             quota_text = "GPT-5.2: безлимит ✅"
@@ -1545,9 +1548,17 @@ ID: {user_id}
 
 Ваш текущий тариф: {PLAN_NAMES.get(user_data['subscription_plan'], user_data['subscription_plan'])}
 """
-        if user_data['subscription_plan'] != 'free' and remaining_days is not None:
-            profile_text += f"Подписка активна ещё {remaining_days} дней\n"
-
+        # ✅ Добавлены даты начала и конца подписки
+        if user_data['subscription_plan'] != 'free':
+            if subscription_start_date:
+                start_str = subscription_start_date.strftime("%d.%m.%Y") if hasattr(subscription_start_date, 'strftime') else subscription_start_date
+                profile_text += f"Дата начала: {start_str}\n"
+            if subscription_end_date:
+                end_str = subscription_end_date.strftime("%d.%m.%Y") if hasattr(subscription_end_date, 'strftime') else subscription_end_date
+                profile_text += f"Дата окончания: {end_str}\n"
+            if remaining_days is not None:
+                profile_text += f"Подписка активна ещё {remaining_days} дней\n"
+        
         profile_text += f"""
 
 Оставшаяся квота:
@@ -1558,7 +1569,6 @@ ID: {user_id}
 """
 
         try:
-            # 🩵 Если сообщение было фото — Telegram не даст его редактировать, отправляем новое
             if call.message.content_type == "photo":
                 bot.send_message(
                     chat_id=call.message.chat.id,
@@ -1580,8 +1590,8 @@ ID: {user_id}
                 reply_markup=create_profile_menu()
             )
 
+        bot.answer_callback_query(call.id)
 
-    bot.answer_callback_query(call.id)
 # helper — делает реальную очистку по user_id
 def clear_chat_history_for_user(user_id: int, chat_id: int | None = None):
     try:
@@ -1770,8 +1780,10 @@ def show_profile(message):
         bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.", reply_markup=create_main_menu())
         return
 
+    subscription_start_date = user_data.get('subscription_start_date')
     subscription_end_date = user_data.get('subscription_end_date')
     remaining_days = None
+
     if user_data['subscription_plan'] != 'free' and subscription_end_date:
         today = datetime.datetime.now().date()
         remaining_days = (subscription_end_date - today).days
@@ -1789,8 +1801,16 @@ ID: {user_id}
 
 Ваш текущий тариф: {PLAN_NAMES.get(user_data['subscription_plan'], user_data['subscription_plan'])}
 """
-    if user_data['subscription_plan'] != 'free' and remaining_days is not None:
-        profile_text += f"Подписка активна ещё {remaining_days} дней\n"
+    # ✅ Добавлены даты начала и конца подписки
+    if user_data['subscription_plan'] != 'free':
+        if subscription_start_date:
+            start_str = subscription_start_date.strftime("%d.%m.%Y") if hasattr(subscription_start_date, 'strftime') else subscription_start_date
+            profile_text += f"Дата начала: {start_str}\n"
+        if subscription_end_date:
+            end_str = subscription_end_date.strftime("%d.%m.%Y") if hasattr(subscription_end_date, 'strftime') else subscription_end_date
+            profile_text += f"Дата окончания: {end_str}\n"
+        if remaining_days is not None:
+            profile_text += f"Подписка активна ещё {remaining_days} дней\n"
 
     profile_text += f"""
 

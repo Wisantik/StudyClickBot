@@ -102,20 +102,38 @@ def trial_is_over(user_id):
     conn = connect_to_db()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                "SELECT subscription_start_date FROM users WHERE user_id = %s AND subscription_plan = 'trial'",
-                (user_id,)
-            )
+            cursor.execute("""
+                SELECT subscription_start_date, subscription_plan
+                FROM users
+                WHERE user_id = %s
+            """, (user_id,))
             result = cursor.fetchone()
-            if result:
-                start_date = result[0]
-                return datetime.datetime.now() >= start_date + datetime.timedelta(days=7)
-            return False
+            if not result:
+                return False
+
+            start_date, plan = result
+            if plan != 'trial':
+                return False
+
+            # пробный период длится 3 дня
+            trial_duration = datetime.timedelta(days=3)
+            expired = datetime.datetime.now() >= start_date + trial_duration
+
+            if expired:
+                cursor.execute("""
+                    UPDATE users
+                    SET subscription_plan = 'free',
+                        trial_used = TRUE
+                    WHERE user_id = %s
+                """, (user_id,))
+                conn.commit()
+            return expired
     except Exception as e:
         print(f"Ошибка при проверке пробного периода: {e}")
         return False
     finally:
         conn.close()
+
 
 def set_user_subscription(user_id, plan):
     conn = connect_to_db()
