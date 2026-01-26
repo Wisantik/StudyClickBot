@@ -777,7 +777,6 @@ def get_chat_history(chat_id, limit=10):
                 LIMIT %s
             """, (chat_id, limit))
             history = [{"role": role, "content": content} for role, content in cur.fetchall()]
-            print(f"История чата для chat_id {chat_id} получена из базы данных.")
             return history[::-1]
     except Exception as e:
         print(f"Ошибка при получении истории чата: {e}")
@@ -791,7 +790,6 @@ def clear_chat_history(chat_id):
         with conn.cursor() as cur:
             cur.execute("DELETE FROM chat_history WHERE chat_id = %s", (chat_id,))
             conn.commit()
-            print(f"История чата для chat_id {chat_id} очищена.")
     except Exception as e:
         print(f"Ошибка при очистке истории чата: {e}")
     finally:

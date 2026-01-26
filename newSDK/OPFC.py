@@ -198,8 +198,10 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
     # ❌ TOOLS НЕ ИСПОЛЬЗОВАНЫ
     if not tool_calls:
         print("[FC] ⚠️ tools NOT used")
-        print("[FC] Assistant content preview:")
+        print("\n" + "─" * 16 + " ASSISTANT PREVIEW " + "─" * 16)
         print(msg.content[:300])
+        print("─" * 56 + "\n")
+
         return msg.content
 
 
@@ -235,9 +237,6 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
             print(f"[FC] web_search query: {search_query!r}")
 
             result = _perform_web_search(search_query)
-            web_search_result_text = result or ""
-
-            result = _perform_web_search(search_query)
 
             if not result:
                 print("[FC] web_search result: ❌ empty")
@@ -248,7 +247,7 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
                 "tool_call_id": call.id,
                 "role": "tool",
                 "name": "web_search",
-                "content": result
+                "content": result or ""
             })
         if tools_used:
             print("[FC] 🔧 tools USED:")
