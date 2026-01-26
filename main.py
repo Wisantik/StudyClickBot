@@ -1779,6 +1779,7 @@ def show_profile(message):
     if not user_data:
         bot.reply_to(message, "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start.", reply_markup=create_main_menu())
         return
+    process_trial_expiration(user_id)
 
     subscription_start_date = user_data.get('subscription_start_date')
     subscription_end_date = user_data.get('subscription_end_date')
@@ -2529,6 +2530,7 @@ URL_RE = re.compile(r"https?://\S+")
 
 def process_text_message(text, chat_id) -> str:
     user_data = load_user_data(chat_id)
+    
     if not user_data:
         return "Ошибка: пользователь не найден. Попробуйте перезапустить бота с /start."
 

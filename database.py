@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import redis
 import time
 
-
+from yookassa import Configuration, Payment
 
 
 load_dotenv()
@@ -98,28 +98,37 @@ def get_payment_method_for_user(user_id):
     finally:
         conn.close()
 
-def trial_is_over(user_id):
+def process_trial_expiration(user_id):
+    ADMIN_ID = 741831495
     conn = connect_to_db()
+
     try:
         with conn.cursor() as cursor:
             cursor.execute("""
-                SELECT subscription_start_date, subscription_plan
+                SELECT 
+                    subscription_plan,
+                    subscription_start_date,
+                    payment_method_id,
+                    auto_renewal
                 FROM users
                 WHERE user_id = %s
             """, (user_id,))
-            result = cursor.fetchone()
-            if not result:
+            row = cursor.fetchone()
+
+            if not row:
                 return False
 
-            start_date, plan = result
-            if plan != 'trial':
+            plan, start_date, payment_method_id, auto_renewal = row
+
+            if plan != 'plus_trial' or not start_date:
                 return False
 
-            # пробный период длится 3 дня
-            trial_duration = datetime.timedelta(days=3)
-            expired = datetime.datetime.now() >= start_date + trial_duration
+            expired = datetime.datetime.now() >= start_date + datetime.timedelta(days=3)
+            if not expired:
+                return False
 
-            if expired:
+            # ❌ нет данных для автоплатежа
+            if not payment_method_id or not auto_renewal:
                 cursor.execute("""
                     UPDATE users
                     SET subscription_plan = 'free',
@@ -127,12 +136,136 @@ def trial_is_over(user_id):
                     WHERE user_id = %s
                 """, (user_id,))
                 conn.commit()
-            return expired
+
+                bot.send_message(
+                    ADMIN_ID,
+                    f"❌ Trial закончился, но автоплатёж невозможен\n"
+                    f"user_id: {user_id}\n"
+                    f"payment_method_id: {payment_method_id}\n"
+                    f"auto_renewal: {auto_renewal}"
+                )
+                return True
+
+            # ✅ СОЗДАНИЕ АВТОПЛАТЕЖА (ТВОЙ ФОРМАТ)
+            payment_params = {
+                "amount": {"value": "399.00", "currency": "RUB"},
+                "capture": True,
+                "payment_method_id": payment_method_id,
+                "description": f"Автопродление подписки для {user_id}",
+                "receipt": {
+                    "customer": {"email": "sg050@yandex.ru"},
+                    "items": [{
+                        "description": "Подписка Plus (месяц)",
+                        "quantity": "1.00",
+                        "amount": {"value": "399.00", "currency": "RUB"},
+                        "vat_code": 1
+                    }]
+                },
+                "idempotency_key": str(uuid.uuid4())
+            }
+
+            payment = Payment.create(payment_params)
+
+            # ❌ платёж не успешен
+            if payment.status != "succeeded":
+                cursor.execute("""
+                    UPDATE users
+                    SET subscription_plan = 'free'
+                    WHERE user_id = %s
+                """, (user_id,))
+                conn.commit()
+
+                bot.send_message(
+                    ADMIN_ID,
+                    f"❌ Ошибка автоплатежа\n"
+                    f"user_id: {user_id}\n"
+                    f"payment_id: {payment.id}\n"
+                    f"status: {payment.status}"
+                )
+                return False
+
+            # ✅ УСПЕШНО — ПРОДЛЕВАЕМ ПОДПИСКУ
+            now = datetime.datetime.now()
+            end_date = now + datetime.timedelta(days=30)
+
+            cursor.execute("""
+                UPDATE users
+                SET subscription_plan = 'plus_month',
+                    subscription_start_date = %s,
+                    subscription_end_date = %s
+                WHERE user_id = %s
+            """, (now, end_date, user_id))
+            conn.commit()
+
+            bot.send_message(
+                ADMIN_ID,
+                f"✅ Подписка успешно продлена\n"
+                f"user_id: {user_id}\n"
+                f"payment_id: {payment.id}\n"
+                f"Срок: {now:%d.%m.%Y} → {end_date:%d.%m.%Y}"
+            )
+
+            return True
+
     except Exception as e:
-        print(f"Ошибка при проверке пробного периода: {e}")
+        bot.send_message(
+            ADMIN_ID,
+            f"🔥 КРИТИЧЕСКАЯ ОШИБКА автоплатежа\n"
+            f"user_id: {user_id}\n"
+            f"error: {e}"
+        )
         return False
+
     finally:
         conn.close()
+
+def daily_trial_check():
+    ADMIN_ID = 741831495
+    print("[SCHEDULE] daily_trial_check started")
+
+    conn = connect_to_db()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("""
+                SELECT user_id
+                FROM users
+                WHERE subscription_plan = 'plus_trial'
+            """)
+            users = cursor.fetchall()
+
+        if users:
+            bot.send_message(
+                ADMIN_ID,
+                f"🕒 Фоновая проверка trial\nНайдено пользователей: {len(users)}"
+            )
+
+        for (user_id,) in users:
+            try:
+                process_trial_expiration(user_id)
+            except Exception as e:
+                bot.send_message(
+                    ADMIN_ID,
+                    f"🔥 Ошибка при фоновой проверке trial\n"
+                    f"user_id: {user_id}\n"
+                    f"error: {e}"
+                )
+
+    finally:
+        conn.close()
+
+import schedule
+import time
+from threading import Thread
+
+# 1 раз в день, например в 03:00
+schedule.every().day.at("03:00").do(daily_trial_check)
+
+def run_scheduler():
+    while True:
+        schedule.run_pending()
+        time.sleep(30)
+
+Thread(target=run_scheduler, daemon=True).start()
 
 
 def set_user_subscription(user_id, plan):

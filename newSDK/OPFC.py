@@ -34,10 +34,6 @@ def _call_search_api(search_query):
                 )
             )
 
-        print("[FC] web_search RAW results:")
-        for r in results:
-            print(r)
-
         formatted_results = []
         for r in results:
             if r.get("href"):
@@ -47,12 +43,12 @@ def _call_search_api(search_query):
                     "link": r.get("href", "")
                 })
 
-        print(f"[FC] web_search formatted count: {len(formatted_results)}")
         return formatted_results
 
     except Exception as e:
-        print(f"[FC] web_search ERROR: {e}")
+        print(f"[FC][ERROR] web_search failed: {e}")
         return []
+
 
 
 
@@ -78,6 +74,9 @@ def _perform_web_search(query):
     search_query = f"{cleaned} lang:ru"
     results = _call_search_api(search_query)
 
+    # 🔥 ВОТ ЗДЕСЬ ЛОГИРУЕМ
+    log_web_search(search_query, results)
+
     if not results:
         return "🔍 Не удалось найти результаты."
 
@@ -101,6 +100,7 @@ def _perform_web_search(query):
     )
 
     return final_text
+
 
 import requests
 from bs4 import BeautifulSoup
@@ -283,3 +283,16 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
     print("[FC] Final answer generated")
 
     return final.choices[0].message.content
+
+def log_web_search(query: str, results: list):
+    print("\n" + "─" * 18 + " WEB SEARCH " + "─" * 18)
+    print(f"Query: {query}")
+    print(f"Results: {len(results)}\n")
+
+    for i, r in enumerate(results, 1):
+        title = (r.get("title") or "").strip()
+        link = (r.get("link") or "").replace("https://", "").replace("http://", "")
+        print(f"{i}. {title}")
+        print(f"   🔗 {link}")
+
+    print("─" * 54 + "\n")
