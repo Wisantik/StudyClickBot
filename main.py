@@ -1115,7 +1115,7 @@ def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval
         for attempt in range(max_checks):
             try:
                 payment = Payment.find_one(payment_id)
-                print(f"[DEBUG] Проверка платежа {payment_id} для {user_id}: status={payment.status}")
+                print(f"[DEBUG] Проверка платежа {payment_id} для {user_id}: status={payment.status} (попытка {attempt+1})")
 
                 if payment.status == "succeeded":
                     save_payment_method_for_user(user_id, payment.payment_method.id)
@@ -1144,11 +1144,26 @@ def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval
                         user_data['trial_used'] = True
                         save_user_data(user_data)
 
+                    # 🔹 Уведомление пользователю
                     bot.send_message(
                         user_id,
                         "✅ Пробная подписка Plus активирована на 3 дня!",
                         reply_markup=create_main_menu()
                     )
+
+                    # 🔹 Уведомление админу с деталями
+                    try:
+                        bot.send_message(
+                            741831495,
+                            f"✅ Активация пробной подписки для user_id={user_id}\n"
+                            f"Payment ID: {payment_id}\n"
+                            f"Статус: {payment.status}\n"
+                            f"Дата активации: {now}\n"
+                            f"Expires at: {expires_at}"
+                        )
+                    except Exception as e:
+                        print(f"[WARN] Не удалось уведомить админа: {e}")
+
                     return
 
             except Exception as e:
@@ -1156,12 +1171,24 @@ def monitor_payment(user_id: int, payment_id: str, max_checks: int = 4, interval
 
             time.sleep(interval)
 
+        # 🔹 Если не succeeded после всех попыток
         bot.send_message(
             user_id,
             "⚠️ Мы не получили подтверждение оплаты в течение 12 минут. "
             "Если деньги списались, напишите в поддержку: https://t.me/mon_tti1",
             reply_markup=create_main_menu()
         )
+
+        # 🔹 Уведомление админу о таймауте
+        try:
+            bot.send_message(
+                741831495,
+                f"⚠️ Таймаут проверки платежа для user_id={user_id}\n"
+                f"Payment ID: {payment_id}\n"
+                f"Попыток: {max_checks}"
+            )
+        except Exception as e:
+            print(f"[WARN] Не удалось уведомить админа: {e}")
 
     threading.Thread(target=run, daemon=True).start()
 
@@ -1306,21 +1333,89 @@ def check_pending_payments():
                     payment = Payment.find_one(payment_id)
                     print(f"[INFO] Платёж {payment_id} для user_id={user_id}: status={payment.status}")
                     if payment.status == "succeeded":
-                        save_payment_method_for_user(user_id, payment.payment_method.id)
+                        if hasattr(payment, 'payment_method') and payment.payment_method:
+                            save_payment_method_for_user(user_id, payment.payment_method.id)
                         set_user_subscription(user_id, "plus_trial")
+                        
+                        # 🔹 Уведомление пользователю
                         bot.send_message(
                             user_id,
                             "✅ Пробная подписка Plus активирована на 3 дня!",
                             reply_markup=create_main_menu()
                         )
+                        
                         cursor.execute("UPDATE payments SET status = 'succeeded' WHERE payment_id = %s", (payment_id,))
+                        
+                        # 🔹 Уведомление админу с деталями
+                        try:
+                            now = datetime.datetime.utcnow()  # Или возьми из БД, если нужно
+                            expires_at = now + datetime.timedelta(days=3)  # Логика как в monitor
+                            bot.send_message(
+                                741831495,
+                                f"✅ Активация пробной подписки для user_id={user_id}\n"
+                                f"Payment ID: {payment_id}\n"
+                                f"Статус: {payment.status}\n"
+                                f"Дата активации: {now}\n"
+                                f"Expires at: {expires_at}"
+                            )
+                        except Exception as e:
+                            print(f"[WARN] Не удалось уведомить админа: {e}")
+
                     elif payment.status in ["canceled", "failed"]:
+                        reason = None
+                        if hasattr(payment, "cancellation_details") and payment.cancellation_details:
+                            reason = getattr(payment.cancellation_details, "reason", None)
+                        
+                        msg = f"❌ Не удалось обработать платёж.\nСтатус: {payment.status}"
+                        if reason:
+                            msg += f"\nПричина: {reason}"
+                        msg += "\nПожалуйста, попробуйте оплатить заново: /pay"
+                        
+                        # 🔹 Уведомляем пользователя
+                        bot.send_message(user_id, msg, reply_markup=create_main_menu())
+                        
+                        # 🔹 Уведомляем админа
+                        try:
+                            bot.send_message(
+                                741831495,
+                                f"⚠️ Ошибка платежа для user_id={user_id}\n"
+                                f"Payment ID: {payment_id}\n"
+                                f"Статус: {payment.status}\n"
+                                f"Причина: {reason or 'неизвестно'}"
+                            )
+                        except Exception as e:
+                            print(f"[WARN] Не удалось уведомить админа: {e}")
+                        
                         cursor.execute("UPDATE payments SET status = %s WHERE payment_id = %s", (payment.status, payment_id))
                 except Exception as e:
                     print(f"[ERROR] Ошибка проверки платежа {payment_id} для user_id={user_id}: {e}")
-            conn.commit()
+                    
+                    msg = f"❌ Ошибка при проверке платежа: {e}. Пожалуйста, попробуйте оплатить заново: /pay"
+                    # 🔹 Уведомляем пользователя
+                    bot.send_message(user_id, msg, reply_markup=create_main_menu())
+                    
+                    # 🔹 Уведомляем админа
+                    try:
+                        bot.send_message(
+                            741831495,
+                            f"❌ Exception при проверке платежа user_id={user_id}\n"
+                            f"Payment ID: {payment_id}\n"
+                            f"Ошибка: {e}"
+                        )
+                    except Exception as warn_e:
+                        print(f"[WARN] Не удалось уведомить админа: {warn_e}")
+        conn.commit()
     except Exception as e:
         print(f"[ERROR] Ошибка при проверке платежей: {e}")
+        
+        # 🔹 Глобальное уведомление админу об общей ошибке
+        try:
+            bot.send_message(
+                741831495,
+                f"❌ Глобальная ошибка при проверке платежей: {e}"
+            )
+        except:
+            pass
     finally:
         conn.close()
 

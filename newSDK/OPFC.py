@@ -182,7 +182,7 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
 
 
     print(f"[FC] User {user_id} | model={model}")
-    print(f"[FC] User query (first 120 chars): {query[:120]!r}")
+    print(f"[FC] Запрос(120 символов): {query[:120]!r}")
 
     # 1️⃣ Первый вызов — модель решает, нужен ли tool
     resp = client.chat.completions.create(

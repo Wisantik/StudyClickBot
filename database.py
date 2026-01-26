@@ -341,12 +341,6 @@ def set_user_assistant(user_id: int, assistant_key: str):
         conn.close()
 
 def get_user_assistant(user_id: int, user_text: str | None = None) -> str:
-    preview = (user_text or "").replace("\n", " ")[:50]
-
-    print(
-        f"[INFO] Получение ассистента для пользователя {user_id} | "
-        f"prompt: \"{preview}\""
-    )
 
     assistant_key = r.get(user_id)
     if assistant_key:
