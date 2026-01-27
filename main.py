@@ -13,6 +13,7 @@ import pdfplumber
 import datetime
 import requests
 from database import *
+from payments import *
 import schedule
 from yookassa import Configuration, Payment
 import uuid
@@ -1961,6 +1962,81 @@ ID: {user_id}
 
 
 ADMIN_IDS = [998107476, 741831495]
+ADMIN_ID = 741831495
+
+def notify_admin(text: str):
+    bot.send_message(ADMIN_ID, text)
+
+def notify_trial_no_autopay(user_id, payment_method_id, auto_renewal):
+    notify_admin(
+        "❌ Trial закончился, автоплатёж невозможен\n"
+        f"user_id: {user_id}\n"
+        f"payment_method_id: {payment_method_id}\n"
+        f"auto_renewal: {auto_renewal}"
+    )
+def notify_autopay_failed(user_id, payment_id, status):
+    notify_admin(
+        "❌ Ошибка автоплатежа\n"
+        f"user_id: {user_id}\n"
+        f"payment_id: {payment_id}\n"
+        f"status: {status}"
+    )
+def notify_subscription_extended(user_id, payment_id, start_date, end_date):
+    notify_admin(
+        "✅ Подписка успешно продлена\n"
+        f"user_id: {user_id}\n"
+        f"payment_id: {payment_id}\n"
+        f"Срок: {start_date:%d.%m.%Y} → {end_date:%d.%m.%Y}"
+    )
+def notify_critical_payment_error(user_id, error):
+    notify_admin(
+        "🔥 КРИТИЧЕСКАЯ ОШИБКА автоплатежа\n"
+        f"user_id: {user_id}\n"
+        f"error: {error}"
+    )
+
+def notify_daily_check_started(count):
+    notify_admin(
+        f"🕒 Фоновая проверка trial\nНайдено пользователей: {count}"
+    )
+
+def run_daily_trial_check():
+    try:
+        events = daily_trial_check()
+
+        notify_daily_check_started(len(events))
+
+        for e in events:
+            if e["event"] == "trial_no_autopay":
+                notify_trial_no_autopay(
+                    e["user_id"],
+                    e["payment_method_id"],
+                    e["auto_renewal"]
+                )
+
+            elif e["event"] == "autopay_failed":
+                notify_autopay_failed(
+                    e["user_id"],
+                    e["payment_id"],
+                    e["status"]
+                )
+
+            elif e["event"] == "subscription_extended":
+                notify_subscription_extended(
+                    e["user_id"],
+                    e["payment_id"],
+                    e["start_date"],
+                    e["end_date"]
+                )
+
+            elif e["event"] == "critical_error":
+                notify_critical_payment_error(
+                    e["user_id"],
+                    e["error"]
+                )
+
+    except Exception as e:
+        notify_critical_payment_error("SYSTEM", e)
 
 
 # ---------- КЭШ ДЛЯ ASSISTANTS (чтобы не дергать Redis/БД на каждый вызов) ----------
@@ -2935,8 +3011,10 @@ def main():
         finally:
             if conn:
                 conn.close()
-    schedule.every().day.at("03:00").do(daily_trial_check, bot=bot)  # Добавь bot=bot
-    Thread(target=run_scheduler, args=(bot,), daemon=True).start()  # Добавь args=(bot,)
+    schedule.every().day.at("03:00").do(run_daily_trial_check)
+
+    Thread(target=run_scheduler, daemon=True).start()
+
 
     # Запуск polling в цикле для устойчивости
     while True:
