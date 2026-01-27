@@ -265,10 +265,6 @@ def run_scheduler(bot):  # Добавь параметр
 
 # В main.py, при запуске: Thread(target=run_scheduler, args=(bot,), daemon=True).start()
 # И schedule.every().day.at("03:00").do(daily_trial_check, bot=bot)
-
-Thread(target=run_scheduler, daemon=True).start()
-
-
 def set_user_subscription(user_id, plan):
     conn = connect_to_db()
     try:

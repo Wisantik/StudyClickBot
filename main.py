@@ -1323,6 +1323,8 @@ def successful_payment_handler(message):
 
 from telebot.apihelper import ApiTelegramException  # Добавь импорт в файл
 
+from telebot.apihelper import ApiTelegramException  # Импорт для обработки 403
+
 def check_pending_payments():
     conn = connect_to_db()
     try:
@@ -1383,21 +1385,74 @@ def check_pending_payments():
                             print(f"[WARN] Не удалось уведомить админа: {e}")
 
                     elif payment.status in ["canceled", "failed"]:
-                        # ... (остальной код без изменений)
+                        reason = None
+                        if hasattr(payment, "cancellation_details") and payment.cancellation_details:
+                            reason = getattr(payment.cancellation_details, "reason", None)
+                        
+                        msg = f"❌ Не удалось обработать платёж.\nСтатус: {payment.status}"
+                        if reason:
+                            msg += f"\nПричина: {reason}"
+                        msg += "\nПожалуйста, попробуйте оплатить заново: /pay"
+                        
+                        # 🔹 Уведомляем пользователя (с обработкой 403, аналогично succeeded)
+                        try:
+                            bot.send_message(user_id, msg, reply_markup=create_main_menu())
+                        except ApiTelegramException as te:
+                            if te.error_code == 403 and "deactivated" in te.description.lower():
+                                print(f"[WARN] Пользователь {user_id} deactivated — не отправляем сообщение")
+                            else:
+                                raise
+
+                        # 🔹 Уведомляем админа
+                        try:
+                            bot.send_message(
+                                741831495,
+                                f"⚠️ Ошибка платежа для user_id={user_id}\n"
+                                f"Payment ID: {payment_id}\n"
+                                f"Статус: {payment.status}\n"
+                                f"Причина: {reason or 'неизвестно'}"
+                            )
+                        except Exception as e:
+                            print(f"[WARN] Не удалось уведомить админа: {e}")
+                        
+                        cursor.execute("UPDATE payments SET status = %s WHERE payment_id = %s", (payment.status, payment_id))
+                        conn.commit()  # Commit для failed/canceled
 
                 except Exception as e:
                     print(f"[ERROR] Ошибка проверки платежа {payment_id} для user_id={user_id}: {e}")
-                    # ... (уведомления пользователю и админу как раньше)
+                    
+                    msg = f"❌ Ошибка при проверке платежа: {e}. Пожалуйста, попробуйте оплатить заново: /pay"
+                    # 🔹 Уведомляем пользователя (с 403 обработкой)
+                    try:
+                        bot.send_message(user_id, msg, reply_markup=create_main_menu())
+                    except ApiTelegramException as te:
+                        if te.error_code == 403 and "deactivated" in te.description.lower():
+                            print(f"[WARN] Пользователь {user_id} deactivated — не отправляем сообщение")
+                        else:
+                            raise
+                    
+                    # 🔹 Уведомляем админа
+                    try:
+                        bot.send_message(
+                            741831495,
+                            f"❌ Exception при проверке платежа user_id={user_id}\n"
+                            f"Payment ID: {payment_id}\n"
+                            f"Ошибка: {e}"
+                        )
+                    except Exception as warn_e:
+                        print(f"[WARN] Не удалось уведомить админа: {warn_e}")
         conn.commit()  # Финальный commit
     except Exception as e:
         print(f"[ERROR] Ошибка при проверке платежей: {e}")
-        # 🔹 Уведомление админу с деталями
+        # 🔹 Уведомление админу с деталями (без locals() — используем try)
         try:
+            payment_id_str = payment_id if 'payment_id' in locals() else 'неизвестно'
+            user_id_str = user_id if 'user_id' in locals() else 'неизвестно'
             bot.send_message(
                 741831495,
                 f"❌ Глобальная ошибка при проверке платежей: {e}\n"
-                f"Платёж: {payment_id if 'payment_id' in locals() else 'неизвестно'}\n"
-                f"user_id: {user_id if 'user_id' in locals() else 'неизвестно'}"
+                f"Платёж: {payment_id_str}\n"
+                f"user_id: {user_id_str}"
             )
         except:
             pass
