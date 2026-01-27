@@ -219,7 +219,11 @@ def process_trial_expiration(user_id):
     finally:
         conn.close()
 
-def daily_trial_check():
+# В начале database.py
+from main import bot  # Если нет circular — ок
+
+# Или альтернативно: Сделай daily_trial_check принимать bot
+def daily_trial_check(bot):  # Добавь параметр
     ADMIN_ID = 741831495
     print("[SCHEDULE] daily_trial_check started")
 
@@ -253,17 +257,14 @@ def daily_trial_check():
     finally:
         conn.close()
 
-import schedule
-import time
-from threading import Thread
-
-# 1 раз в день, например в 03:00
-schedule.every().day.at("03:00").do(daily_trial_check)
-
-def run_scheduler():
+# В run_scheduler
+def run_scheduler(bot):  # Добавь параметр
     while True:
         schedule.run_pending()
         time.sleep(30)
+
+# В main.py, при запуске: Thread(target=run_scheduler, args=(bot,), daemon=True).start()
+# И schedule.every().day.at("03:00").do(daily_trial_check, bot=bot)
 
 Thread(target=run_scheduler, daemon=True).start()
 
