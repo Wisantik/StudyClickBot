@@ -1330,243 +1330,92 @@ def check_pending_payments():
     conn = connect_to_db()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT user_id, payment_id FROM payments WHERE status = 'pending'")
+            cursor.execute("""
+                SELECT user_id, payment_id
+                FROM payments
+                WHERE status = 'pending'
+            """)
             payments = cursor.fetchall()
+
             print(f"[INFO] Найдено {len(payments)} pending платежей")
+
             for user_id, payment_id in payments:
                 try:
                     payment = Payment.find_one(payment_id)
-                    print(f"[INFO] Платёж {payment_id} для user_id={user_id}: status={payment.status}")
+                    print(
+                        f"[INFO] Платёж {payment_id} для user_id={user_id}: "
+                        f"status={payment.status}"
+                    )
+
+                    # ✅ УСПЕШНЫЙ ПЛАТЁЖ
                     if payment.status == "succeeded":
-                        if hasattr(payment, 'payment_method') and payment.payment_method:
-                            save_payment_method_for_user(user_id, payment.payment_method.id)
-                        set_user_subscription(user_id, "plus_trial")
-                        
-                        # 🔹 Обновляем status СРАЗУ (перед send_message)
-                        cursor.execute("UPDATE payments SET status = 'succeeded' WHERE payment_id = %s", (payment_id,))
-                        conn.commit()  # Commit здесь, чтобы статус сохранился
-
-                        # 🔹 Уведомление пользователю (с обработкой 403)
-                        try:
-                            bot.send_message(
+                        # сохраняем способ оплаты
+                        if payment.payment_method:
+                            save_payment_method_for_user(
                                 user_id,
-                                "✅ Пробная подписка Plus активирована на 3 дня!",
-                                reply_markup=create_main_menu()
+                                payment.payment_method.id
                             )
-                        except ApiTelegramException as te:
-                            if te.error_code == 403 and "deactivated" in te.description.lower():
-                                print(f"[WARN] Пользователь {user_id} deactivated — не отправляем сообщение")
-                                # 🔹 Уведомляем админа о deactivated юзере
-                                try:
-                                    bot.send_message(
-                                        741831495,
-                                        f"⚠️ Пользователь deactivated при активации подписки\n"
-                                        f"user_id={user_id}\n"
-                                        f"Payment ID: {payment_id}\n"
-                                        f"Статус платежа: succeeded (подписка установлена, но юзер неактивен)"
-                                    )
-                                except:
-                                    pass
-                            else:
-                                raise  # Если не 403 deactivated — перекидываем ошибку выше
 
-                        # 🔹 Уведомление админу (как раньше)
-                        try:
-                            now = datetime.datetime.utcnow()
-                            expires_at = now + datetime.timedelta(days=3)
-                            bot.send_message(
-                                741831495,
-                                f"✅ Активация пробной подписки для user_id={user_id}\n"
-                                f"Payment ID: {payment_id}\n"
-                                f"Статус: {payment.status}\n"
-                                f"Дата активации: {now}\n"
-                                f"Expires at: {expires_at}"
-                            )
-                        except Exception as e:
-                            print(f"[WARN] Не удалось уведомить админа: {e}")
-
-                    elif payment.status in ["canceled", "failed"]:
-                        reason = None
-                        if hasattr(payment, "cancellation_details") and payment.cancellation_details:
-                            reason = getattr(payment.cancellation_details, "reason", None)
-                        
-                        msg = f"❌ Не удалось обработать платёж.\nСтатус: {payment.status}"
-                        if reason:
-                            msg += f"\nПричина: {reason}"
-                        msg += "\nПожалуйста, попробуйте оплатить заново: /pay"
-                        
-                        # 🔹 Уведомляем пользователя (с обработкой 403, аналогично succeeded)
-                        try:
-                            bot.send_message(user_id, msg, reply_markup=create_main_menu())
-                        except ApiTelegramException as te:
-                            if te.error_code == 403 and "deactivated" in te.description.lower():
-                                print(f"[WARN] Пользователь {user_id} deactivated — не отправляем сообщение")
-                            else:
-                                raise
-
-                        # 🔹 Уведомляем админа
-                        try:
-                            bot.send_message(
-                                741831495,
-                                f"⚠️ Ошибка платежа для user_id={user_id}\n"
-                                f"Payment ID: {payment_id}\n"
-                                f"Статус: {payment.status}\n"
-                                f"Причина: {reason or 'неизвестно'}"
-                            )
-                        except Exception as e:
-                            print(f"[WARN] Не удалось уведомить админа: {e}")
-                        
-                        cursor.execute("UPDATE payments SET status = %s WHERE payment_id = %s", (payment.status, payment_id))
-                        conn.commit()  # Commit для failed/canceled
-
-                except Exception as e:
-                    print(f"[ERROR] Ошибка проверки платежа {payment_id} для user_id={user_id}: {e}")
-                    
-                    msg = f"❌ Ошибка при проверке платежа: {e}. Пожалуйста, попробуйте оплатить заново: /pay"
-                    # 🔹 Уведомляем пользователя (с 403 обработкой)
-                    try:
-                        bot.send_message(user_id, msg, reply_markup=create_main_menu())
-                    except ApiTelegramException as te:
-                        if te.error_code == 403 and "deactivated" in te.description.lower():
-                            print(f"[WARN] Пользователь {user_id} deactivated — не отправляем сообщение")
-                        else:
-                            raise
-                    
-                    # 🔹 Уведомляем админа
-                    try:
-                        bot.send_message(
-                            741831495,
-                            f"❌ Exception при проверке платежа user_id={user_id}\n"
-                            f"Payment ID: {payment_id}\n"
-                            f"Ошибка: {e}"
+                        cursor.execute(
+                            "UPDATE payments SET status = 'succeeded' WHERE payment_id = %s",
+                            (payment_id,)
                         )
-                    except Exception as warn_e:
-                        print(f"[WARN] Не удалось уведомить админа: {warn_e}")
-        conn.commit()  # Финальный commit
-    except Exception as e:
-        print(f"[ERROR] Ошибка при проверке платежей: {e}")
-        # 🔹 Уведомление админу с деталями (без locals() — используем try)
-        try:
-            payment_id_str = payment_id if 'payment_id' in locals() else 'неизвестно'
-            user_id_str = user_id if 'user_id' in locals() else 'неизвестно'
-            bot.send_message(
-                741831495,
-                f"❌ Глобальная ошибка при проверке платежей: {e}\n"
-                f"Платёж: {payment_id_str}\n"
-                f"user_id: {user_id_str}"
-            )
-        except:
-            pass
-    finally:
-        conn.close()
+                        conn.commit()
 
-def check_auto_renewal():
-    conn = connect_to_db()
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute("""
-                SELECT user_id FROM users
-                WHERE subscription_plan = 'plus_trial'
-                AND subscription_expires_at <= NOW()
-                AND subscription_autorenew = TRUE
-            """)
-
-            users = cursor.fetchall()
-            print(f"[DEBUG] Найдено {len(users)} пользователей для автопродления")
-            for user in users:
-                user_id = user[0]
-                method_id = get_payment_method_for_user(user_id)
-                if method_id:
-                    try:
-                        payment_params = {
-                            "amount": {"value": "399.00", "currency": "RUB"},
-                            "capture": True,
-                            "payment_method_id": method_id,
-                            "description": f"Автопродление подписки для {user_id}",
-                            "receipt": {
-                                "customer": {"email": "sg050@yandex.ru"},
-                                "items": [{
-                                    "description": "Подписка Plus (месяц)",
-                                    "quantity": "1.00",
-                                    "amount": {"value": "399.00", "currency": "RUB"},
-                                    "vat_code": 1
-                                }]
-                            },
-                            "idempotency_key": str(uuid.uuid4())
-                        }
-                        print(f"[DEBUG] Создание платежа автопродления для user_id={user_id}: {payment_params}")
-                        payment = Payment.create(payment_params)
-                        print(f"[DEBUG] Платёж автопродления создан: id={payment.id}, status={payment.status}")
-
-                        if payment.status == "succeeded":
-                            now = datetime.datetime.utcnow()
-                            expires_at = now + datetime.timedelta(days=30)
-
-                            cursor.execute("""
-                                UPDATE users
-                                SET subscription_plan = 'plus_month',
-                                    subscription_start_date = %s,
-                                    subscription_expires_at = %s
-                                WHERE user_id = %s
-                            """, (now, expires_at, user_id))
-                            conn.commit()
-
-                            bot.send_message(
-                                user_id,
-                                "✅ Ваша подписка продлена на месяц за 399₽!",
-                                reply_markup=create_main_menu()
-                            )
-                        else:
-                            reason = None
-                            if hasattr(payment, "cancellation_details") and payment.cancellation_details:
-                                reason = getattr(payment.cancellation_details, "reason", None)
-
-                            msg = f"❌ Не удалось продлить подписку.\nСтатус: {payment.status}"
-                            if reason:
-                                msg += f"\nПричина: {reason}"
-                            msg += "\nПожалуйста, оплатите вручную: /pay"
-
-                            # 🔹 Уведомляем пользователя
-                            bot.send_message(user_id, msg, reply_markup=create_main_menu())
-
-                            # 🔹 Отправляем уведомление админу
-                            try:
-                                bot.send_message(
-                                    741831495,
-                                    f"⚠️ Ошибка автопродления для user_id={user_id}\n"
-                                    f"Статус: {payment.status}\n"
-                                    f"Причина: {reason or 'неизвестно'}"
-                                )
-                            except Exception as e:
-                                print(f"[WARN] Не удалось уведомить админа: {e}")
-
-                            # 🔹 Сбрасываем подписку на free
-                            set_user_subscription(user_id, "free")
-
-                    except Exception as e:
-                        print(f"[ERROR] Ошибка автопродления для user_id={user_id}: {e}")
-                        bot.send_message(
-                            user_id,
-                            f"❌ Ошибка при автопродлении: {e}. Пожалуйста, оплатите вручную: /pay",
-                            reply_markup=create_main_menu()
-                        )
+                        # уведомление админу (ТОЛЬКО ФАКТ ПЛАТЕЖА)
                         try:
                             bot.send_message(
                                 741831495,
-                                f"❌ Exception при автопродлении user_id={user_id}\nОшибка: {e}"
+                                f"💰 Платёж подтверждён\n"
+                                f"user_id={user_id}\n"
+                                f"payment_id={payment_id}\n"
+                                f"status=succeeded\n"
+                                f"⚠️ Подписка НЕ назначалась (ожидает бизнес-логику)"
                             )
                         except:
                             pass
-                else:
-                    print(f"[INFO] Не найден payment_method_id для user_id={user_id}")
-    except Exception as e:
-        print(f"[ERROR] Ошибка при проверке автопродления: {e}")
+
+                    # ❌ ОШИБКА ПЛАТЕЖА
+                    elif payment.status in ("canceled", "failed"):
+                        cursor.execute(
+                            "UPDATE payments SET status = %s WHERE payment_id = %s",
+                            (payment.status, payment_id)
+                        )
+                        conn.commit()
+
+                        try:
+                            bot.send_message(
+                                741831495,
+                                f"❌ Платёж не прошёл\n"
+                                f"user_id={user_id}\n"
+                                f"payment_id={payment_id}\n"
+                                f"status={payment.status}"
+                            )
+                        except:
+                            pass
+
+                except Exception as e:
+                    print(
+                        f"[ERROR] Ошибка проверки payment_id={payment_id} "
+                        f"user_id={user_id}: {e}"
+                    )
+                    try:
+                        bot.send_message(
+                            741831495,
+                            f"🔥 Ошибка check_pending_payments\n"
+                            f"user_id={user_id}\n"
+                            f"payment_id={payment_id}\n"
+                            f"error={e}"
+                        )
+                    except:
+                        pass
+
     finally:
         conn.close()
 
 
+
 schedule.every(5).minutes.do(check_pending_payments)
-schedule.every().day.at("00:00").do(check_auto_renewal)
 
 from telebot.types import ReplyKeyboardRemove
 
