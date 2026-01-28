@@ -10,11 +10,10 @@ MONTH_PRICE = "399.00"
 
 
 def process_trial_expiration(user_id: int):
-    """
-    Проверяет окончание trial.
-    Если trial истёк — пытается оформить платную подписку.
-    Возвращает dict с event или None.
-    """
+    import datetime
+    import uuid
+    from yookassa import Payment
+
     conn = connect_to_db()
     try:
         user = load_user_data(user_id)
@@ -28,16 +27,17 @@ def process_trial_expiration(user_id: int):
         if not start_date:
             return None
 
-        now = datetime.datetime.now()
-        expired = now >= start_date + datetime.timedelta(days=TRIAL_DAYS)
+        # 🔥 ВАЖНО: работаем ТОЛЬКО с date
+        today = datetime.date.today()
+        trial_end_date = start_date + datetime.timedelta(days=TRIAL_DAYS)
 
-        if not expired:
-            return None
+        if today < trial_end_date:
+            return None  # trial ещё активен
 
         payment_method_id = user.get("payment_method_id")
         auto_renewal = user.get("auto_renewal")
 
-        # ❌ Нет автоплатежа
+        # ❌ Нет возможности автосписания
         if not payment_method_id or not auto_renewal:
             with conn.cursor() as cursor:
                 cursor.execute("""
@@ -55,14 +55,16 @@ def process_trial_expiration(user_id: int):
                 "auto_renewal": auto_renewal
             }
 
-        # ✅ Пытаемся списать деньги
+        # ✅ Создаём автоплатёж
         payment_params = {
             "amount": {"value": MONTH_PRICE, "currency": "RUB"},
             "capture": True,
             "payment_method_id": payment_method_id,
             "description": f"Автопродление подписки для {user_id}",
             "receipt": {
-                "customer": {"email": user.get("email", "unknown@example.com")},
+                "customer": {
+                    "email": user.get("email", "unknown@example.com")
+                },
                 "items": [{
                     "description": "Подписка Plus (месяц)",
                     "quantity": "1.00",
@@ -83,8 +85,8 @@ def process_trial_expiration(user_id: int):
                 "status": payment.status
             }
 
-        # ✅ Платёж успешен → продлеваем подписку
-        new_start = now.date()
+        # ✅ Продлеваем подписку
+        new_start = today
         new_end = new_start + datetime.timedelta(days=30)
 
         with conn.cursor() as cursor:
@@ -111,6 +113,7 @@ def process_trial_expiration(user_id: int):
 
     finally:
         conn.close()
+
 
 
 def daily_trial_check():
