@@ -3016,6 +3016,7 @@ def main():
     Thread(target=run_scheduler, daemon=True).start()
 
 
+
     # Запуск polling в цикле для устойчивости
     while True:
         try:

@@ -150,11 +150,14 @@ def daily_trial_check():
         conn.close()
 
 
-# В run_scheduler
-def run_scheduler(bot):  # Добавь параметр
+def run_scheduler():
     while True:
-        schedule.run_pending()
+        try:
+            schedule.run_pending()
+        except Exception as e:
+            logger.error(f"Ошибка в scheduler: {e}")
         time.sleep(30)
+
 def set_user_subscription(user_id: int, plan: str, days: int = 30):
     conn = connect_to_db()
     try:
