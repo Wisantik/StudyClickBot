@@ -2976,6 +2976,13 @@ def handler(event, context):
 def check_experts_in_database(connection):
     with connection.cursor() as cursor:
         cursor.execute("SELECT expert_id, name, specialization FROM experts;")
+def run_scheduler():
+    while True:
+        try:
+            schedule.run_pending()
+        except Exception as e:
+            logger.error(f"Ошибка в scheduler: {e}")
+        time.sleep(30)
 
 def main():
     logger.info("Bot started")
