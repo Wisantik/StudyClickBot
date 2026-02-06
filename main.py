@@ -224,9 +224,9 @@ def normalize_command(command: str) -> str:
         "Ассистенты": "🤖 Ассистенты",
         "assistants_from_profile": "🤖 Ассистенты (из профиля)",
         "show_assistants": "🤖 Ассистенты (из профиля)",
-        "experts": "👨‍💼 Эксперты",
-        "Эксперты": "👨‍💼 Эксперты",
-        "experts_from_profile": "👨‍💼 Эксперты (из профиля)",
+        # "experts": "👨‍💼 Эксперты",
+        # "Эксперты": "👨‍💼 Эксперты",
+        # "experts_from_profile": "👨‍💼 Эксперты (из профиля)",
         # "referral": "🔗 Реферальная ссылка",
         "search": None,  # избегаем логирования "search" как мусор
         "universal": "🤖 Ассистент: Универсальный"  # Добавлено для /universal
@@ -371,7 +371,7 @@ def create_main_menu() -> types.ReplyKeyboardMarkup:
         types.KeyboardButton("👤 Мой профиль"),
         types.KeyboardButton("🌐 Выбрать язык"),
         types.KeyboardButton("🤖 Ассистенты"),
-        types.KeyboardButton("👨‍💼 Эксперты"),
+        # types.KeyboardButton("👨‍💼 Эксперты"),
         types.KeyboardButton("💳 Подписка"),
         types.KeyboardButton("❌ Отмена подписки"),
         types.KeyboardButton("🗑 Очистить историю чата"),
@@ -385,7 +385,7 @@ def setup_bot_commands():
         BotCommand("profile", "👤 Мой профиль"),
         BotCommand("language", "🌐 Выбрать язык"),
         BotCommand("assistants", "🤖 Ассистенты"),
-        BotCommand("experts", "👨‍💼 Эксперты"),
+        # BotCommand("experts", "👨‍💼 Эксперты"),
         BotCommand("pay", "💳 Подписка"),
         BotCommand("cancel_subscription", "❌ Отмена подписки"),
         BotCommand("new", "🗑 Очистить историю чата"),
@@ -432,7 +432,7 @@ def create_profile_menu() -> types.InlineKeyboardMarkup:
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(
         types.InlineKeyboardButton(text="🤖 Ассистенты", callback_data="show_assistants"),
-        types.InlineKeyboardButton(text="👨‍💼 Эксперты", callback_data="show_experts")
+        # types.InlineKeyboardButton(text="👨‍💼 Эксперты", callback_data="show_experts")
     )
     keyboard.add(
         types.InlineKeyboardButton(text="💳 Подписка", callback_data="show_pay_menu"),
@@ -709,15 +709,15 @@ def assistant_callback_handler(call):
         except Exception as answer_e:
             print(f"[ERROR] Ошибка в answer_callback_query: {answer_e}")
 
-@bot.message_handler(commands=['experts'])
-@bot.message_handler(func=lambda message: message.text == "👨‍💼 Эксперты")
-def experts_button_handler(message):
-    log_command(message.from_user.id, "experts")
-    bot.send_message(
-        message.chat.id,
-        "Выберите эксперта:",
-        reply_markup=create_experts_menu()
-    )
+# @bot.message_handler(commands=['experts'])
+# @bot.message_handler(func=lambda message: message.text == "👨‍💼 Эксперты")
+# def experts_button_handler(message):
+#     log_command(message.from_user.id, "experts")
+#     bot.send_message(
+#         message.chat.id,
+#         "Выберите эксперта:",
+#         reply_markup=create_experts_menu()
+#     )
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("expert_"))
 def expert_callback_handler(call):
