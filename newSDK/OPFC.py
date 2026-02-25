@@ -173,6 +173,8 @@ import datetime
 
 def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", max_reflection_attempts: int = 3):
     history = get_chat_history(user_id, limit=10)
+    
+    # Основная история (без reflection)
     messages = [
         {"role": "system", "content": prompt},
         *history,
@@ -183,7 +185,6 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", ma
     print(f"[FC] User {user_id} | model={model} | attempt=1/{max_reflection_attempts+1}")
 
     for attempt in range(max_reflection_attempts + 1):
-        # 1. Основной вызов с инструментами
         resp = client.chat.completions.create(
             model=model,
             messages=messages,
@@ -194,10 +195,10 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", ma
         tool_calls = getattr(msg, "tool_calls", None)
 
         if not tool_calls:
-            print(f"[FC] ✅ Ответ без инструментов (попытка {attempt+1})")
+            print(f"[FC] ✅ Ответ без инструментов")
             return msg.content
 
-        # 2. Выполнение инструментов
+        # Выполняем инструменты
         messages.append(msg)
         tools_used = False
 
@@ -205,8 +206,7 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", ma
             if call.function.name == "web_search":
                 tools_used = True
                 args = json.loads(call.function.arguments)
-                search_query = args.get("query", query)
-                result = _perform_web_search(search_query)
+                result = _perform_web_search(args.get("query", query))
                 messages.append({
                     "tool_call_id": call.id,
                     "role": "tool",
@@ -223,50 +223,53 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", ma
                     "content": content
                 })
 
-        # 3. Рефлексия (самооценка источников)
+        # === РЕФЛЕКСИЯ (на копии, чтобы не загрязнять историю) ===
         if tools_used and attempt < max_reflection_attempts:
-            reflection_prompt = (
-                f"Сегодня {today}. Ты только что сделал web_search. "
-                "Оцени качество полученных источников по шкале 1–10.\n"
-                "Критерии:\n"
-                "- 10 = самые свежие официальные источники\n"
-                "- ниже 7 = устаревшие или нерелевантные\n\n"
-                "Ответь ТОЛЬКО в формате:\n"
-                "Оценка: X/10\n"
-                "Решение: OK или НУЖЕН_ПОВТОРНЫЙ_ПОИСК\n"
-                "Если нужен повтор — предложи улучшенный запрос."
-            )
+            reflection_messages = messages.copy()  # ← копия!
+            reflection_messages.append({
+                "role": "system",
+                "content": f"Сегодня {today}. Оцени качество источников (1-10). "
+                           "Ответь **строго** в формате:\n"
+                           "Оценка: X/10\n"
+                           "Решение: OK или НУЖЕН_ПОВТОРНЫЙ_ПОИСК"
+            })
 
-            messages.append({"role": "system", "content": reflection_prompt})
-
-            # ← ИСПРАВЛЕНИЕ ЗДЕСЬ
             reflection = client.chat.completions.create(
                 model=model,
-                messages=messages,
-                max_completion_tokens=300,   # ← было max_tokens
-                temperature=0.3
-            ).choices[0].message.content
+                messages=reflection_messages,
+                max_completion_tokens=250,
+                temperature=0.2
+            ).choices[0].message.content.strip()
 
-            print(f"[FC] Reflection (попытка {attempt+1}): {reflection[:180]}...")
+            print(f"[FC] Reflection (попытка {attempt+1}): {reflection[:160]}...")
 
             if "НУЖЕН_ПОВТОРНЫЙ_ПОИСК" not in reflection.upper():
                 print(f"[FC] ✅ Источники хорошие на попытке {attempt+1}")
                 break
 
+            # Нужен повтор
             messages.append({
                 "role": "system",
-                "content": "Источники были недостаточно хорошими. Сделай повторный поиск с более точным запросом."
+                "content": "Источники были недостаточно качественными. Сделай более точный web_search."
             })
             print(f"[FC] 🔄 Повторный поиск (попытка {attempt+2})")
             continue
 
         break
 
-    # 4. Финальный ответ
+    # === ФИНАЛЬНЫЙ ОТВЕТ (самое важное) ===
+    messages.append({
+        "role": "system",
+        "content": "Теперь дай полный, естественный и точный ответ пользователю на его вопрос. "
+                   "Не упоминай оценку источников, reflection, попытки или техническую информацию. "
+                   "Отвечай как обычный полезный ассистент на русском языке."
+    })
+
     final = client.chat.completions.create(
         model=model,
         messages=messages
     )
+
     print(f"[FC] ✅ Финальный ответ после {attempt+1} попыток")
     return final.choices[0].message.content
 
