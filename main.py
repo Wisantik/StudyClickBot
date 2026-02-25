@@ -1548,9 +1548,6 @@ ID: {user_id}
 
 Оставшаяся квота:
 {quota_text}
-
-🏷 Детали расходов:
-💰 Общая сумма: ${user_data['total_spent']:.4f}
 """
 
         try:
@@ -1677,21 +1674,40 @@ def support_handler(message):
 def cancel_subscription_handler(message):
     user_id = message.from_user.id
     user_data = load_user_data(user_id)
+
     if not user_data or user_data['subscription_plan'] == 'free':
-        bot.reply_to(message, "У вас нет активной подписки для отмены.", reply_markup=create_main_menu())
+        bot.reply_to(
+            message,
+            "У вас нет активной подписки для отмены.",
+            reply_markup=create_main_menu()
+        )
         return
+
     conn = connect_to_db()
     cur = conn.cursor()
+
     cur.execute("""
         UPDATE users
         SET auto_renewal = FALSE
         WHERE user_id = %s
     """, (user_id,))
+
     conn.commit()
     cur.close()
     conn.close()
-    bot.reply_to(message, "Автопродление отключено. Ваша подписка останется активной.", reply_markup=create_main_menu())
 
+    # 🔔 Лог админу
+    bot.send_message(
+        ADMIN_ID,
+        f"❌ Пользователь {user_id} отключил автопродление."
+    )
+
+    bot.reply_to(
+        message,
+        "Автопродление отключено.\n"
+        "Подписка останется активной до окончания оплаченного периода.",
+        reply_markup=create_main_menu()
+    )
 def check_and_update_tokens(user_id):
     conn = connect_to_db()
     cur = conn.cursor()
@@ -1745,11 +1761,8 @@ def check_and_update_tokens(user_id):
 
     # 🔹 Для платных тарифов токены не ограничиваем (ставим "бесконечность")
     elif current_plan in ['plus_trial', 'plus_month']:
-        cur.execute("""
-            UPDATE users
-            SET daily_tokens = 999999999  -- символизируем "безлимит"
-            WHERE user_id = %s
-        """, (user_id,))
+        # Ничего не делаем
+        pass
 
     conn.commit()
     cur.close()
@@ -1802,10 +1815,6 @@ ID: {user_id}
 
 Оставшаяся квота:
 {quota_text}
-
-🏷 Детали расходов:
-💰 Общая сумма: ${user_data['total_spent']:.4f}
-
 """
     bot.send_message(message.chat.id, profile_text, reply_markup=create_profile_menu())
 
@@ -2648,17 +2657,16 @@ def process_text_message(text, chat_id) -> str:
     # ================== TOKEN COUNT ====================
     output_tokens = len(ai_response)
 
-    # Проверяем, хватит ли лимита на вывод (для бесплатных и лимитированных планов)
-    if not update_user_tokens(chat_id, 0, output_tokens):
-        bot.send_message(
-            chat_id,
-            "Ответ слишком длинный для вашего лимита токенов.\n\n"
-            "👉 Чтобы продолжить, оформите подписку.",
-            reply_markup=create_subscription_required_keyboard()
-        )
-        # Если лимита не хватило на вывод, всё равно сохраняем входные токены,
-        # но не сохраняем сообщение assistant и не возвращаем ответ
-        return "Лимит токенов исчерпан."
+    # Лимит проверяем ТОЛЬКО для free
+    if user_data['subscription_plan'] == 'free':
+        if not update_user_tokens(chat_id, 0, output_tokens):
+            bot.send_message(
+                chat_id,
+                "Ответ слишком длинный для вашего лимита токенов.\n\n"
+                "👉 Чтобы продолжить, оформите подписку.",
+                reply_markup=create_subscription_required_keyboard()
+            )
+            return "Лимит токенов исчерпан."
 
     # ================== STATISTICS & DB ====================
     # Обновляем общую статистику потраченных денег (если нужно)
