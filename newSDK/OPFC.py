@@ -170,117 +170,107 @@ tools = [
 #                  Function-Calling Runner
 # ============================================================
 
-def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13"):
-    history = get_chat_history(user_id, limit=10)
-    tools_used = []
+import datetime
 
+def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", max_reflection_attempts: int = 3):
+    history = get_chat_history(user_id, limit=10)
     messages = [
         {"role": "system", "content": prompt},
         *history,
         {"role": "user", "content": query}
     ]
 
+    today = datetime.date.today().strftime("%d.%m.%Y")
+    print(f"[FC] User {user_id} | model={model} | attempt=1/ {max_reflection_attempts+1}")
 
-    print(f"[FC] User {user_id} | model={model}")
-    print(f"[FC] Запрос(120 символов): {query[:120]!r}")
+    for attempt in range(max_reflection_attempts + 1):
+        # 1. Вызываем модель с инструментами
+        resp = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=tools,
+            tool_choice="auto"
+        )
+        msg = resp.choices[0].message
+        tool_calls = getattr(msg, "tool_calls", None)
 
-    # 1️⃣ Первый вызов — модель решает, нужен ли tool
-    resp = client.chat.completions.create(
-        model=model,
-        messages=messages,
-        tools=tools,
-        tool_choice="auto"
-    )
+        # Если инструменты не нужны — сразу возвращаем ответ
+        if not tool_calls:
+            print(f"[FC] ✅ Финальный ответ после {attempt+1} попыток (без инструментов)")
+            return msg.content
 
-    msg = resp.choices[0].message
-    tool_calls = getattr(msg, "tool_calls", None)
+        # 2. Выполняем инструменты (web_search / fetch_url)
+        messages.append(msg)  # добавляем вызов инструментов
+        tools_used = False
 
-    # ❌ TOOLS НЕ ИСПОЛЬЗОВАНЫ
-    if not tool_calls:
-        print("[FC] ⚠️ tools NOT used")
-        print("\n" + "─" * 16 + " ASSISTANT PREVIEW " + "─" * 16)
-        print(msg.content[:300])
-        print("─" * 56 + "\n")
+        for call in tool_calls:
+            if call.function.name == "web_search":
+                tools_used = True
+                args = json.loads(call.function.arguments)
+                search_query = args.get("query", query)
+                result = _perform_web_search(search_query)
+                messages.append({
+                    "tool_call_id": call.id,
+                    "role": "tool",
+                    "name": "web_search",
+                    "content": result or "Поиск не дал результатов."
+                })
+            elif call.function.name == "fetch_url":
+                args = json.loads(call.function.arguments)
+                content = fetch_url_content(args.get("url"))
+                messages.append({
+                    "tool_call_id": call.id,
+                    "role": "tool",
+                    "name": "fetch_url",
+                    "content": content
+                })
 
-        return msg.content
-
-
-    # ✅ TOOLS ИСПОЛЬЗОВАНЫ
-    print(f"[FC] Model decision: ✅ tools USED ({len(tool_calls)})")
-
-    messages.append(msg)
-
-    # 2️⃣ Выполнение tool'ов
-    for call in tool_calls:
-        print(f"[FC] Tool called: {call.function.name}")
-        if call.function.name == "fetch_url":
-            args = json.loads(call.function.arguments)
-            url = args.get("url")
-
-            print(f"[FC] fetch_url: {url}")
-
-            content = fetch_url_content(url)
-
-            messages.append({
-                "tool_call_id": call.id,
-                "role": "tool",
-                "name": "fetch_url",
-                "content": content
-            })
-
-
-        if call.function.name == "web_search":
-            tools_used = True
-
-            args = json.loads(call.function.arguments)
-            search_query = args.get("query", "")
-            print(f"[FC] web_search query: {search_query!r}")
-
-            result = _perform_web_search(search_query)
-
-            if not result:
-                print("[FC] web_search result: ❌ empty")
-            else:
-                print(f"[FC] web_search result length: {len(result)}")
-
-            messages.append({
-                "tool_call_id": call.id,
-                "role": "tool",
-                "name": "web_search",
-                "content": result or ""
-            })
-        if tools_used:
-            print("[FC] 🔧 tools USED:")
-            for call in tool_calls:
-                print(f" - {call.function.name}")
-
-            tools_policy = (
-                "ВАЖНО:\n"
-                "- Ты использовал инструмент web_search.\n"
-                "- Тебе ЗАПРЕЩЕНО объяснять пользователю, как искать вручную.\n"
-                "- Ты ОБЯЗАН использовать результаты web_search в ответе.\n"
-                "- Если результаты поиска нерелевантны — прямо скажи: "
-                "'Поиск дал нерелевантные результаты'.\n"
-                "- Не давай общих советов и инструкций без ссылок из поиска.\n"
-                "- Используй конкретные ссылки, названия и факты из результатов. \n"
-                "Если ты используешь fetch_url: - ты обязан опираться на полученный контент- если контент пуст или нерелевантен — скажи об этом прямо- запрещено говорить, что у тебя нет доступа к ссылке"
+        # 3. Самооценка (Reflection) — только если был поиск
+        if tools_used and attempt < max_reflection_attempts:
+            reflection_prompt = (
+                f"Сегодня {today}. Ты только что сделал web_search. "
+                "Оцени качество полученных источников по шкале 1–10.\n"
+                "Критерии:\n"
+                "- 10 = самые свежие официальные источники (cbr.ru, consultant.ru, government.ru и т.д.)\n"
+                "- 7–9 = хорошие, но можно лучше\n"
+                "- ниже 7 = устаревшие, противоречивые или нерелевантные\n\n"
+                "Ответь ТОЛЬКО в формате:\n"
+                "Оценка: X/10\n"
+                "Решение: OK или НУЖЕН_ПОВТОРНЫЙ_ПОИСК\n"
+                "Если нужен повтор — предложи улучшенный поисковый запрос."
             )
 
-            print("[FC] Enforcing web_search usage policy")
+            messages.append({"role": "system", "content": reflection_prompt})
 
+            reflection = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=300
+            ).choices[0].message.content
+
+            print(f"[FC] Reflection (попытка {attempt+1}): {reflection[:200]}...")
+
+            if "НУЖЕН_ПОВТОРНЫЙ_ПОИСК" not in reflection.upper():
+                print(f"[FC] ✅ Источники признаны хорошими на попытке {attempt+1}")
+                break  # выходим из цикла — идём к финальному ответу
+
+            # Если нужно повторить — добавляем уточнение
             messages.append({
                 "role": "system",
-                "content": tools_policy
+                "content": "Источники были недостаточно хорошими. Сделай повторный web_search с более точным запросом."
             })
+            print(f"[FC] 🔄 Делаем повторный поиск (попытка {attempt+2})")
+            continue  # идём на следующую итерацию
 
-    # 3️⃣ Финальный ответ модели с результатами tool
+        # Если дошли сюда — либо последняя попытка, либо источники хорошие
+        break
+
+    # 4. Финальный ответ с лучшими источниками
     final = client.chat.completions.create(
         model=model,
         messages=messages
     )
-
-    print("[FC] Final answer generated")
-
+    print(f"[FC] ✅ Финальный ответ после {attempt+1} попыток")
     return final.choices[0].message.content
 
 def log_web_search(query: str, results: list):
