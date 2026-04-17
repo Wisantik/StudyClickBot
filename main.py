@@ -694,7 +694,6 @@ def show_query_stats_menu(message):
     )
 
 
-# Обработчик нажатий на кнопки
 @bot.callback_query_handler(func=lambda call: call.data.startswith("querystats_"))
 def query_stats_callback(call):
     if call.from_user.id not in ADMIN_IDS:
@@ -713,9 +712,8 @@ def query_stats_callback(call):
     period_name = period_names.get(period_code, "Неизвестный период")
     days = get_days_from_period(period_code)
 
-    bot.answer_callback_query(call.id, f"Собираю статистику за {period_name}...")
+    bot.answer_callback_query(call.id, f"Анализирую за {period_name}...")
 
-    # Показываем процесс
     bot.edit_message_text(
         chat_id=call.message.chat.id,
         message_id=call.message.message_id,
@@ -723,19 +721,31 @@ def query_stats_callback(call):
         parse_mode="HTML"
     )
 
-    # Получаем анализ
     analysis_data = get_popular_user_queries(days)
 
+    # === УЛУЧШЕННАЯ ОБРАБОТКА ОШИБОК ===
     if "error" in analysis_data:
+        error_msg = analysis_data["error"]
+        
+        if "Недостаточно данных" in error_msg or "total_queries_analyzed" in analysis_data:
+            text = "⚠️ <b>Недостаточно данных</b>\n\n" \
+                   f"За выбранный период найдено слишком мало запросов пользователей.\n" \
+                   f"Попробуйте выбрать больший период (например, «За всё время»)."
+        elif "Database" in error_msg or "подключения" in error_msg:
+            text = "❌ <b>Ошибка подключения к базе данных</b>\n\nПопробуйте позже."
+        else:
+            text = f"❌ <b>Ошибка анализа</b>\n\n{error_msg}\n\nПопробуйте позже."
+
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="⚠️ Недостаточно данных или ошибка анализа. Попробуйте позже.",
+            text=text,
+            parse_mode="HTML",
             reply_markup=create_query_stats_keyboard()
         )
         return
 
-    # Красивый вывод
+    # Если всё хорошо — показываем результат
     result_text = format_query_stats(analysis_data, period_name)
 
     try:
@@ -744,7 +754,7 @@ def query_stats_callback(call):
             message_id=call.message.message_id,
             text=result_text,
             parse_mode="HTML",
-            reply_markup=create_query_stats_keyboard()  # кнопки остаются
+            reply_markup=create_query_stats_keyboard()
         )
     except Exception as e:
         print(f"Ошибка редактирования сообщения: {e}")
