@@ -473,7 +473,7 @@ import datetime
 
 def export_all_user_queries_to_txt() -> str:
     """
-    Создаёт красивый TXT-файл со всеми запросами пользователей.
+    Создаёт чистый TXT-файл только с запросами пользователей (без промптов и ответов ассистента).
     """
     conn = connect_to_db()
     try:
@@ -485,16 +485,20 @@ def export_all_user_queries_to_txt() -> str:
                     ch.chat_id as user_id,
                     COALESCE(u.subscription_plan, 'free') as subscription_plan
                 FROM chat_history ch
-                LEFT JOIN users u 
-                    ON ch.chat_id = u.user_id
+                LEFT JOIN users u ON ch.chat_id = u.user_id
                 WHERE ch.role = 'user'
-                  AND length(ch.content) > 10
+                  AND length(ch.content) > 5
+                  -- Фильтруем очевидный мусор и системные промпты
+                  AND ch.content NOT LIKE 'Ты — универсальный экспертный AI-ассистент%'
+                  AND ch.content NOT LIKE 'Вы просто бот.%'
+                  AND ch.content NOT LIKE '%MECE%'
+                  AND ch.content NOT LIKE '%Chain-of-Thought%'
                 ORDER BY ch.timestamp DESC
-                LIMIT 1500
+                LIMIT 2000
             """)
             rows = cur.fetchall()
     except Exception as e:
-        print(f"[ERROR] Database error in export_all_user_queries_to_txt: {e}")
+        print(f"[ERROR] Database error in export: {e}")
         return None
     finally:
         conn.close()
@@ -503,40 +507,49 @@ def export_all_user_queries_to_txt() -> str:
         return None
 
     from collections import Counter
-    query_counter = Counter(row[1].strip() for row in rows)
+    query_counter = Counter()
 
+    clean_rows = []
+    for timestamp, content, user_id, plan in rows:
+        cleaned = content.strip()
+        if len(cleaned) < 6:
+            continue
+        query_counter[cleaned] += 1
+        clean_rows.append((timestamp, cleaned, user_id, plan))
+
+    # Формируем текст файла
     lines = []
-    lines.append("=== СТАТИСТИКА ЗАПРОСОВ ПОЛЬЗОВАТЕЛЕЙ Finny Bot ===\n")
-    lines.append(f"Всего запросов в выгрузке: {len(rows)}")
-    lines.append(f"Дата выгрузки: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n")
-    lines.append("=" * 70 + "\n\n")
+    lines.append("=== ЧИСТАЯ СТАТИСТИКА ЗАПРОСОВ ПОЛЬЗОВАТЕЛЕЙ FINNY BOT ===\n")
+    lines.append(f"Дата выгрузки: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
+    lines.append(f"Всего уникальных запросов: {len(query_counter)}")
+    lines.append(f"Всего записей: {len(clean_rows)}\n")
+    lines.append("=" * 80 + "\n\n")
 
-    # ТОП повторяющихся запросов
+    # 1. ТОП повторяющихся запросов
     lines.append("🔥 ТОП ПОВТОРЯЮЩИХСЯ ЗАПРОСОВ\n")
-    for query, count in query_counter.most_common(40):
+    for query, count in query_counter.most_common(50):
         if count >= 2:
             lines.append(f"[{count} раз] {query}\n")
-    lines.append("\n" + "=" * 70 + "\n\n")
+    lines.append("\n" + "=" * 80 + "\n\n")
 
-    # Полный список
-    lines.append("📋 ПОЛНЫЙ СПИСОК ЗАПРОСОВ\n\n")
+    # 2. Полный список чистых запросов
+    lines.append("📋 ПОЛНЫЙ СПИСОК ЗАПРОСОВ ПОЛЬЗОВАТЕЛЕЙ\n\n")
 
-    for timestamp, content, user_id, plan in rows:
+    for timestamp, content, user_id, plan in clean_rows:
         date_str = timestamp.strftime("%d.%m.%Y %H:%M")
         
         plan_name = {
             "free": "Бесплатный",
-            "plus_trial": "Plus — Пробная (3 дня)",
-            "plus_month": "Plus — Месяц",
+            "plus_trial": "Plus Пробная",
+            "plus_month": "Plus Месяц",
             "plus": "Plus"
-        }.get(plan, plan.capitalize() if plan else "Неизвестно")
+        }.get(plan, plan.capitalize() if plan else "—")
 
-        line = f"📅 {date_str} | 🆔 {user_id} | 💳 {plan_name}\n"
-        line += f"💬 {content.strip()}\n"
-        line += "─" * 80 + "\n"
-        lines.append(line)
+        lines.append(f"📅 {date_str} | 🆔 {user_id} | 💳 {plan_name}")
+        lines.append(f"→ {content}")
+        lines.append("─" * 85 + "\n")
 
-    # Сохраняем во временный файл
+    # Сохраняем файл
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.txt', delete=False) as f:
         f.writelines(lines)
         file_path = f.name
@@ -598,6 +611,7 @@ def export_queries_txt_callback(call):
             bot.send_document(
                 chat_id=call.message.chat.id,
                 document=document_file,
+                filename = f"finny_user_queries_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.txt",
                 caption="📤 Полная выгрузка запросов Finny Bot\n\n"
                         "• Сначала — самые частые повторяющиеся запросы\n"
                         "• Затем — полный список со временем, user_id и подпиской",
