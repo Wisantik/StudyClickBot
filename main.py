@@ -474,7 +474,6 @@ import datetime
 def export_all_user_queries_to_txt() -> str:
     """
     Создаёт красивый TXT-файл со всеми запросами пользователей.
-    Возвращает путь к файлу.
     """
     conn = connect_to_db()
     try:
@@ -483,63 +482,61 @@ def export_all_user_queries_to_txt() -> str:
                 SELECT 
                     ch.timestamp,
                     ch.content,
-                    u.user_id,
-                    COALESCE(u.username, 'no_username') as username,
+                    ch.chat_id as user_id,
                     COALESCE(u.subscription_plan, 'free') as subscription_plan
                 FROM chat_history ch
-                LEFT JOIN users u ON ch.chat_id = u.user_id
+                LEFT JOIN users u 
+                    ON ch.chat_id = u.user_id
                 WHERE ch.role = 'user'
                   AND length(ch.content) > 10
                 ORDER BY ch.timestamp DESC
                 LIMIT 1500
             """)
             rows = cur.fetchall()
+    except Exception as e:
+        print(f"[ERROR] Database error in export_all_user_queries_to_txt: {e}")
+        return None
     finally:
         conn.close()
 
     if not rows:
         return None
 
-    # Группируем повторяющиеся запросы
     from collections import Counter
-    query_counter = Counter()
-    for row in rows:
-        query_counter[row[1].strip()] += 1
+    query_counter = Counter(row[1].strip() for row in rows)
 
-    # Формируем текст файла
     lines = []
     lines.append("=== СТАТИСТИКА ЗАПРОСОВ ПОЛЬЗОВАТЕЛЕЙ Finny Bot ===\n")
-    lines.append(f"Всего запросов: {len(rows)}")
-    lines.append(f"Дата выгрузки: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}\n")
-    lines.append("=" * 60 + "\n\n")
+    lines.append(f"Всего запросов в выгрузке: {len(rows)}")
+    lines.append(f"Дата выгрузки: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')}\n")
+    lines.append("=" * 70 + "\n\n")
 
-    # 1. ТОП повторяющихся запросов
+    # ТОП повторяющихся запросов
     lines.append("🔥 ТОП ПОВТОРЯЮЩИХСЯ ЗАПРОСОВ\n")
-    for query, count in query_counter.most_common(30):
-        if count > 1:
+    for query, count in query_counter.most_common(40):
+        if count >= 2:
             lines.append(f"[{count} раз] {query}\n")
-    lines.append("\n" + "=" * 60 + "\n\n")
+    lines.append("\n" + "=" * 70 + "\n\n")
 
-    # 2. Полный список всех запросов
-    lines.append("📋 ПОЛНЫЙ СПИСОК ВСЕХ ЗАПРОСОВ\n\n")
+    # Полный список
+    lines.append("📋 ПОЛНЫЙ СПИСОК ЗАПРОСОВ\n\n")
 
-    for timestamp, content, user_id, username, plan in rows:
+    for timestamp, content, user_id, plan in rows:
         date_str = timestamp.strftime("%d.%m.%Y %H:%M")
         
-        # Красивое название подписки
         plan_name = {
             "free": "Бесплатный",
-            "plus_trial": "Plus (пробная)",
-            "plus_month": "Plus (месяц)",
+            "plus_trial": "Plus — Пробная (3 дня)",
+            "plus_month": "Plus — Месяц",
             "plus": "Plus"
-        }.get(plan, plan.capitalize())
+        }.get(plan, plan.capitalize() if plan else "Неизвестно")
 
-        line = f"📅 {date_str} | 👤 @{username} | 💳 {plan_name}\n"
+        line = f"📅 {date_str} | 🆔 {user_id} | 💳 {plan_name}\n"
         line += f"💬 {content.strip()}\n"
-        line += "-" * 70 + "\n"
+        line += "─" * 80 + "\n"
         lines.append(line)
 
-    # Записываем в временный файл
+    # Сохраняем во временный файл
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.txt', delete=False) as f:
         f.writelines(lines)
         file_path = f.name
@@ -666,12 +663,11 @@ def format_query_stats(data: dict, period_name: str) -> str:
 @bot.message_handler(commands=['querystats', 'popularqueries'])
 def show_query_stats_menu(message):
     if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "Нет доступа.", reply_markup=create_main_menu())
-        return
+        return  # Просто ничего не отвечаем (самый безопасный вариант)
 
     log_command(message.from_user.id, "querystats")
 
-    text = "<b>📊 Статистика запросов пользователей</b>\n\nВыберите период для анализа:"
+    text = "<b>📊 Статистика запросов пользователей (Admin)</b>\n\nВыберите период:"
 
     bot.send_message(
         message.chat.id,
