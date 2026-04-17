@@ -561,46 +561,55 @@ def create_query_stats_keyboard() -> types.InlineKeyboardMarkup:
     return keyboard
 
 
+import datetime
+import tempfile
+import os
+from telebot import types   # уже должен быть
+
 @bot.callback_query_handler(func=lambda call: call.data == "export_queries_txt")
 def export_queries_txt_callback(call):
     if call.from_user.id not in ADMIN_IDS:
-        bot.answer_callback_query(call.id, "Нет доступа")
+        bot.answer_callback_query(call.id, "⛔ Доступ запрещён")
         return
 
     bot.answer_callback_query(call.id, "📤 Подготавливаю файл...")
 
-    bot.edit_message_text(
-        chat_id=call.message.chat.id,
-        message_id=call.message.message_id,
-        text="⏳ Выгружаю все запросы пользователей в TXT-файл...\nЭто может занять несколько секунд.",
-        parse_mode="HTML"
-    )
-
     try:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="⏳ Выгружаю все запросы пользователей в TXT-файл...\nЭто может занять 5–10 секунд.",
+            parse_mode="HTML"
+        )
+
         file_path = export_all_user_queries_to_txt()
 
         if not file_path:
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="❌ Нет запросов в базе.",
+                text="❌ В базе пока нет запросов.",
                 reply_markup=create_query_stats_keyboard()
             )
             return
 
-        # Отправляем файл
+        # Правильный способ отправки файла для твоей версии telebot
         with open(file_path, 'rb') as f:
+            document = types.InputFile(f, filename=f"finny_queries_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.txt")
+            
             bot.send_document(
                 chat_id=call.message.chat.id,
-                document=f,
-                filename=f"finny_queries_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-                caption="📤 Полная выгрузка всех запросов пользователей\n(сначала топ повторяющихся, потом полный список)",
+                document=document,
+                caption="📤 Полная выгрузка запросов пользователей\n\n"
+                        "Сначала — топ повторяющихся запросов\n"
+                        "Затем — полный список с датами, ID и подпиской",
                 parse_mode="HTML"
             )
 
         # Удаляем временный файл
         import os
-        os.unlink(file_path)
+        if os.path.exists(file_path):
+            os.unlink(file_path)
 
         # Возвращаем меню
         bot.send_message(
@@ -614,7 +623,7 @@ def export_queries_txt_callback(call):
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="❌ Произошла ошибка при формировании файла.",
+            text=f"❌ Ошибка при отправке файла:\n{str(e)[:300]}",
             reply_markup=create_query_stats_keyboard()
         )
 
