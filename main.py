@@ -473,32 +473,28 @@ import datetime
 
 def export_all_user_queries_to_txt() -> str:
     """
-    Создаёт чистый TXT-файл только с запросами пользователей (без промптов и ответов ассистента).
+    НОВАЯ ВЕРСИЯ: Экспорт только из чистой таблицы user_queries_log
+    (без промптов, без ответов ассистента, без мусора)
     """
     conn = connect_to_db()
     try:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT 
-                    ch.timestamp,
-                    ch.content,
-                    ch.chat_id as user_id,
-                    COALESCE(u.subscription_plan, 'free') as subscription_plan
-                FROM chat_history ch
-                LEFT JOIN users u ON ch.chat_id = u.user_id
-                WHERE ch.role = 'user'
-                  AND length(ch.content) > 5
-                  -- Фильтруем очевидный мусор и системные промпты
-                  AND ch.content NOT LIKE 'Ты — универсальный экспертный AI-ассистент%'
-                  AND ch.content NOT LIKE 'Вы просто бот.%'
-                  AND ch.content NOT LIKE '%MECE%'
-                  AND ch.content NOT LIKE '%Chain-of-Thought%'
-                ORDER BY ch.timestamp DESC
-                LIMIT 2000
+                    timestamp,
+                    content,
+                    chat_id as user_id,
+                    COALESCE(
+                        (SELECT subscription_plan FROM users WHERE user_id = chat_id),
+                        'free'
+                    ) as subscription_plan
+                FROM user_queries_log
+                ORDER BY timestamp DESC
+                LIMIT 3000
             """)
             rows = cur.fetchall()
     except Exception as e:
-        print(f"[ERROR] Database error in export: {e}")
+        print(f"[ERROR] Database error in export_all_user_queries_to_txt: {e}")
         return None
     finally:
         conn.close()
@@ -512,27 +508,26 @@ def export_all_user_queries_to_txt() -> str:
     clean_rows = []
     for timestamp, content, user_id, plan in rows:
         cleaned = content.strip()
-        if len(cleaned) < 6:
+        if len(cleaned) < 5:
             continue
         query_counter[cleaned] += 1
         clean_rows.append((timestamp, cleaned, user_id, plan))
 
-    # Формируем текст файла
+    # === Формирование файла ===
     lines = []
     lines.append("=== ЧИСТАЯ СТАТИСТИКА ЗАПРОСОВ ПОЛЬЗОВАТЕЛЕЙ FINNY BOT ===\n")
     lines.append(f"Дата выгрузки: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
     lines.append(f"Всего уникальных запросов: {len(query_counter)}")
     lines.append(f"Всего записей: {len(clean_rows)}\n")
-    lines.append("=" * 80 + "\n\n")
+    lines.append("=" * 85 + "\n\n")
 
-    # 1. ТОП повторяющихся запросов
+    # ТОП повторяющихся запросов
     lines.append("🔥 ТОП ПОВТОРЯЮЩИХСЯ ЗАПРОСОВ\n")
     for query, count in query_counter.most_common(50):
         if count >= 2:
             lines.append(f"[{count} раз] {query}\n")
-    lines.append("\n" + "=" * 80 + "\n\n")
 
-    # 2. Полный список чистых запросов
+    lines.append("\n" + "=" * 85 + "\n\n")
     lines.append("📋 ПОЛНЫЙ СПИСОК ЗАПРОСОВ ПОЛЬЗОВАТЕЛЕЙ\n\n")
 
     for timestamp, content, user_id, plan in clean_rows:
@@ -547,9 +542,9 @@ def export_all_user_queries_to_txt() -> str:
 
         lines.append(f"📅 {date_str} | 🆔 {user_id} | 💳 {plan_name}")
         lines.append(f"→ {content}")
-        lines.append("─" * 85 + "\n")
+        lines.append("─" * 90 + "\n")
 
-    # Сохраняем файл
+    # Сохраняем во временный файл
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.txt', delete=False) as f:
         f.writelines(lines)
         file_path = f.name
@@ -3026,12 +3021,16 @@ def process_text_message(text, chat_id) -> str:
         save_user_data(user_data)
     elif not update_user_tokens(chat_id, input_tokens, 0):
         return "У вас закончился лимит токенов. Попробуйте завтра или купите подписку: /pay"
-
-    # ================= LOAD ASSISTANT CONFIG ======================
+      
+      
+# ================= LOAD ASSISTANT CONFIG ======================
     config = load_assistants_config()
     current_assistant = get_user_assistant(chat_id, text)
     assistant_settings = config["assistants"].get(current_assistant, {})
     prompt = assistant_settings.get("prompt", "Вы просто бот.")
+
+    # === НОВОЕ: Сохраняем чистый запрос пользователя для статистики ===
+    log_user_query(chat_id, text)
 
     # ================================================================
     # 🧠 Отправляем запрос в ИИ

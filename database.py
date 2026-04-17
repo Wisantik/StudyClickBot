@@ -368,6 +368,14 @@ def check_and_create_columns(connection):
             cursor.execute(create_assistants_table)
             cursor.execute(create_chat_history_table)
             cursor.execute(create_users_table)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_queries_log (
+                    id SERIAL PRIMARY KEY,
+                    chat_id BIGINT NOT NULL,
+                    content TEXT NOT NULL,
+                    timestamp TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                );
+            """)
             cursor.execute(create_payments_table)
             cursor.execute("""
                 ALTER TABLE users 
@@ -379,6 +387,7 @@ def check_and_create_columns(connection):
                 ADD COLUMN IF NOT EXISTS language VARCHAR(10) DEFAULT 'ru',
                 ADD COLUMN IF NOT EXISTS payment_method_id VARCHAR(255);
             """)
+                   
             connection.commit()
         except Exception as e:
             print(f"Ошибка при создании таблиц или добавлении столбцов: {e}")
@@ -608,6 +617,43 @@ def clear_chat_history(chat_id):
 conn = connect_to_db()
 set_default_assistant(conn, 'universal_expert')
 conn.close()
+
+def log_user_query(chat_id: int, content: str):
+    """
+    Сохраняет ТОЛЬКО реальные запросы пользователей для статистики.
+    Промпты и системный мусор сюда НЕ попадают.
+    """
+    if not content or len(content.strip()) < 5:
+        return
+
+    text = content.strip()
+    lower = text.lower()
+
+    # Фильтр промптов
+    if (len(text) > 700 or
+        "ты — универсальный экспертный" in lower or
+        "ты — универсальный, экспертный" in lower or
+        "mece" in lower or
+        "chain-of-thought" in lower or
+        "формат ответа" in lower or
+        "правила общения" in lower or
+        "настройки генерации" in lower or
+        "инструкции для finni" in lower or
+        "[файл:" in lower):
+        return  # промпт — не сохраняем
+
+    conn = connect_to_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO user_queries_log (chat_id, content, timestamp)
+                VALUES (%s, %s, NOW())
+            """, (chat_id, text))
+            conn.commit()
+    except Exception as e:
+        print(f"[ERROR] Не удалось сохранить запрос в user_queries_log: {e}")
+    finally:
+        conn.close()
 
 def get_db_connection():
     return connect_to_db()
