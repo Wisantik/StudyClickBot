@@ -365,6 +365,123 @@ def get_command_stats(period):
     conn.close()
     return stats
 
+from collections import Counter
+import re
+
+# ====================== СТАТИСТИКА РЕАЛЬНЫХ ЗАПРОСОВ ПОЛЬЗОВАТЕЛЕЙ ======================
+def get_popular_user_queries(period: str = "month", max_queries: int = 300) -> str:
+    """
+    Возвращает семантический анализ самых популярных запросов пользователей.
+    """
+    days = {"week": 7, "month": 30, "year": 365}.get(period, 30)
+
+    conn = connect_to_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT content
+                FROM chat_history
+                WHERE role = 'user'
+                  AND timestamp >= CURRENT_DATE - INTERVAL '%s days'
+                  AND length(content) > 10
+                ORDER BY timestamp DESC
+                LIMIT %s
+            """, (days, max_queries))
+            queries = [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+
+    if not queries:
+        return "📭 Пока нет запросов пользователей за этот период."
+
+    # Подготавливаем промпт
+    query_list = "\n".join([f"• {q}" for q in queries[:150]])  # берём не больше 150 в промпт
+
+    analysis_prompt = f"""Ты — аналитик продукта Finny (финансовый ИИ-бот).
+Проанализируй {len(queries)} последних запросов пользователей.
+
+Запросы:
+{query_list}
+
+Сгруппируй их в **ТОП-10 самых частых тем/типов запросов**.
+Для каждой темы укажи:
+- Название темы (коротко и понятно)
+- Сколько запросов попало в тему (примерное число)
+- 2–3 примера реальных запросов
+- Что это говорит о потребностях пользователей
+
+В конце добавь один абзац **"Главный вывод"** — что сейчас больше всего нужно людям.
+
+Ответ строго в формате JSON:
+{{
+  "top_topics": [
+    {{"topic": "Название темы", "count": 45, "examples": ["пример 1", "пример 2"]}},
+    ...
+  ],
+  "summary": "Главный вывод за период..."
+}}
+"""
+
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": analysis_prompt}],
+            temperature=0.3,
+            max_tokens=1500
+        )
+        result = resp.choices[0].message.content.strip()
+
+        # Если GPT вернул не JSON — возвращаем как есть
+        if not result.startswith("{"):
+            return result
+
+        # Красиво форматируем JSON для админа
+        import json
+        data = json.loads(result)
+        text = f"<b>📊 Самые популярные запросы пользователей</b> (за {period})\n\n"
+
+        for i, topic in enumerate(data.get("top_topics", []), 1):
+            text += f"<b>{i}. {topic['topic']}</b> — ~{topic['count']} запросов\n"
+            text += f"Примеры: {', '.join(topic.get('examples', [])[:3])}\n\n"
+
+        text += f"<b>🔥 Главный вывод:</b>\n{data.get('summary', '—')}"
+        return text
+
+    except Exception as e:
+        print(f"[ERROR] get_popular_user_queries: {e}")
+        # Fallback — простая частотность слов
+        words = []
+        for q in queries:
+            words.extend(re.findall(r'\b\w+\b', q.lower()))
+        common = Counter(words).most_common(30)
+        return "🔄 Семантический анализ временно недоступен.\n\nСамые частые слова:\n" + \
+               "\n".join([f"• {word} — {cnt}" for word, cnt in common])
+
+
+# ====================== АДМИН КОМАНДА ======================
+@bot.message_handler(commands=['querystats', 'popularqueries'])
+def show_query_stats(message):
+    if message.from_user.id not in ADMIN_IDS:   # ← у вас уже есть ADMIN_IDS
+        bot.reply_to(message, "Нет прав.", reply_markup=create_main_menu())
+        return
+
+    log_command(message.from_user.id, "querystats")
+
+    bot.send_message(
+        message.chat.id,
+        "⏳ Собираю статистику реальных запросов пользователей...",
+        reply_markup=create_main_menu()
+    )
+
+    stats = get_popular_user_queries(period="month")
+    for chunk in split_message(stats, 4000):
+        bot.send_message(
+            message.chat.id,
+            chunk,
+            parse_mode="HTML",
+            reply_markup=create_main_menu()
+        )
+
 def create_main_menu() -> types.ReplyKeyboardMarkup:
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     keyboard.add(
@@ -2012,7 +2129,9 @@ def show_stats_admin(message):
         format_report("📅 За месяц:", mo_g),
         format_report("📅 За год:", yr_g)
     ]
-
+        # === ДОБАВЛЯЕМ СТАТИСТИКУ ЗАПРОСОВ ===
+    query_stats = get_popular_user_queries(period="month")
+    reports.append("\n" + "="*50 + "\n📌 РЕАЛЬНЫЕ ЗАПРОСЫ ПОЛЬЗОВАТЕЛЕЙ (месяц)\n" + "="*50 + "\n" + query_stats)
     # отправляем аккуратно (разбитие длинных сообщений)
     for rpt in reports:
         try:
