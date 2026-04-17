@@ -368,119 +368,244 @@ def get_command_stats(period):
 from collections import Counter
 import re
 
-# ====================== СТАТИСТИКА РЕАЛЬНЫХ ЗАПРОСОВ ПОЛЬЗОВАТЕЛЕЙ ======================
-def get_popular_user_queries(period: str = "month", max_queries: int = 300) -> str:
+import json
+import html  # для экранирования, если понадобится
+
+def get_popular_user_queries(days: int = 30) -> dict:
     """
-    Возвращает семантический анализ самых популярных запросов пользователей.
+    Возвращает семантический анализ популярных запросов пользователей.
+    Возвращает dict с данными или dict с ошибкой.
     """
-    days = {"week": 7, "month": 30, "year": 365}.get(period, 30)
+    if days < 1:
+        days = 30
 
     conn = connect_to_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT content
-                FROM chat_history
-                WHERE role = 'user'
-                  AND timestamp >= CURRENT_DATE - INTERVAL '%s days'
-                  AND length(content) > 10
-                ORDER BY timestamp DESC
-                LIMIT %s
-            """, (days, max_queries))
-            queries = [row[0] for row in cur.fetchall()]
+            if days >= 9999:  # "За всё время"
+                cur.execute("""
+                    SELECT content
+                    FROM chat_history
+                    WHERE role = 'user'
+                      AND length(content) > 15
+                    ORDER BY timestamp DESC
+                    LIMIT 400
+                """)
+            else:
+                cur.execute("""
+                    SELECT content
+                    FROM chat_history
+                    WHERE role = 'user'
+                      AND timestamp >= CURRENT_DATE - INTERVAL %s DAY
+                      AND length(content) > 15
+                    ORDER BY timestamp DESC
+                    LIMIT 400
+                """, (days,))
+            
+            queries = [row[0].strip() for row in cur.fetchall()]
+    except Exception as e:
+        print(f"[ERROR] Database error in get_popular_user_queries: {e}")
+        return {"error": "Ошибка подключения к базе данных"}
     finally:
         conn.close()
 
-    if not queries:
-        return "📭 Пока нет запросов пользователей за этот период."
+    if len(queries) < 10:
+        return {
+            "error": "Недостаточно данных для анализа",
+            "total_queries_analyzed": len(queries)
+        }
 
-    # Подготавливаем промпт
-    query_list = "\n".join([f"• {q}" for q in queries[:150]])  # берём не больше 150 в промпт
+    # Подготавливаем список запросов для промпта
+    query_list = "\n".join([f"{i+1}. {q}" for i, q in enumerate(queries[:140])])
 
-    analysis_prompt = f"""Ты — аналитик продукта Finny (финансовый ИИ-бот).
-Проанализируй {len(queries)} последних запросов пользователей.
+    prompt = f"""Ты — senior product analyst ИИ-бота Finny.
+
+Проанализируй следующие запросы пользователей и выдели самые популярные темы.
 
 Запросы:
 {query_list}
 
-Сгруппируй их в **ТОП-10 самых частых тем/типов запросов**.
-Для каждой темы укажи:
-- Название темы (коротко и понятно)
-- Сколько запросов попало в тему (примерное число)
-- 2–3 примера реальных запросов
-- Что это говорит о потребностях пользователей
+Верни **только валидный JSON** (без markdown, без ```json), строго по этой структуре:
 
-В конце добавь один абзац **"Главный вывод"** — что сейчас больше всего нужно людям.
-
-Ответ строго в формате JSON:
 {{
+  "total_queries_analyzed": {len(queries)},
   "top_topics": [
-    {{"topic": "Название темы", "count": 45, "examples": ["пример 1", "пример 2"]}},
-    ...
+    {{"rank": 1, "topic": "Короткое название темы", "percentage": 35, "examples": ["пример запроса 1", "пример запроса 2"]}},
+    {{"rank": 2, "topic": "Другая тема", "percentage": 22, "examples": ["ещё пример"]}}
   ],
-  "summary": "Главный вывод за период..."
+  "insight": "Один ёмкий и полезный инсайт о текущих потребностях пользователей (1-2 предложения)"
 }}
-"""
+
+Группируй запросы логично. Названия тем делай понятными и конкретными."""
 
     try:
         resp = client.chat.completions.create(
             model="gpt-4o-mini",
-            messages=[{"role": "user", "content": analysis_prompt}],
-            temperature=0.3,
-            max_tokens=1500
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.25,
+            max_tokens=1300
         )
+
         result = resp.choices[0].message.content.strip()
 
-        # Если GPT вернул не JSON — возвращаем как есть
-        if not result.startswith("{"):
-            return result
+        # Убираем возможные markdown-обёртки
+        if result.startswith("```json"):
+            result = result[7:]
+        if result.endswith("```"):
+            result = result[:-3]
+        result = result.strip()
 
-        # Красиво форматируем JSON для админа
-        import json
-        data = json.loads(result)
-        text = f"<b>📊 Самые популярные запросы пользователей</b> (за {period})\n\n"
+        if result.startswith("{"):
+            parsed = json.loads(result)
+            # Дополнительная проверка структуры
+            if "top_topics" in parsed and "insight" in parsed:
+                return parsed
 
-        for i, topic in enumerate(data.get("top_topics", []), 1):
-            text += f"<b>{i}. {topic['topic']}</b> — ~{topic['count']} запросов\n"
-            text += f"Примеры: {', '.join(topic.get('examples', [])[:3])}\n\n"
+        return {"error": "Не удалось получить корректный JSON от модели"}
 
-        text += f"<b>🔥 Главный вывод:</b>\n{data.get('summary', '—')}"
-        return text
+    except json.JSONDecodeError:
+        print("[ERROR] JSON decode error in query stats")
+        return {"error": "Модель вернула некорректный JSON"}
+    except Exception as e:
+        print(f"[ERROR] Query stats analysis failed: {e}")
+        return {"error": "Ошибка при анализе запросов"}
 
     except Exception as e:
         print(f"[ERROR] get_popular_user_queries: {e}")
-        # Fallback — простая частотность слов
-        words = []
-        for q in queries:
-            words.extend(re.findall(r'\b\w+\b', q.lower()))
-        common = Counter(words).most_common(30)
-        return "🔄 Семантический анализ временно недоступен.\n\nСамые частые слова:\n" + \
-               "\n".join([f"• {word} — {cnt}" for word, cnt in common])
+        return "⚠️ Не удалось выполнить семантический анализ запросов.\n\nПопробуйте позже."
 
+# ====================== ИНТЕРФЕЙС С КНОПКАМИ ДЛЯ СТАТИСТИКИ ЗАПРОСОВ ======================
+def create_query_stats_keyboard() -> types.InlineKeyboardMarkup:
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        types.InlineKeyboardButton("📅 За неделю", callback_data="querystats_week"),
+        types.InlineKeyboardButton("📅 За месяц", callback_data="querystats_month")
+    )
+    keyboard.add(
+        types.InlineKeyboardButton("📅 За 3 месяца", callback_data="querystats_3month"),
+        types.InlineKeyboardButton("📅 За всё время", callback_data="querystats_all")
+    )
+    keyboard.add(
+        types.InlineKeyboardButton("⬅️ Назад в меню", callback_data="back_to_admin_menu")
+    )
+    return keyboard
+
+
+def get_days_from_period(period: str) -> int:
+    if period == "week":
+        return 7
+    elif period == "month":
+        return 30
+    elif period == "3month":
+        return 90
+    elif period == "all":
+        return 9999  # очень большое число = всё время
+    return 30
+
+
+def format_query_stats(data: dict, period_name: str) -> str:
+    """Красиво форматирует результат анализа"""
+    output = f"<b>📊 Популярные запросы пользователей</b>\n"
+    output += f"Период: <b>{period_name}</b>\n"
+    output += f"Анализировано запросов: <b>{data.get('total_queries_analyzed', 0)}</b>\n\n"
+    
+    for topic in data.get("top_topics", [])[:8]:  # максимум 8 тем
+        rank = topic.get("rank", "?")
+        topic_name = topic.get("topic", "Без названия")
+        percentage = topic.get("percentage", "")
+        
+        output += f"<b>{rank}. {topic_name}</b>"
+        if percentage:
+            output += f" — {percentage}%"
+        output += "\n"
+        
+        examples = topic.get("examples", [])[:3]
+        if examples:
+            output += "   • " + "\n   • ".join([html.escape(ex) for ex in examples]) + "\n\n"
+        else:
+            output += "\n"
+    
+    insight = data.get("insight", "")
+    if insight:
+        output += f"<b>🔥 Главный инсайт:</b>\n{html.escape(insight)}\n"
+    
+    return output
 
 # ====================== АДМИН КОМАНДА ======================
+# Обработчик команды
 @bot.message_handler(commands=['querystats', 'popularqueries'])
-def show_query_stats(message):
-    if message.from_user.id not in ADMIN_IDS:   # ← у вас уже есть ADMIN_IDS
-        bot.reply_to(message, "Нет прав.", reply_markup=create_main_menu())
+def show_query_stats_menu(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "Нет доступа.", reply_markup=create_main_menu())
         return
 
     log_command(message.from_user.id, "querystats")
 
+    text = "<b>📊 Статистика запросов пользователей</b>\n\nВыберите период для анализа:"
+
     bot.send_message(
         message.chat.id,
-        "⏳ Собираю статистику реальных запросов пользователей...",
-        reply_markup=create_main_menu()
+        text,
+        parse_mode="HTML",
+        reply_markup=create_query_stats_keyboard()
     )
 
-    stats = get_popular_user_queries(period="month")
-    for chunk in split_message(stats, 4000):
-        bot.send_message(
-            message.chat.id,
-            chunk,
-            parse_mode="HTML",
-            reply_markup=create_main_menu()
+
+# Обработчик нажатий на кнопки
+@bot.callback_query_handler(func=lambda call: call.data.startswith("querystats_"))
+def query_stats_callback(call):
+    if call.from_user.id not in ADMIN_IDS:
+        bot.answer_callback_query(call.id, "Нет доступа")
+        return
+
+    period_code = call.data.replace("querystats_", "")
+    
+    period_names = {
+        "week": "Последняя неделя",
+        "month": "Последний месяц",
+        "3month": "Последние 3 месяца",
+        "all": "Всё время"
+    }
+    
+    period_name = period_names.get(period_code, "Неизвестный период")
+    days = get_days_from_period(period_code)
+
+    bot.answer_callback_query(call.id, f"Собираю статистику за {period_name}...")
+
+    # Показываем процесс
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text=f"⏳ Анализирую запросы пользователей за <b>{period_name}</b>...",
+        parse_mode="HTML"
+    )
+
+    # Получаем анализ
+    analysis_data = get_popular_user_queries(days)
+
+    if "error" in analysis_data:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="⚠️ Недостаточно данных или ошибка анализа. Попробуйте позже.",
+            reply_markup=create_query_stats_keyboard()
         )
+        return
+
+    # Красивый вывод
+    result_text = format_query_stats(analysis_data, period_name)
+
+    try:
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=result_text,
+            parse_mode="HTML",
+            reply_markup=create_query_stats_keyboard()  # кнопки остаются
+        )
+    except Exception as e:
+        print(f"Ошибка редактирования сообщения: {e}")
+        bot.send_message(call.message.chat.id, result_text, parse_mode="HTML")
 
 def create_main_menu() -> types.ReplyKeyboardMarkup:
     keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
