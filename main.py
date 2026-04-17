@@ -465,6 +465,88 @@ def get_popular_user_queries(days: int = 30) -> dict:
     except Exception as e:
         print(f"[ERROR] Query stats analysis failed: {e}")
         return {"error": "Ошибка при анализе запросов"}
+    
+
+
+import tempfile
+import datetime
+
+def export_all_user_queries_to_txt() -> str:
+    """
+    Создаёт красивый TXT-файл со всеми запросами пользователей.
+    Возвращает путь к файлу.
+    """
+    conn = connect_to_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT 
+                    ch.timestamp,
+                    ch.content,
+                    u.user_id,
+                    COALESCE(u.username, 'no_username') as username,
+                    COALESCE(u.subscription_plan, 'free') as subscription_plan
+                FROM chat_history ch
+                LEFT JOIN users u ON ch.chat_id = u.user_id
+                WHERE ch.role = 'user'
+                  AND length(ch.content) > 10
+                ORDER BY ch.timestamp DESC
+                LIMIT 1500
+            """)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return None
+
+    # Группируем повторяющиеся запросы
+    from collections import Counter
+    query_counter = Counter()
+    for row in rows:
+        query_counter[row[1].strip()] += 1
+
+    # Формируем текст файла
+    lines = []
+    lines.append("=== СТАТИСТИКА ЗАПРОСОВ ПОЛЬЗОВАТЕЛЕЙ Finny Bot ===\n")
+    lines.append(f"Всего запросов: {len(rows)}")
+    lines.append(f"Дата выгрузки: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M')}\n")
+    lines.append("=" * 60 + "\n\n")
+
+    # 1. ТОП повторяющихся запросов
+    lines.append("🔥 ТОП ПОВТОРЯЮЩИХСЯ ЗАПРОСОВ\n")
+    for query, count in query_counter.most_common(30):
+        if count > 1:
+            lines.append(f"[{count} раз] {query}\n")
+    lines.append("\n" + "=" * 60 + "\n\n")
+
+    # 2. Полный список всех запросов
+    lines.append("📋 ПОЛНЫЙ СПИСОК ВСЕХ ЗАПРОСОВ\n\n")
+
+    for timestamp, content, user_id, username, plan in rows:
+        date_str = timestamp.strftime("%d.%m.%Y %H:%M")
+        
+        # Красивое название подписки
+        plan_name = {
+            "free": "Бесплатный",
+            "plus_trial": "Plus (пробная)",
+            "plus_month": "Plus (месяц)",
+            "plus": "Plus"
+        }.get(plan, plan.capitalize())
+
+        line = f"📅 {date_str} | 👤 @{username} | 💳 {plan_name}\n"
+        line += f"💬 {content.strip()}\n"
+        line += "-" * 70 + "\n"
+        lines.append(line)
+
+    # Записываем в временный файл
+    with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.txt', delete=False) as f:
+        f.writelines(lines)
+        file_path = f.name
+
+    return file_path
+
+
 # ====================== ИНТЕРФЕЙС С КНОПКАМИ ДЛЯ СТАТИСТИКИ ЗАПРОСОВ ======================
 def create_query_stats_keyboard() -> types.InlineKeyboardMarkup:
     keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -476,9 +558,68 @@ def create_query_stats_keyboard() -> types.InlineKeyboardMarkup:
         types.InlineKeyboardButton("📅 За 3 месяца", callback_data="querystats_3month"),
         types.InlineKeyboardButton("📅 За всё время", callback_data="querystats_all")
     )
-    # ← Убрали кнопку "Назад в меню"
+    keyboard.add(
+        types.InlineKeyboardButton("📤 Выгрузить все запросы в TXT", callback_data="export_queries_txt")
+    )
     return keyboard
 
+
+@bot.callback_query_handler(func=lambda call: call.data == "export_queries_txt")
+def export_queries_txt_callback(call):
+    if call.from_user.id not in ADMIN_IDS:
+        bot.answer_callback_query(call.id, "Нет доступа")
+        return
+
+    bot.answer_callback_query(call.id, "📤 Подготавливаю файл...")
+
+    bot.edit_message_text(
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        text="⏳ Выгружаю все запросы пользователей в TXT-файл...\nЭто может занять несколько секунд.",
+        parse_mode="HTML"
+    )
+
+    try:
+        file_path = export_all_user_queries_to_txt()
+
+        if not file_path:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="❌ Нет запросов в базе.",
+                reply_markup=create_query_stats_keyboard()
+            )
+            return
+
+        # Отправляем файл
+        with open(file_path, 'rb') as f:
+            bot.send_document(
+                chat_id=call.message.chat.id,
+                document=f,
+                filename=f"finny_queries_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+                caption="📤 Полная выгрузка всех запросов пользователей\n(сначала топ повторяющихся, потом полный список)",
+                parse_mode="HTML"
+            )
+
+        # Удаляем временный файл
+        import os
+        os.unlink(file_path)
+
+        # Возвращаем меню
+        bot.send_message(
+            call.message.chat.id,
+            "✅ Файл успешно отправлен!",
+            reply_markup=create_query_stats_keyboard()
+        )
+
+    except Exception as e:
+        print(f"[ERROR] export_queries_txt: {e}")
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="❌ Произошла ошибка при формировании файла.",
+            reply_markup=create_query_stats_keyboard()
+        )
 
 def get_days_from_period(period: str) -> int:
     if period == "week":
