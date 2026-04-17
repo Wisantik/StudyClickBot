@@ -572,13 +572,13 @@ def export_queries_txt_callback(call):
         bot.answer_callback_query(call.id, "⛔ Доступ запрещён")
         return
 
-    bot.answer_callback_query(call.id, "📤 Подготавливаю файл...")
+    bot.answer_callback_query(call.id, "📤 Генерирую файл...")
 
     try:
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="⏳ Выгружаю все запросы пользователей в TXT-файл...\nЭто может занять 5–10 секунд.",
+            text="⏳ Подготавливаю выгрузку всех запросов пользователей...\nЭто может занять до 10 секунд.",
             parse_mode="HTML"
         )
 
@@ -588,21 +588,19 @@ def export_queries_txt_callback(call):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="❌ В базе пока нет запросов.",
+                text="❌ Пока нет запросов в базе.",
                 reply_markup=create_query_stats_keyboard()
             )
             return
 
-        # Правильный способ отправки файла для твоей версии telebot
-        with open(file_path, 'rb') as f:
-            document = types.InputFile(f, filename=f"finny_queries_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.txt")
-            
+        # Самый старый и надёжный способ отправки файла
+        with open(file_path, 'rb') as document_file:
             bot.send_document(
                 chat_id=call.message.chat.id,
-                document=document,
-                caption="📤 Полная выгрузка запросов пользователей\n\n"
-                        "Сначала — топ повторяющихся запросов\n"
-                        "Затем — полный список с датами, ID и подпиской",
+                document=document_file,
+                caption="📤 Полная выгрузка запросов Finny Bot\n\n"
+                        "• Сначала — самые частые повторяющиеся запросы\n"
+                        "• Затем — полный список со временем, user_id и подпиской",
                 parse_mode="HTML"
             )
 
@@ -611,7 +609,6 @@ def export_queries_txt_callback(call):
         if os.path.exists(file_path):
             os.unlink(file_path)
 
-        # Возвращаем меню
         bot.send_message(
             call.message.chat.id,
             "✅ Файл успешно отправлен!",
@@ -620,12 +617,15 @@ def export_queries_txt_callback(call):
 
     except Exception as e:
         print(f"[ERROR] export_queries_txt: {e}")
-        bot.edit_message_text(
-            chat_id=call.message.chat.id,
-            message_id=call.message.message_id,
-            text=f"❌ Ошибка при отправке файла:\n{str(e)[:300]}",
-            reply_markup=create_query_stats_keyboard()
-        )
+        try:
+            bot.edit_message_text(
+                chat_id=call.message.chat.id,
+                message_id=call.message.message_id,
+                text="❌ Ошибка при отправке файла.",
+                reply_markup=create_query_stats_keyboard()
+            )
+        except:
+            pass
 
 def get_days_from_period(period: str) -> int:
     if period == "week":
