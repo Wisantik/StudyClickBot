@@ -585,13 +585,13 @@ def export_queries_txt_callback(call):
         bot.answer_callback_query(call.id, "⛔ Доступ запрещён")
         return
 
-    bot.answer_callback_query(call.id, "📤 Генерирую файл...")
+    bot.answer_callback_query(call.id, "📤 Подготавливаю файл...")
 
     try:
         bot.edit_message_text(
             chat_id=call.message.chat.id,
             message_id=call.message.message_id,
-            text="⏳ Подготавливаю выгрузку всех запросов пользователей...\nЭто может занять до 10 секунд.",
+            text="⏳ Генерирую выгрузку запросов пользователей...\nЭто может занять 5–15 секунд.",
             parse_mode="HTML"
         )
 
@@ -601,20 +601,19 @@ def export_queries_txt_callback(call):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="❌ Пока нет запросов в базе.",
+                text="❌ В базе пока нет подходящих запросов.",
                 reply_markup=create_query_stats_keyboard()
             )
             return
 
-        # Самый старый и надёжный способ отправки файла
-        with open(file_path, 'rb') as document_file:
+        # Самый совместимый способ для старой версии telebot
+        with open(file_path, 'rb') as f:
             bot.send_document(
                 chat_id=call.message.chat.id,
-                document=document_file,
-                filename = f"finny_user_queries_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.txt",
-                caption="📤 Полная выгрузка запросов Finny Bot\n\n"
-                        "• Сначала — самые частые повторяющиеся запросы\n"
-                        "• Затем — полный список со временем, user_id и подпиской",
+                document=f,
+                caption="📤 Выгрузка запросов пользователей Finny Bot\n\n"
+                        "• Сначала — самые популярные повторяющиеся запросы\n"
+                        "• Затем — полный список с датой, user_id и подпиской",
                 parse_mode="HTML"
             )
 
@@ -635,7 +634,7 @@ def export_queries_txt_callback(call):
             bot.edit_message_text(
                 chat_id=call.message.chat.id,
                 message_id=call.message.message_id,
-                text="❌ Ошибка при отправке файла.",
+                text="❌ Произошла ошибка при отправке файла.",
                 reply_markup=create_query_stats_keyboard()
             )
         except:
