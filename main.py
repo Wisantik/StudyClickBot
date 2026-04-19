@@ -473,8 +473,7 @@ import datetime
 
 def export_all_user_queries_to_txt() -> str:
     """
-    НОВАЯ ВЕРСИЯ: Экспорт только из чистой таблицы user_queries_log
-    (без промптов, без ответов ассистента, без мусора)
+    Чистый экспорт из user_queries_log + исправленное форматирование (без разрывов строк)
     """
     conn = connect_to_db()
     try:
@@ -494,7 +493,7 @@ def export_all_user_queries_to_txt() -> str:
             """)
             rows = cur.fetchall()
     except Exception as e:
-        print(f"[ERROR] Database error in export_all_user_queries_to_txt: {e}")
+        print(f"[ERROR] Database error in export: {e}")
         return None
     finally:
         conn.close()
@@ -507,27 +506,26 @@ def export_all_user_queries_to_txt() -> str:
 
     clean_rows = []
     for timestamp, content, user_id, plan in rows:
-        cleaned = content.strip()
+        cleaned = content.strip().replace("\n", " ").replace("\r", " ")
         if len(cleaned) < 5:
             continue
         query_counter[cleaned] += 1
         clean_rows.append((timestamp, cleaned, user_id, plan))
 
-    # === Формирование файла ===
     lines = []
     lines.append("=== ЧИСТАЯ СТАТИСТИКА ЗАПРОСОВ ПОЛЬЗОВАТЕЛЕЙ FINNY BOT ===\n")
     lines.append(f"Дата выгрузки: {datetime.datetime.now().strftime('%d.%m.%Y %H:%M:%S')}")
     lines.append(f"Всего уникальных запросов: {len(query_counter)}")
     lines.append(f"Всего записей: {len(clean_rows)}\n")
-    lines.append("=" * 85 + "\n\n")
+    lines.append("=" * 90 + "\n\n")
 
-    # ТОП повторяющихся запросов
+    # ТОП повторяющихся
     lines.append("🔥 ТОП ПОВТОРЯЮЩИХСЯ ЗАПРОСОВ\n")
     for query, count in query_counter.most_common(50):
         if count >= 2:
             lines.append(f"[{count} раз] {query}\n")
 
-    lines.append("\n" + "=" * 85 + "\n\n")
+    lines.append("\n" + "=" * 90 + "\n\n")
     lines.append("📋 ПОЛНЫЙ СПИСОК ЗАПРОСОВ ПОЛЬЗОВАТЕЛЕЙ\n\n")
 
     for timestamp, content, user_id, plan in clean_rows:
@@ -540,17 +538,15 @@ def export_all_user_queries_to_txt() -> str:
             "plus": "Plus"
         }.get(plan, plan.capitalize() if plan else "—")
 
-        lines.append(f"📅 {date_str} | 🆔 {user_id} | 💳 {plan_name}")
-        lines.append(f"→ {content}")
-        lines.append("─" * 90 + "\n")
+        # Исправление: весь запрос на одной строке
+        lines.append(f"📅 {date_str} | 🆔 {user_id} | 💳 {plan_name} → {content}")
+        lines.append("─" * 95 + "\n")
 
-    # Сохраняем во временный файл
     with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', suffix='.txt', delete=False) as f:
         f.writelines(lines)
         file_path = f.name
 
     return file_path
-
 
 # ====================== ИНТЕРФЕЙС С КНОПКАМИ ДЛЯ СТАТИСТИКИ ЗАПРОСОВ ======================
 def create_query_stats_keyboard() -> types.InlineKeyboardMarkup:
