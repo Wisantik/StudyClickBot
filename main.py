@@ -2638,8 +2638,31 @@ def process_user_queue(user_id, chat_id):
                     bot.send_message(chat_id, chunk, reply_markup=None)  # Изменено
                 bot.send_message(chat_id, sources_block, disable_web_page_preview=True, reply_markup=None)  # Изменено
             else:
-                for chunk in split_message(ai_response, 4000):
-                    bot.send_message(chat_id, chunk, reply_markup=None)  # Изменено
+
+                if isinstance(ai_response, str) and ai_response.startswith("[IMAGE]"):
+
+                    import base64
+                    from io import BytesIO
+
+                    image_b64 = ai_response.replace("[IMAGE]", "", 1)
+
+                    image_bytes = base64.b64decode(image_b64)
+
+                    photo = BytesIO(image_bytes)
+                    photo.name = "image.png"
+
+                    bot.send_photo(
+                        chat_id,
+                        photo
+                    )
+
+                else:
+                    for chunk in split_message(ai_response, 4000):
+                        bot.send_message(
+                            chat_id,
+                            chunk,
+                            reply_markup=None
+                        )
         except Exception as e:
             stop_flag[0] = True
             bot.send_message(chat_id, f"Ошибка при обработке: {e}", reply_markup=None)  # Изменено

@@ -253,21 +253,9 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", ma
             elif call.function.name == "generate_image":
                 args = json.loads(call.function.arguments)
 
-                image = generate_image(
-                    args["prompt"]
-                )
+                image_b64 = generate_image(args["prompt"])
 
-                messages.append({
-                    "tool_call_id": call.id,
-                    "role": "tool",
-                    "name": "generate_image",
-                    "content": "Изображение успешно создано"
-                })
-
-                return {
-                    "type": "image",
-                    "data": image
-                }
+                return f"[IMAGE]{image_b64}"
 
         # === РЕФЛЕКСИЯ (на копии, чтобы не загрязнять историю) ===
         if tools_used and attempt < max_reflection_attempts:
