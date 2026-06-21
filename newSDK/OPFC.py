@@ -127,6 +127,18 @@ def fetch_url_content(url: str, max_chars: int = 12000) -> str:
     except Exception as e:
         return f"ERROR: Не удалось загрузить страницу: {e}"
 
+
+def generate_image(prompt: str):
+    result = client.images.generate(
+        model="gpt-image-1",
+        prompt=prompt,
+        size="1024x1024"
+    )
+
+    image_b64 = result.data[0].b64_json
+
+    return image_b64
+
 # ============================================================
 #                       TOOLS
 # ============================================================
@@ -142,6 +154,22 @@ tools = [
                     "query": {"type": "string"}
                 },
                 "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_image",
+            "description": "Создает изображение по описанию",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string"
+                    }
+                },
+                "required": ["prompt"]
             }
         }
     },
@@ -222,6 +250,24 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", ma
                     "name": "fetch_url",
                     "content": content
                 })
+            elif call.function.name == "generate_image":
+                args = json.loads(call.function.arguments)
+
+                image = generate_image(
+                    args["prompt"]
+                )
+
+                messages.append({
+                    "tool_call_id": call.id,
+                    "role": "tool",
+                    "name": "generate_image",
+                    "content": "Изображение успешно создано"
+                })
+
+                return {
+                    "type": "image",
+                    "data": image
+                }
 
         # === РЕФЛЕКСИЯ (на копии, чтобы не загрязнять историю) ===
         if tools_used and attempt < max_reflection_attempts:
