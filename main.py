@@ -2616,6 +2616,7 @@ def send_typing(chat_id, stop_flag):
 def process_user_queue(user_id, chat_id):
     if user_processing[user_id]:
         return
+
     if not message_queues[user_id]:
         return
 
@@ -2624,50 +2625,110 @@ def process_user_queue(user_id, chat_id):
 
     def _worker():
         stop_flag = [False]
-        typing_thread = Thread(target=send_typing, args=(chat_id, stop_flag), daemon=True)
+
+        typing_thread = Thread(
+            target=send_typing,
+            args=(chat_id, stop_flag),
+            daemon=True
+        )
         typing_thread.start()
 
         try:
             text = message.text
+
+            print(f"\n🟢 [QUEUE] User {user_id}")
+            print(f"💬 Запрос: {text[:100]}")
+
             ai_response = process_text_message(text, chat_id)
+
             stop_flag[0] = True
             typing_thread.join(timeout=1)
-            if isinstance(ai_response, tuple):
+
+            # Картинка
+            if isinstance(ai_response, str) and ai_response.startswith("[IMAGE]"):
+
+                import base64
+                from io import BytesIO
+
+                print(f"🖼 Отправляем изображение пользователю {user_id}")
+
+                image_b64 = ai_response.replace("[IMAGE]", "", 1)
+
+                image_bytes = base64.b64decode(image_b64)
+
+                photo = BytesIO(image_bytes)
+                photo.name = "image.png"
+
+                bot.send_photo(chat_id, photo)
+
+                return
+
+            # Видео
+            elif isinstance(ai_response, str) and ai_response.startswith("[VIDEO]"):
+
+                print(f"🎬 Отправляем видео пользователю {user_id}")
+
+                video_url = ai_response.replace("[VIDEO]", "", 1)
+
+                bot.send_video(
+                    chat_id,
+                    video_url
+                )
+
+                return
+
+            # Ответ с источниками
+            elif isinstance(ai_response, tuple):
+
+                print(f"🌐 Ответ с источниками")
+
                 final_answer, sources_block = ai_response
+
                 for chunk in split_message(final_answer, 4000):
-                    bot.send_message(chat_id, chunk, reply_markup=None)  # Изменено
-                bot.send_message(chat_id, sources_block, disable_web_page_preview=True, reply_markup=None)  # Изменено
-            else:
-
-                if isinstance(ai_response, str) and ai_response.startswith("[IMAGE]"):
-
-                    import base64
-                    from io import BytesIO
-
-                    image_b64 = ai_response.replace("[IMAGE]", "", 1)
-
-                    image_bytes = base64.b64decode(image_b64)
-
-                    photo = BytesIO(image_bytes)
-                    photo.name = "image.png"
-
-                    bot.send_photo(
+                    bot.send_message(
                         chat_id,
-                        photo
+                        chunk,
+                        reply_markup=None
                     )
 
-                else:
-                    for chunk in split_message(ai_response, 4000):
-                        bot.send_message(
-                            chat_id,
-                            chunk,
-                            reply_markup=None
-                        )
+                bot.send_message(
+                    chat_id,
+                    sources_block,
+                    disable_web_page_preview=True,
+                    reply_markup=None
+                )
+
+            # Обычный текст
+            else:
+
+                print(f"💬 Отправляем текстовый ответ")
+
+                for chunk in split_message(ai_response, 4000):
+                    bot.send_message(
+                        chat_id,
+                        chunk,
+                        reply_markup=None
+                    )
+
         except Exception as e:
+
             stop_flag[0] = True
-            bot.send_message(chat_id, f"Ошибка при обработке: {e}", reply_markup=None)  # Изменено
+
+            print(f"\n❌ Ошибка у пользователя {user_id}")
+            print(f"Причина: {e}\n")
+
+            bot.send_message(
+                chat_id,
+                f"Ошибка при обработке: {e}",
+                reply_markup=None
+            )
+
         finally:
+
             user_processing[user_id] = False
+
+            print(f"🔚 Обработка завершена для {user_id}")
+
             if message_queues[user_id]:
                 process_user_queue(user_id, chat_id)
 

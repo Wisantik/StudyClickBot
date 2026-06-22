@@ -6,7 +6,9 @@ from bs4 import BeautifulSoup
 from database import get_chat_history
 from ddgs import DDGS
 from openai import OpenAI
+import os
 
+LAOZHANG_API_KEY = os.getenv("LAOZHANG_API_KEY")
 # жёстко отключаем прокси ENV (на всякий случай)
 os.environ.pop("OPENAI_BASE_URL", None)
 os.environ.pop("OPENAI_API_BASE", None)
@@ -139,6 +141,64 @@ def generate_image(prompt: str):
 
     return image_b64
 
+import os
+import time
+import requests
+
+
+def generate_video(prompt: str):
+
+    headers = {
+        "Authorization": f"Bearer {LAOZHANG_API_KEY}"
+    }
+
+    # создаём задачу
+    r = requests.post(
+        "https://api.laozhang.ai/v1/videos",
+        headers=headers,
+        data={
+            "model": "sora-2",
+            "prompt": prompt,
+            "seconds": "4",
+            "size": "1280x720"
+        },
+        timeout=60
+    )
+
+    r.raise_for_status()
+
+    video_id = r.json()["id"]
+
+    print(f"[VIDEO] task={video_id}")
+
+    # ждём завершения
+    while True:
+
+        status = requests.get(
+            f"https://api.laozhang.ai/v1/videos/{video_id}",
+            headers=headers,
+            timeout=30
+        )
+
+        status.raise_for_status()
+
+        data = status.json()
+
+        print(
+            f"[VIDEO] {data.get('status')} "
+            f"{data.get('progress',0)}%"
+        )
+
+        if data["status"] == "completed":
+            break
+
+        if data["status"] == "failed":
+            raise Exception("Генерация видео не удалась")
+
+        time.sleep(15)
+
+    return f"https://api.laozhang.ai/v1/videos/{video_id}/content"
+
 # ============================================================
 #                       TOOLS
 # ============================================================
@@ -162,6 +222,22 @@ tools = [
         "function": {
             "name": "generate_image",
             "description": "Создает изображение по описанию",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "prompt": {
+                        "type": "string"
+                    }
+                },
+                "required": ["prompt"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_video",
+            "description": "Создает видео по текстовому описанию",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -250,6 +326,17 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", ma
                     "name": "fetch_url",
                     "content": content
                 })
+            elif call.function.name == "generate_video":
+
+                args = json.loads(
+                    call.function.arguments
+                )
+
+                video_url = generate_video(
+                    args["prompt"]
+                )
+
+                return f"[VIDEO]{video_url}"
             elif call.function.name == "generate_image":
                 args = json.loads(call.function.arguments)
 
