@@ -145,6 +145,7 @@ import os
 import time
 import requests
 
+LAOZHANG_API_KEY = os.getenv("LAOZHANG_API_KEY")
 
 def generate_video(prompt: str):
 
@@ -152,8 +153,10 @@ def generate_video(prompt: str):
         "Authorization": f"Bearer {LAOZHANG_API_KEY}"
     }
 
-    # создаём задачу
-    r = requests.post(
+    print(f"🎬 [VIDEO] Создание видео")
+    print(f"📝 Prompt: {prompt[:100]}")
+
+    response = requests.post(
         "https://api.laozhang.ai/v1/videos",
         headers=headers,
         data={
@@ -165,40 +168,47 @@ def generate_video(prompt: str):
         timeout=60
     )
 
-    r.raise_for_status()
+    response.raise_for_status()
 
-    video_id = r.json()["id"]
+    data = response.json()
 
-    print(f"[VIDEO] task={video_id}")
+    video_id = data["id"]
 
-    # ждём завершения
+    print(f"🆔 Task ID: {video_id}")
+
     while True:
 
-        status = requests.get(
+        status_response = requests.get(
             f"https://api.laozhang.ai/v1/videos/{video_id}",
             headers=headers,
             timeout=30
         )
 
-        status.raise_for_status()
+        status_response.raise_for_status()
 
-        data = status.json()
+        status_data = status_response.json()
 
-        print(
-            f"[VIDEO] {data.get('status')} "
-            f"{data.get('progress',0)}%"
-        )
+        status = status_data.get("status")
+        progress = status_data.get("progress", 0)
 
-        if data["status"] == "completed":
+        print(f"🎬 Статус: {status} | {progress}%")
+
+        if status == "completed":
             break
 
-        if data["status"] == "failed":
-            raise Exception("Генерация видео не удалась")
+        if status == "failed":
+            raise Exception(
+                status_data.get("error", "Генерация видео не удалась")
+            )
 
         time.sleep(15)
 
-    return f"https://api.laozhang.ai/v1/videos/{video_id}/content"
+    print("✅ Видео готово")
 
+    return (
+        f"https://api.laozhang.ai/v1/videos/"
+        f"{video_id}/content"
+    )
 # ============================================================
 #                       TOOLS
 # ============================================================
@@ -220,8 +230,8 @@ tools = [
     {
         "type": "function",
         "function": {
-            "name": "generate_image",
-            "description": "Создает изображение по описанию",
+            "name": "generate_video",
+            "description": "Создает видео по текстовому описанию",
             "parameters": {
                 "type": "object",
                 "properties": {
