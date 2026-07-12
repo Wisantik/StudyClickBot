@@ -155,18 +155,26 @@ def generate_video(prompt: str):
 
     print(f"🎬 [VIDEO] Создание видео")
     print(f"📝 Prompt: {prompt[:100]}")
-
+    print("=" * 80)
+    print("LAOZHANG_API_KEY =", repr(LAOZHANG_API_KEY))
+    print("Authorization =", f"Bearer {LAOZHANG_API_KEY}")
+    print("=" * 80)
     response = requests.post(
-        "https://api.laozhang.ai/v1/videos",
-        headers=headers,
-        data={
-            "model": "sora-2",
-            "prompt": prompt,
-            "seconds": "4",
-            "size": "1280x720"
-        },
-        timeout=60
-    )
+    "https://api.laozhang.ai/v1/videos",
+    headers=headers,
+    data={
+        "model": "sora-2",
+        "prompt": prompt,
+        "seconds": "4",
+        "size": "1280x720"
+    },
+    timeout=60
+)
+
+    print("STATUS:", response.status_code)
+    print("BODY:", response.text)
+
+    response.raise_for_status()
 
     response.raise_for_status()
 
@@ -284,6 +292,9 @@ tools = [
 #                  Function-Calling Runner
 # ============================================================
 import datetime
+
+
+
 
 def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", max_reflection_attempts: int = 3):
     history = get_chat_history(user_id, limit=10)
