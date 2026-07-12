@@ -145,6 +145,19 @@ import os
 import time
 import requests
 
+BASE_URL = "https://api.laozhang.ai"
+
+VIDEO_MODELS = [
+
+    "sora-2",
+
+    "veo-3.1-generate-preview",
+
+    "veo-3",
+
+    "veo-2",
+
+]
 
 def generate_video(prompt: str):
 
@@ -152,69 +165,123 @@ def generate_video(prompt: str):
         "Authorization": f"Bearer {LAOZHANG_API_KEY}"
     }
 
-    print(f"🎬 [VIDEO] Создание видео")
-    print(f"📝 Prompt: {prompt[:100]}")
+    print("\n" + "=" * 80)
+    print("🎬 GENERATE VIDEO")
+    print("Prompt:", prompt)
     print("=" * 80)
-    print("LAOZHANG_API_KEY =", repr(LAOZHANG_API_KEY))
-    print("Authorization =", f"Bearer {LAOZHANG_API_KEY}")
-    print("=" * 80)
-    response = requests.post(
-    "https://api.laozhang.ai/v1/videos",
-    headers=headers,
-    data={
-        "model": "sora-2",
-        "prompt": prompt,
-        "seconds": "4",
-        "size": "1280x720"
-    },
-    timeout=60
-)
 
-    print("STATUS:", response.status_code)
-    print("BODY:", response.text)
+    errors = []
 
-    response.raise_for_status()
+    for model in VIDEO_MODELS:
 
-    response.raise_for_status()
+        print(f"\n🚀 Пробуем модель: {model}")
 
-    data = response.json()
+        try:
 
-    video_id = data["id"]
-
-    print(f"🆔 Task ID: {video_id}")
-
-    while True:
-
-        status_response = requests.get(
-            f"https://api.laozhang.ai/v1/videos/{video_id}",
-            headers=headers,
-            timeout=30
-        )
-
-        status_response.raise_for_status()
-
-        status_data = status_response.json()
-
-        status = status_data.get("status")
-        progress = status_data.get("progress", 0)
-
-        print(f"🎬 Статус: {status} | {progress}%")
-
-        if status == "completed":
-            break
-
-        if status == "failed":
-            raise Exception(
-                status_data.get("error", "Генерация видео не удалась")
+            response = requests.post(
+                f"{BASE_URL}/v1/videos",
+                headers=headers,
+                data={
+                    "model": model,
+                    "prompt": prompt,
+                    "seconds": "4",
+                    "size": "1280x720"
+                },
+                timeout=60
             )
 
-        time.sleep(15)
+            print("STATUS:", response.status_code)
+            print("BODY:", response.text)
 
-    print("✅ Видео готово")
+            if response.status_code != 200:
 
-    return (
-        f"https://api.laozhang.ai/v1/videos/"
-        f"{video_id}/content"
+                errors.append(
+                    f"{model}: HTTP {response.status_code} -> {response.text}"
+                )
+
+                if response.status_code in (
+                    401,
+                    403,
+                    404,
+                    429,
+                    500,
+                    503
+                ):
+                    print(f"❌ {model} недоступна")
+                    continue
+
+                response.raise_for_status()
+
+            data = response.json()
+
+            video_id = data["id"]
+
+            print(f"✅ Задача создана ({model})")
+            print(f"Task ID: {video_id}")
+
+            while True:
+
+                status_response = requests.get(
+                    f"{BASE_URL}/v1/videos/{video_id}",
+                    headers=headers,
+                    timeout=30
+                )
+
+                print(
+                    "CHECK:",
+                    status_response.status_code,
+                    status_response.text
+                )
+
+                status_response.raise_for_status()
+
+                status_data = status_response.json()
+
+                status = status_data.get("status")
+                progress = status_data.get("progress", 0)
+
+                print(
+                    f"[{model}] "
+                    f"status={status} "
+                    f"progress={progress}%"
+                )
+
+                if status == "completed":
+
+                    print(f"🎉 Видео готово ({model})")
+
+                    return (
+                        f"{BASE_URL}/v1/videos/"
+                        f"{video_id}/content"
+                    )
+
+                if status == "failed":
+
+                    err = status_data.get(
+                        "error",
+                        "Video generation failed"
+                    )
+
+                    raise Exception(err)
+
+                time.sleep(15)
+
+        except Exception as e:
+
+            print(f"❌ Ошибка модели {model}")
+
+            print(e)
+
+            errors.append(
+                f"{model}: {e}"
+            )
+
+            continue
+
+    print("\nВсе модели завершились ошибкой.")
+
+    raise Exception(
+        "\n\n".join(errors)
     )
 # ============================================================
 #                       TOOLS
