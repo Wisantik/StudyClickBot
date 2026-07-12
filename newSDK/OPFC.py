@@ -159,130 +159,248 @@ VIDEO_MODELS = [
 
 ]
 
-def generate_video(prompt: str):
+def generate_video(prompt: str, timeout: int = 600, interval: int = 10) -> str:
+    """
+    Генерирует видео по текстовому prompt, перебирая модели LaoZhang до успешного результата.
+    Возвращает либо URL видео, либо путь к локальному файлу (если требуется скачивание).
+    Выбрасывает Exception с описанием ошибок для всех моделей при неудаче.
+    """
+    import requests, time, tempfile, os
 
-    headers = {
-        "Authorization": f"Bearer {LAOZHANG_API_KEY}"
-    }
-
-    print("\n" + "=" * 80)
-    print("🎬 GENERATE VIDEO")
-    print("Prompt:", prompt)
-    print("=" * 80)
-
+    headers = {"Authorization": f"Bearer {LAOZHANG_API_KEY}"}
     errors = []
 
-    for model in VIDEO_MODELS:
+    print("🎬 Запрос генерации видео:", prompt)
 
-        print(f"\n🚀 Пробуем модель: {model}")
-
+    # 1) Sora 2 (OpenAI-совместимый route)
+    for model in ["sora-2", "sora-2-pro"]:
         try:
-
-            response = requests.post(
-                f"{BASE_URL}/v1/videos",
-                headers=headers,
-                data={
-                    "model": model,
-                    "prompt": prompt,
-                    "seconds": "4",
-                    "size": "1280x720"
-                },
-                timeout=60
-            )
-
-            print("STATUS:", response.status_code)
-            print("BODY:", response.text)
-
-            if response.status_code != 200:
-
-                errors.append(
-                    f"{model}: HTTP {response.status_code} -> {response.text}"
-                )
-
-                if response.status_code in (
-                    401,
-                    403,
-                    404,
-                    429,
-                    500,
-                    503
-                ):
-                    print(f"❌ {model} недоступна")
-                    continue
-
-                response.raise_for_status()
-
-            data = response.json()
-
-            video_id = data["id"]
-
-            print(f"✅ Задача создана ({model})")
-            print(f"Task ID: {video_id}")
-
-            while True:
-
-                status_response = requests.get(
-                    f"{BASE_URL}/v1/videos/{video_id}",
-                    headers=headers,
-                    timeout=30
-                )
-
-                print(
-                    "CHECK:",
-                    status_response.status_code,
-                    status_response.text
-                )
-
-                status_response.raise_for_status()
-
-                status_data = status_response.json()
-
-                status = status_data.get("status")
-                progress = status_data.get("progress", 0)
-
-                print(
-                    f"[{model}] "
-                    f"status={status} "
-                    f"progress={progress}%"
-                )
-
-                if status == "completed":
-
-                    print(f"🎉 Видео готово ({model})")
-
-                    return (
-                        f"{BASE_URL}/v1/videos/"
-                        f"{video_id}/content"
-                    )
-
-                if status == "failed":
-
-                    err = status_data.get(
-                        "error",
-                        "Video generation failed"
-                    )
-
-                    raise Exception(err)
-
-                time.sleep(15)
-
+            print(f"\n> Модель {model}: POST /v1/videos")
+            # Посылаем POST-запрос (form-data)
+            resp = requests.post(f"{BASE_URL}/v1/videos",
+                                 headers=headers,
+                                 data={"model": model, "prompt": prompt, "seconds": "8", "size": "1280x720"})
+            print(f"HTTP {resp.status_code}: {resp.text[:100]}")
+            if resp.status_code == 200:
+                vid = resp.json().get("id")
+                if not vid:
+                    raise RuntimeError("Поля 'id' нет в ответе")
+                print("Задача создана, ID =", vid)
+                # Polling
+                start = time.time()
+                while True:
+                    st = requests.get(f"{BASE_URL}/v1/videos/{vid}", headers=headers)
+                    st.raise_for_status()
+                    info = st.json()
+                    status = info.get("status")
+                    progress = info.get("progress", 0)
+                    print(f"[{model}] статус={status}, прогресс={progress}%")
+                    if status == "completed":
+                        # Скачиваем видео
+                        dl = requests.get(f"{BASE_URL}/v1/videos/{vid}/content",
+                                          headers=headers, stream=True)
+                        dl.raise_for_status()
+                        tmp = os.path.join(tempfile.gettempdir(), f"{vid}.mp4")
+                        with open(tmp, "wb") as f:
+                            for chunk in dl.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                        print("Видео сохранено в", tmp)
+                        return tmp
+                    if status == "failed":
+                        raise RuntimeError(f"Не удалось: {info.get('error') or info}")
+                    if time.time() - start > timeout:
+                        raise TimeoutError("Превышено время генерации видео")
+                    time.sleep(interval)
+            elif resp.status_code in (401, 403, 404):
+                errors.append(f"{model}: {resp.status_code} {resp.text}")
+                print(f"Модель {model} недоступна ({resp.status_code}), пробуем следующую.")
+                break
+            elif resp.status_code in (429, 503):
+                print(f"{model}: получен {resp.status_code}, пробуем заново через некоторое время")
+                time.sleep(2)  # простая задержка перед повтором
+                continue
+            else:
+                errors.append(f"{model}: {resp.status_code} {resp.text}")
+                print(f"{model}: непредвиденный код {resp.status_code}, пропуск модели.")
+                break
         except Exception as e:
+            errors.append(f"{model}: {e}")
+            print(f"Ошибка {model}: {e}")
+        # Если мы не вернулись внутри try, переходим к следующей модели
 
-            print(f"❌ Ошибка модели {model}")
+    # 2) Veo 3.1 Fast/Standard (OpenAI-style)
+    for model in ["veo-3.1-fast-generate-preview", "veo-3.1-generate-preview"]:
+        try:
+            print(f"\n> Модель {model}: POST /v1/videos")
+            resp = requests.post(f"{BASE_URL}/v1/videos",
+                                 headers=headers,
+                                 data={"model": model, "prompt": prompt, "seconds": "8",
+                                       "size": "1280x720", "resolution": "720p"})
+            print(f"HTTP {resp.status_code}: {resp.text[:100]}")
+            if resp.status_code == 200:
+                vid = resp.json().get("id")
+                if not vid:
+                    raise RuntimeError("Поля 'id' нет в ответе")
+                print("Задача создана, ID =", vid)
+                start = time.time()
+                while True:
+                    st = requests.get(f"{BASE_URL}/v1/videos/{vid}", headers=headers)
+                    st.raise_for_status()
+                    info = st.json()
+                    status = info.get("status")
+                    progress = info.get("progress", 0)
+                    print(f"[{model}] статус={status}, прогресс={progress}%")
+                    if status == "completed":
+                        dl = requests.get(f"{BASE_URL}/v1/videos/{vid}/content",
+                                          headers=headers, stream=True)
+                        dl.raise_for_status()
+                        tmp = os.path.join(tempfile.gettempdir(), f"{vid}.mp4")
+                        with open(tmp, "wb") as f:
+                            for chunk in dl.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                        print("Видео сохранено в", tmp)
+                        return tmp
+                    if status == "failed":
+                        raise RuntimeError(f"Не удалось: {info.get('error') or info}")
+                    if time.time() - start > timeout:
+                        raise TimeoutError("Превышено время генерации видео")
+                    time.sleep(interval)
+            elif resp.status_code == 403:
+                errors.append(f"{model}: {resp.status_code} {resp.text}")
+                print(f"{model}: квота или разрешение отсутствует (код 403), пропускаем модель.")
+                break
+            elif resp.status_code in (429, 503):
+                print(f"{model}: {resp.status_code}, пробуем снова")
+                time.sleep(2)
+                continue
+            else:
+                errors.append(f"{model}: {resp.status_code} {resp.text}")
+                print(f"{model}: код {resp.status_code}, пропускаем.")
+                break
+        except Exception as e:
+            errors.append(f"{model}: {e}")
+            print(f"Ошибка {model}: {e}")
 
-            print(e)
+    # 3) Wan 2.7 (Text-to-Video через DashScope)
+    try:
+        model = "wan2.7-t2v"
+        print(f"\n> Модель {model}: POST /wan/api/v1/services/aigc/video-generation/video-synthesis")
+        payload = {
+            "model": model,
+            "input": {"prompt": prompt},
+            "parameters": {"resolution": "720P", "duration": 5, "prompt_extend": False}
+        }
+        resp = requests.post(f"{BASE_URL}/wan/api/v1/services/aigc/video-generation/video-synthesis",
+                             headers={**headers, "Content-Type": "application/json", "X-DashScope-Async": "enable"},
+                             json=payload)
+        print(f"HTTP {resp.status_code}: {resp.text[:100]}")
+        if resp.status_code == 200:
+            task_id = resp.json().get("output", {}).get("task_id")
+            if not task_id:
+                raise RuntimeError("WAN: нет task_id в ответе")
+            print("Задача создана, task_id =", task_id)
+            start = time.time()
+            while True:
+                st = requests.get(f"{BASE_URL}/v1/tasks/{task_id}", headers=headers)
+                st.raise_for_status()
+                info = st.json()
+                status = info.get("status")
+                print(f"[WAN] статус={status}")
+                if status == "completed":
+                    result_url = info.get("result_url")
+                    if not result_url:
+                        raise RuntimeError("WAN: нет result_url")
+                    print("Скачиваем видео по result_url...")
+                    # Для WAN не нужен заголовок авторизации
+                    dl = requests.get(result_url, stream=True)
+                    dl.raise_for_status()
+                    tmp = os.path.join(tempfile.gettempdir(), f"{task_id}.mp4")
+                    with open(tmp, "wb") as f:
+                        for chunk in dl.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    print("Видео сохранено в", tmp)
+                    return tmp
+                if status == "failed":
+                    raise RuntimeError(f"WAN не удалось: {info}")
+                if time.time() - start > timeout:
+                    raise TimeoutError("WAN: превышено время генерации")
+                time.sleep(interval)
+        else:
+            errors.append(f"WAN: {resp.status_code} {resp.text}")
+            print(f"WAN: код {resp.status_code}, не удалось создать задачу.")
+    except Exception as e:
+        errors.append(f"WAN: {e}")
+        print(f"Ошибка WAN: {e}")
 
-            errors.append(
-                f"{model}: {e}"
-            )
+    # 4) Seedance 2.0 (Fast и Standard)
+    for model in ["doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-260128"]:
+        try:
+            print(f"\n> Seedance: модель {model}: POST /seedance/api/v3/contents/generations/tasks")
+            payload = {
+                "model": model,
+                "content": [{"type": "text", "text": prompt}],
+                "ratio": "16:9",
+                "duration": 5,
+                "resolution": "720p",
+                "watermark": False,
+                "generate_audio": False,
+                "return_last_frame": False
+            }
+            resp = requests.post(f"{BASE_URL}/seedance/api/v3/contents/generations/tasks",
+                                 headers={**headers, "Content-Type": "application/json", "Accept": "application/json"},
+                                 json=payload)
+            print(f"HTTP {resp.status_code}: {resp.text[:100]}")
+            if resp.status_code == 200:
+                task_id = resp.json().get("id")
+                if not task_id:
+                    raise RuntimeError("Seedance: нет id задачи")
+                print("Задача создана, ID =", task_id)
+                start = time.time()
+                while True:
+                    st = requests.get(f"{BASE_URL}/seedance/api/v3/contents/generations/tasks/{task_id}",
+                                      headers={**headers, "Accept": "application/json"})
+                    st.raise_for_status()
+                    info = st.json()
+                    status = info.get("status")
+                    print(f"[Seedance] статус={status}")
+                    if status in ("succeeded", "completed"):
+                        # пытаемся найти URL видео
+                        vid_url = None
+                        if info.get("content"):
+                            vid_url = info["content"].get("video_url")
+                        # возможные альт. поля
+                        if not vid_url:
+                            vid_url = info.get("result_url") or info.get("data", {}).get("content", {}).get("video_url")
+                        if not vid_url:
+                            raise RuntimeError("Seedance: URL видео не найден")
+                        print("Скачиваем видео по видео-URL...")
+                        dl = requests.get(vid_url, stream=True)
+                        dl.raise_for_status()
+                        tmp = os.path.join(tempfile.gettempdir(), f"{task_id}.mp4")
+                        with open(tmp, "wb") as f:
+                            for chunk in dl.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                        print("Видео сохранено в", tmp)
+                        return tmp
+                    if status == "failed":
+                        raise RuntimeError(f"Seedance не удалось: {info}")
+                    if time.time() - start > timeout:
+                        raise TimeoutError("Seedance: превышено время генерации")
+                    time.sleep(interval)
+            else:
+                errors.append(f"Seedance {model}: {resp.status_code} {resp.text}")
+                print(f"Seedance {model}: код {resp.status_code}, пропускаем модель.")
+        except Exception as e:
+            errors.append(f"Seedance {model}: {e}")
+            print(f"Ошибка Seedance {model}: {e}")
 
-            continue
+    raise Exception("Все модели завершились ошибкой:\n" + "\n".join(errors))
 
-    print("\nВсе модели завершились ошибкой.")
 
-    raise Exception(
-        "\n\n".join(errors)
-    )
+# Пример использования:
+video_path = generate_video("Летящий дракон в вечернем небе, эпическая атмосфера")
+print("Видео получено:", video_path)
+
 # ============================================================
 #                       TOOLS
 # ============================================================
