@@ -8,7 +8,7 @@ from ddgs import DDGS
 from openai import OpenAI
 import os
 
-LAOZHANG_API_KEY = "7907256c85754bd3a49d946962054cf7"
+LAOZHANG_API_KEY = "sk-7zVC8L2L1UEWdoNE1391FcD759Bc46F6Ab5642Ac57A2208b"
 # жёстко отключаем прокси ENV (на всякий случай)
 os.environ.pop("OPENAI_BASE_URL", None)
 os.environ.pop("OPENAI_API_BASE", None)
