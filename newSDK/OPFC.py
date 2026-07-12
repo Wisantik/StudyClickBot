@@ -8,7 +8,7 @@ from ddgs import DDGS
 from openai import OpenAI
 import os
 
-LAOZHANG_API_KEY = os.getenv("LAOZHANG_API_KEY")
+LAOZHANG_API_KEY = "7907256c85754bd3a49d946962054cf7"
 # жёстко отключаем прокси ENV (на всякий случай)
 os.environ.pop("OPENAI_BASE_URL", None)
 os.environ.pop("OPENAI_API_BASE", None)
@@ -145,7 +145,6 @@ import os
 import time
 import requests
 
-LAOZHANG_API_KEY = os.getenv("LAOZHANG_API_KEY")
 
 def generate_video(prompt: str):
 
