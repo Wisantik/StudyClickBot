@@ -353,20 +353,19 @@ import datetime
 
 
 def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", max_reflection_attempts: int = 3):
-    history = get_chat_history(user_id, limit=10)
+    history = get_chat_history(user_id, limit=12)  # ← увеличил до 12, но теперь безопасно
     
-    # Основная история (без reflection)
-    # Перед циклом for attempt
     messages = [
         {"role": "system", "content": prompt},
-        {"role": "system", "content": "Ты должен использовать инструменты generate_image когда пользователь просит фото, картинку, изображение. "
-                                    "Используй generate_video когда просят видео или ролик."},
+        {"role": "system", "content": "Ты полезный ассистент. "
+                                      "Используй generate_image когда просят фото/картинку/нарисуй. "
+                                      "Используй generate_video когда просят видео/ролик."},
         *history,
         {"role": "user", "content": query}
     ]
 
     today = datetime.date.today().strftime("%d.%m.%Y")
-    print(f"[FC] User {user_id} | model={model} | attempt=1/{max_reflection_attempts+1}")
+    print(f"[FC] User {user_id} | model={model} | history_len={len(history)} | attempt=1/{max_reflection_attempts+1}")
 
     for attempt in range(max_reflection_attempts + 1):
         resp = client.chat.completions.create(

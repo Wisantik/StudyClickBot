@@ -585,20 +585,33 @@ def store_message_in_db(chat_id, role, content):
     finally:
         conn.close()
 
-def get_chat_history(chat_id, limit=10):
+def get_chat_history(user_id: int, limit: int = 10):
+    """Возвращает последние N сообщений + обрезает очень длинные"""
     conn = connect_to_db()
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT role, content FROM chat_history
-                WHERE chat_id = %s
-                ORDER BY timestamp DESC
+                SELECT role, content 
+                FROM chat_history 
+                WHERE user_id = %s 
+                ORDER BY timestamp DESC 
                 LIMIT %s
-            """, (chat_id, limit))
-            history = [{"role": role, "content": content} for role, content in cur.fetchall()]
-            return history[::-1]
+            """, (user_id, limit * 2))  # берем с запасом
+
+            rows = cur.fetchall()
+            
+        # Переворачиваем в правильный порядок (старые → новые)
+        history = [{"role": role, "content": content} for role, content in reversed(rows)]
+        
+        # Дополнительная защита: обрезаем очень длинные сообщения
+        for msg in history:
+            if len(msg["content"]) > 8000:
+                msg["content"] = msg["content"][:8000] + "... [сообщение обрезано]"
+
+        return history[-limit:]  # точно оставляем только limit
+
     except Exception as e:
-        print(f"Ошибка при получении истории чата: {e}")
+        print(f"[ERROR] get_chat_history: {e}")
         return []
     finally:
         conn.close()
