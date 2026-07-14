@@ -163,248 +163,122 @@ import requests
 import time
 import tempfile
 import os
-import json
 from typing import Optional
 
 BASE_URL = "https://api.laozhang.ai"
-LAOZHANG_API_KEY = "sk-7zVC8L2L1UEWdoNE1391FcD759Bc46F6Ab5642Ac57A2208b"  # оставь как есть
+LAOZHANG_API_KEY = "sk-7zVC8L2L1UEWdoNE1391FcD759Bc46F6Ab5642Ac57A2208b"
 
-HEADERS = {
-    "Authorization": f"Bearer {LAOZHANG_API_KEY}"
-}
+HEADERS = {"Authorization": f"Bearer {LAOZHANG_API_KEY}"}
+
 
 def generate_video(prompt: str, timeout: int = 900, interval: int = 8) -> str:
-    """
-    Улучшенная генерация видео.
-    Приоритет: Sora-2 (самый стабильный сейчас) → Seedance → Veo (с исправленным скачиванием).
-    """
-    errors = []
-    print(f"🎬 Запрос генерации видео: {prompt[:100]}...")
+    """Генерирует видео и возвращает путь к локальному файлу"""
+    print(f"🎬 [VIDEO GEN] Запрос: {prompt[:120]}{'...' if len(prompt) > 120 else ''}")
 
-    # ====================== 1. SORA-2 (самый надёжный сейчас) ======================
-    for model in ["sora-2", "sora-2-pro"]:
+    models_order = [
+        ("sora-2", "Sora"),
+        ("sora-2-pro", "Sora-Pro"),
+        ("doubao-seedance-2-0-fast-260128", "Seedance-Fast"),
+        ("doubao-seedance-2-0-260128", "Seedance"),
+        ("veo-3.1-fast-generate-preview", "Veo-Fast"),
+        ("veo-3.1-generate-preview", "Veo"),
+    ]
+
+    for model, name in models_order:
         try:
-            print(f"\n> Sora | Модель {model}")
-            resp = requests.post(
-                f"{BASE_URL}/v1/videos",
-                headers=HEADERS,
-                data={
-                    "model": model,
-                    "prompt": prompt,
-                    "seconds": "8",
-                    "size": "1280x720"   # landscape — более стабильный
-                },
-                timeout=30
-            )
-            print(f"HTTP {resp.status_code}: {resp.text[:200]}")
+            print(f"   → Пробуем {name} ({model})")
+            
+            if "sora" in model:
+                resp = requests.post(
+                    f"{BASE_URL}/v1/videos",
+                    headers=HEADERS,
+                    data={"model": model, "prompt": prompt, "seconds": "8", "size": "1280x720"},
+                    timeout=25
+                )
+            else:
+                # Seedance / Veo
+                resp = requests.post(
+                    f"{BASE_URL}/v1/videos",
+                    headers=HEADERS,
+                    data={"model": model, "prompt": prompt, "seconds": "8", "size": "1280x720"},
+                    timeout=25
+                )
+
+            print(f"   HTTP {resp.status_code}")
 
             if resp.status_code == 200:
-                data = resp.json()
-                task_id = data.get("id")
-                if not task_id:
-                    continue
-
-                print(f"Задача создана, ID = {task_id}")
-                video_path = _poll_and_download_sora(task_id, timeout, interval)
-                if video_path:
-                    return video_path
+                task_id = resp.json().get("id")
+                if task_id:
+                    print(f"   Задача создана → {task_id}")
+                    path = _poll_and_download(task_id, model, timeout, interval)
+                    if path:
+                        print(f"✅ Видео готово: {path}")
+                        return path
 
             elif resp.status_code in (503, 429):
-                print(f"{model}: временно нет каналов, пробуем дальше...")
-                time.sleep(3)
+                print(f"   {name}: нет свободных каналов (503/429)")
+                time.sleep(2)
                 continue
             else:
-                errors.append(f"Sora {model}: {resp.status_code} {resp.text[:150]}")
+                print(f"   {name}: ошибка {resp.status_code}")
 
         except Exception as e:
-            errors.append(f"Sora {model}: {e}")
+            print(f"   {name} exception: {e}")
 
-    # ====================== 2. SEEDANCE 2.0 ======================
-    for model in ["doubao-seedance-2-0-fast-260128", "doubao-seedance-2-0-260128"]:
-        try:
-            print(f"\n> Seedance | Модель {model}")
-            payload = {
-                "model": model,
-                "content": [{"type": "text", "text": prompt}],
-                "ratio": "16:9",
-                "duration": 5,
-                "resolution": "720p",
-                "watermark": False,
-                "generate_audio": False
-            }
-
-            resp = requests.post(
-                f"{BASE_URL}/seedance/api/v3/contents/generations/tasks",
-                headers={**HEADERS, "Content-Type": "application/json", "Accept": "application/json"},
-                json=payload,
-                timeout=30
-            )
-
-            if resp.status_code == 200:
-                task_id = resp.json().get("id")
-                if task_id:
-                    video_path = _poll_and_download_seedance(task_id, timeout, interval)
-                    if video_path:
-                        return video_path
-
-            elif resp.status_code == 503:
-                print(f"Seedance {model}: 503, пропускаем")
-                continue
-            else:
-                errors.append(f"Seedance {model}: {resp.status_code}")
-
-        except Exception as e:
-            errors.append(f"Seedance {model}: {e}")
-
-    # ====================== 3. VEO-3.1 (исправленный download) ======================
-    for model in ["veo-3.1-fast-generate-preview", "veo-3.1-generate-preview"]:
-        try:
-            print(f"\n> Veo | Модель {model}")
-            resp = requests.post(
-                f"{BASE_URL}/v1/videos",
-                headers=HEADERS,
-                data={
-                    "model": model,
-                    "prompt": prompt,
-                    "seconds": "8",
-                    "size": "1280x720"
-                },
-                timeout=30
-            )
-
-            if resp.status_code == 200:
-                task_id = resp.json().get("id")
-                if task_id:
-                    video_path = _poll_and_download_veo(task_id, timeout, interval)
-                    if video_path:
-                        return video_path
-
-        except Exception as e:
-            errors.append(f"Veo {model}: {e}")
-
-    # Если ничего не сработало
-    raise Exception("Все модели завершились ошибкой:\n" + "\n".join(errors))
+    raise Exception("Не удалось сгенерировать видео — все модели недоступны")
 
 
-# ====================== Вспомогательные polling + download ======================
-
-def _poll_and_download_sora(task_id: str, timeout: int, interval: int) -> Optional[str]:
-    """Polling + скачивание для Sora-2"""
+def _poll_and_download(task_id: str, model: str, timeout: int, interval: int) -> Optional[str]:
+    """Единый polling + download"""
     start = time.time()
+    is_veo = "veo" in model.lower()
+
     while time.time() - start < timeout:
         try:
-            st = requests.get(f"{BASE_URL}/v1/videos/{task_id}", headers=HEADERS, timeout=15)
-            st.raise_for_status()
-            info = st.json()
-            status = info.get("status")
+            status_resp = requests.get(f"{BASE_URL}/v1/videos/{task_id}", headers=HEADERS, timeout=15)
+            status_resp.raise_for_status()
+            info = status_resp.json()
+            status = info.get("status", "")
 
-            print(f"[Sora] статус={status}")
+            print(f"   [{model}] статус = {status}")
 
             if status == "completed":
-                dl = requests.get(f"{BASE_URL}/v1/videos/{task_id}/content", headers=HEADERS, stream=True)
-                dl.raise_for_status()
-                return _save_temp_video(dl, task_id)
+                # Пробуем скачать
+                for attempt in range(3):
+                    try:
+                        dl_headers = HEADERS if attempt == 0 else {}  # 2-я и 3-я попытка — без токена
+                        dl = requests.get(
+                            f"{BASE_URL}/v1/videos/{task_id}/content",
+                            headers=dl_headers,
+                            stream=True,
+                            timeout=60
+                        )
+                        dl.raise_for_status()
+
+                        tmp_path = os.path.join(tempfile.gettempdir(), f"video_{task_id}.mp4")
+                        with open(tmp_path, "wb") as f:
+                            for chunk in dl.iter_content(chunk_size=8192 * 4):
+                                f.write(chunk)
+
+                        print(f"   ✅ Скачано успешно: {tmp_path}")
+                        return tmp_path
+
+                    except requests.exceptions.HTTPError as e:
+                        if e.response.status_code == 401 and attempt < 2:
+                            print(f"   401 → пробуем без Authorization (попытка {attempt+1})")
+                            continue
+                        raise
 
             if status == "failed":
-                raise RuntimeError(f"Sora failed: {info}")
+                raise RuntimeError(f"Генерация failed: {info.get('error')}")
 
             time.sleep(interval)
+
         except Exception as e:
-            print(f"[Sora poll] ошибка: {e}")
+            print(f"   Poll error: {e}")
             time.sleep(interval)
 
-    raise TimeoutError("Sora timeout")
-
-
-def _poll_and_download_seedance(task_id: str, timeout: int, interval: int) -> Optional[str]:
-    """Polling для Seedance"""
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            st = requests.get(
-                f"{BASE_URL}/seedance/api/v3/contents/generations/tasks/{task_id}",
-                headers={**HEADERS, "Accept": "application/json"},
-                timeout=15
-            )
-            st.raise_for_status()
-            info = st.json()
-            status = info.get("status")
-
-            print(f"[Seedance] статус={status}")
-
-            if status in ("succeeded", "completed"):
-                # Пробуем разные возможные поля
-                vid_url = (info.get("content", {}).get("video_url") or
-                          info.get("result_url") or
-                          info.get("data", {}).get("content", {}).get("video_url"))
-
-                if vid_url:
-                    dl = requests.get(vid_url, stream=True)
-                    dl.raise_for_status()
-                    return _save_temp_video(dl, task_id)
-
-            if status == "failed":
-                raise RuntimeError(f"Seedance failed: {info}")
-
-            time.sleep(interval)
-        except Exception as e:
-            print(f"[Seedance poll] ошибка: {e}")
-            time.sleep(interval)
-
-    raise TimeoutError("Seedance timeout")
-
-
-def _poll_and_download_veo(task_id: str, timeout: int, interval: int) -> Optional[str]:
-    """Исправленный polling + download для Veo (400 ошибка часто из-за неправильного Content-Type или заголовков)"""
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            st = requests.get(f"{BASE_URL}/v1/videos/{task_id}", headers=HEADERS, timeout=15)
-            st.raise_for_status()
-            info = st.json()
-            status = info.get("status")
-
-            print(f"[Veo] статус={status}")
-
-            if status == "completed":
-                # Важно: иногда /content требует других заголовков или вообще без них
-                dl = requests.get(
-                    f"{BASE_URL}/v1/videos/{task_id}/content",
-                    headers=HEADERS,
-                    stream=True,
-                    timeout=60
-                )
-                if dl.status_code == 400:
-                    # fallback — пробуем без Authorization
-                    print("Veo 400 — пробуем скачать без Authorization header")
-                    dl = requests.get(
-                        f"{BASE_URL}/v1/videos/{task_id}/content",
-                        stream=True,
-                        timeout=60
-                    )
-
-                dl.raise_for_status()
-                return _save_temp_video(dl, task_id)
-
-            if status == "failed":
-                raise RuntimeError(f"Veo failed: {info}")
-
-            time.sleep(interval)
-        except Exception as e:
-            print(f"[Veo poll] ошибка: {e}")
-            time.sleep(interval)
-
-    raise TimeoutError("Veo timeout")
-
-
-def _save_temp_video(response: requests.Response, task_id: str) -> str:
-    """Сохраняет видео во временный файл"""
-    tmp = os.path.join(tempfile.gettempdir(), f"video_{task_id}.mp4")
-    with open(tmp, "wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
-    print(f"✅ Видео сохранено: {tmp}")
-    return tmp
+    raise TimeoutError(f"Timeout при генерации {model}")
 
 # ============================================================
 #                       TOOLS

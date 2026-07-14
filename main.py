@@ -2665,17 +2665,24 @@ def process_user_queue(user_id, chat_id):
 
             # Видео
             elif isinstance(ai_response, str) and ai_response.startswith("[VIDEO]"):
+                video_path = ai_response.replace("[VIDEO]", "", 1).strip()
+                print(f"🎬 Отправляем видео пользователю {user_id} | путь: {video_path}")
 
-                print(f"🎬 Отправляем видео пользователю {user_id}")
-
-                video_url = ai_response.replace("[VIDEO]", "", 1)
-
-                bot.send_video(
-                    chat_id,
-                    video_url
-                )
-
-                return
+                if os.path.exists(video_path):
+                    with open(video_path, 'rb') as video_file:
+                        bot.send_video(
+                            chat_id,
+                            video_file,
+                            caption="🎥 Видео готово!",
+                            supports_streaming=True
+                        )
+                    # Опционально удаляем файл после отправки
+                    try:
+                        os.unlink(video_path)
+                    except:
+                        pass
+                else:
+                    bot.send_message(chat_id, "❌ Не удалось найти сгенерированное видео.")
 
             # Ответ с источниками
             elif isinstance(ai_response, tuple):
