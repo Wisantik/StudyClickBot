@@ -288,11 +288,11 @@ tools = [
         "type": "function",
         "function": {
             "name": "web_search",
-            "description": "Актуальный веб-поиск (DDGS)",
+            "description": "Актуальный веб-поиск по запросу пользователя",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string"}
+                    "query": {"type": "string", "description": "Поисковый запрос"}
                 },
                 "required": ["query"]
             }
@@ -302,13 +302,11 @@ tools = [
         "type": "function",
         "function": {
             "name": "generate_video",
-            "description": "Создает видео по текстовому описанию",
+            "description": "Создает короткое видео по текстовому описанию. Используй когда пользователь просит 'видео', 'ролик', 'сделай видео'",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "prompt": {
-                        "type": "string"
-                    }
+                    "prompt": {"type": "string"}
                 },
                 "required": ["prompt"]
             }
@@ -317,14 +315,12 @@ tools = [
     {
         "type": "function",
         "function": {
-            "name": "generate_video",
-            "description": "Создает видео по текстовому описанию",
+            "name": "generate_image",
+            "description": "Генерирует изображение по текстовому описанию. Используй когда пользователь просит 'фото', 'картинку', 'изображение', 'нарисуй', 'сгенерируй фото'",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "prompt": {
-                        "type": "string"
-                    }
+                    "prompt": {"type": "string"}
                 },
                 "required": ["prompt"]
             }
@@ -334,14 +330,11 @@ tools = [
         "type": "function",
         "function": {
             "name": "fetch_url",
-            "description": "Загружает содержимое страницы по URL и возвращает текст для анализа",
+            "description": "Загружает содержимое веб-страницы по URL",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "Полный URL страницы"
-                    }
+                    "url": {"type": "string"}
                 },
                 "required": ["url"]
             }
@@ -363,8 +356,11 @@ def run_fc(user_id: int, query: str, prompt: str, model="gpt-5.1-2025-11-13", ma
     history = get_chat_history(user_id, limit=10)
     
     # Основная история (без reflection)
+    # Перед циклом for attempt
     messages = [
         {"role": "system", "content": prompt},
+        {"role": "system", "content": "Ты должен использовать инструменты generate_image когда пользователь просит фото, картинку, изображение. "
+                                    "Используй generate_video когда просят видео или ролик."},
         *history,
         {"role": "user", "content": query}
     ]
